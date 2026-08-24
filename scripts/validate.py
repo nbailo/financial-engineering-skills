@@ -21,6 +21,11 @@ from __future__ import annotations
 
 import re
 import sys
+
+try:
+    import yaml
+except ImportError:  # strict path unavailable; the fallback below is weaker
+    yaml = None
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,7 +58,27 @@ def warn(msg: str) -> None:
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str] | tuple[None, str]:
-    """Minimal YAML frontmatter reader: top-level scalars and folded scalars only."""
+    """Read the frontmatter, preferring a real YAML parser.
+
+    The hand-rolled fallback exists so the validator runs with no dependencies, but
+    it is deliberately NOT the primary path: it happily accepts frontmatter that a
+    real YAML parser rejects. An unquoted description containing ": " parses fine
+    here and blows up in every actual loader, which then falls back to empty
+    metadata — the skill loads with no description to match against and effectively
+    never triggers. That shipped once. Install PyYAML in CI so the strict path runs.
+    """
+    if yaml is not None:
+        m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+        if not m:
+            return None, "frontmatter must start on line 1 and be terminated by ---"
+        try:
+            data = yaml.safe_load(m.group(1))
+        except yaml.YAMLError as e:
+            first = str(e).splitlines()[0]
+            return None, f"frontmatter is not valid YAML ({first}) — loaders fall back to EMPTY metadata"
+        if not isinstance(data, dict):
+            return None, "frontmatter must be a mapping"
+        return {k: ("" if v is None else str(v)) for k, v in data.items()}, ""
     if not text.startswith("---\n"):
         return None, "frontmatter must start on line 1"
     end = text.find("\n---", 3)

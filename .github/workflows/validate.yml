@@ -8,6 +8,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # PyYAML enables the strict frontmatter check. Without it the validator
+      # falls back to a lenient parser that accepts frontmatter real loaders reject.
+      - run: pip install pyyaml
       # Enforces the Agent Skills spec (frontmatter keys, name rules, description
       # limits) and this repo's budgets: 500 lines per SKILL.md, 8KB for AGENTS.md,
       # 3000 chars of description across the suite.
