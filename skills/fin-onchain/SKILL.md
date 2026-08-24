@@ -135,7 +135,7 @@ account folds the tag into the address and removes the class.
 
 ## SEAM S2: onchain ↔ ledger
 
-*Byte-identical in `fin-ledger`, generated from `shared/seams/s2-onchain-ledger.md`, CI fails on divergence.*
+*This is the on-chain half of the boundary. `fin-ledger` owns what the books record; load it too when the credit becomes a posting.*
 
 **(i) Identity.** A deposit credit is exactly one balanced ledger transaction whose idempotency key is
 `(chainId, blockHash, txHash, logIndex)`, never the tx hash and never `balance += amount`; the same log

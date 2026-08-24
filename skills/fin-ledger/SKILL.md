@@ -179,8 +179,8 @@ later correction run.
 
 ## Seams
 
-Each is stated byte-identically in the paired skill. A divergence between the two copies is a suite
-defect to be reported, not a judgement call.
+Each boundary is stated once here and once from the other side, in that skill's own vocabulary. A
+contradiction between the two is a suite defect to be reported, not a judgement call.
 
 **S1 · payments ↔ ledger.** Every payment state transition emits **exactly one balanced ledger transaction**
 whose id derives from the payment's idempotency key. Every clearing account between payment states returns to

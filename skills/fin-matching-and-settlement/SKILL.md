@@ -32,7 +32,7 @@ reconciles against somebody else's fills. That is `fin-exchange-integration`. If
 
 ## Split the diff before you tier it (SEAM S4)
 
-*Specialises G1's tier line. Byte-identical in `fin-exchange-integration`; CI fails on divergence.*
+*The reciprocal of this rule is in `fin-exchange-integration`, stated from the venue-client side.*
 
 **A client reconciles against the venue; a venue has nothing to reconcile against.** Where one process is both
 (a broker OMS that is the system of record for its clients' orders and simultaneously a client of the

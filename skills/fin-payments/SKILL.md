@@ -218,7 +218,7 @@ or "reverse", and model the counterparty's right to refuse.
 
 ## Seam S1: payments ↔ ledger
 
-*Stated byte-identically in `fin-ledger`.*
+*This is the processor half of the boundary. `fin-ledger` owns what the books record; load it too when the refund becomes a posting.*
 
 Every payment state transition emits **exactly one balanced ledger transaction** whose id derives from the
 payment's idempotency key. Every clearing account between payment states returns to zero, monitored as a
