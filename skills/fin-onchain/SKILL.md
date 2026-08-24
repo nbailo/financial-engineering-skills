@@ -20,6 +20,8 @@ on a venue you do not operate belong to `fin-exchange-integration`. **Contract-i
 the right neighbour is Trail of Bits' `building-secure-contracts`. This skill owns integration and economic
 correctness: identity, completeness, finality, amount provenance, and the wallet's own state.
 
+> **`G1`–`G7`** are the always-on financial guardrails: **G1** economic-diff gate · **G2** a named risk is implemented or the process refuses to start · **G3** every comment claim checked against the code · **G4** an ambiguous external call has three phases and the first one COMMITs · **G5** enumerate legal `(state, event)` pairs, guard the version on the entity id, re-read from the authority · **G6** a watermark advances only past a verifiably covered range · **G7** the reconciliation runs in production or it does not exist. Install them with `scripts/install-guardrails.sh`; every rule below stands on its own without them.
+
 ## When this applies
 
 Any of these in the diff or the repo: an import of `ethers`, `viem`, `wagmi`, `web3.py`, `@solana/web3.js`,

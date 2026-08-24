@@ -12,6 +12,8 @@ would notice if it stopped?"** Measured: transfer and reversal arithmetic is wri
 journals that do not balance and reconciliations that never run are shipped at close to 100%. Processor lifecycles belong to `fin-payments`, chain mechanics to `fin-onchain`,
 matching and allocation to `fin-matching-and-settlement`.
 
+> **`G1`–`G7`** are the always-on financial guardrails: **G1** economic-diff gate · **G2** a named risk is implemented or the process refuses to start · **G3** every comment claim checked against the code · **G4** an ambiguous external call has three phases and the first one COMMITs · **G5** enumerate legal `(state, event)` pairs, guard the version on the entity id, re-read from the authority · **G6** a watermark advances only past a verifiably covered range · **G7** the reconciliation runs in production or it does not exist. Install them with `scripts/install-guardrails.sh`; every rule below stands on its own without them.
+
 ## When this applies
 
 Any of these in the diff or the file being edited: a table named `entries`, `postings`, `journal`,

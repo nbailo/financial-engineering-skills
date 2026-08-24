@@ -14,6 +14,8 @@ safety net and the proof burden moves *before* deployment, into replay and simul
 separate skill from `fin-exchange-integration`. The question every change here must answer: **if this process
 dies now, does replaying the persisted inputs reproduce the identical emitted event sequence, byte for byte?**
 
+> **`G1`–`G7`** are the always-on financial guardrails: **G1** economic-diff gate · **G2** a named risk is implemented or the process refuses to start · **G3** every comment claim checked against the code · **G4** an ambiguous external call has three phases and the first one COMMITs · **G5** enumerate legal `(state, event)` pairs, guard the version on the entity id, re-read from the authority · **G6** a watermark advances only past a verifiably covered range · **G7** the reconciliation runs in production or it does not exist. Install them with `scripts/install-guardrails.sh`; every rule below stands on its own without them.
+
 ## When this applies
 
 Any of these in the diff, the repo, or the task text:

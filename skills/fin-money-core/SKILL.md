@@ -11,6 +11,8 @@ component behaves exactly as specified?** This skill owns the general mechanisms
 idempotency, indeterminacy, concurrency, ceilings, rollout) and it **loses every contested match**: where the
 diff names a venue, a processor, a chain or a ledger schema, that skill's instantiation of the rule binds.
 
+> **`G1`–`G7`** are the always-on financial guardrails: **G1** economic-diff gate · **G2** a named risk is implemented or the process refuses to start · **G3** every comment claim checked against the code · **G4** an ambiguous external call has three phases and the first one COMMITs · **G5** enumerate legal `(state, event)` pairs, guard the version on the entity id, re-read from the authority · **G6** a watermark advances only past a verifiably covered range · **G7** the reconciliation runs in production or it does not exist. Install them with `scripts/install-guardrails.sh`; every rule below stands on its own without them.
+
 ## When this applies
 
 Any changed line carrying an amount or a call that moves one: `amount`, `balance`, `price`, `qty`, `fee`, `notional`, `rate`, `Decimal(`, `round(`, `quantize(`, `* 100`, `/ 1e18`, `int(`; `idempotency_key`, `client_order_id`, `dedupe`, `_seen`, `cursor`, `watermark`, `last_synced`; `FOR UPDATE`, `SKIP LOCKED`, `isolation_level`, `SERIALIZABLE`, `advisory_lock`, `asyncio.Lock`; any `except`/`catch`/`retry`/`backoff` wrapped around those; a flag, enum, shard, region or migration on a path carrying them.
