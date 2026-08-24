@@ -898,7 +898,7 @@ with no decision in front of it. Step 2 is where most of the value is.
 **Claude Code (plugin — namespaced, cannot collide, installs the guardrails hook too)**
 
     /plugin marketplace add <owner>/financial-engineering-skills
-    /plugin install financial-engineering@financial-engineering-skills
+    /plugin install financial-engineering-skills@financial-engineering-skills
 ```
 
 ### 10.3 CI gates (all blocking)
@@ -910,7 +910,7 @@ with no decision in front of it. Step 2 is where most of the value is.
 5. **Invariant coverage** — every invariant present in every skill in its `applies_to` list, with non-empty distinct domain-native text and non-conflicting `assert` fields.
 6. **Seam parity** — the four seam rules byte-identical in both their skills.
 7. **No `@file` references anywhere in any `SKILL.md`.**
-8. **Guardrails size** — `shared/guardrails.md` ≤8KB.
+8. **Guardrails size** — `AGENTS.md` ≤8KB.
 9. **Trigger evals** — ≥0.5 trigger rate on positives, <0.5 on near-miss negatives, 3 runs each, 60/40 train/validation split.
 
 ---
