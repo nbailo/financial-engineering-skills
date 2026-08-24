@@ -1,6 +1,11 @@
 ---
 name: fin-verification
-description: Use when a money-path diff touches tests, fixtures or assertions (pytest, hypothesis/@given, fast-check, proptest, vcr record_mode, Toxiproxy, a testnet/sandbox base URL), adds any symbol matching reconcile|break|drift|halt|kill_switch, or the inferred tier is T2+, or the ask is "is this ready", "prove it", "write tests". Load it ALONGSIDE the domain skill, never instead. Skip only if nothing asserted is an amount.
+description: >-
+  Use when a money-path diff touches tests, fixtures or assertions (pytest, hypothesis/@given, fast-check,
+  proptest, vcr record_mode, Toxiproxy, a testnet/sandbox base URL), adds any symbol matching
+  reconcile|break|drift|halt|kill_switch, or the inferred tier is T2+, or the ask is "is this ready",
+  "prove it", "write tests". Load it ALONGSIDE the domain skill, never instead. Skip only if nothing
+  asserted is an amount.
 license: MIT
 ---
 

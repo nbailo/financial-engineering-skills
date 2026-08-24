@@ -1,6 +1,11 @@
 ---
 name: fin-exchange-integration
-description: Use when code trades on a venue you do not operate — ccxt, binance, bybit, okx, kraken, deribit, hyperliquid, alpaca, ib_insync, FIX, polymarket, kalshi — or names create_order/cancelOrder, newClientOrderId/orderLinkId/clOrdId/cloid, tickSize/stepSize/minNotional, a depth or user-data stream, or derives fills, fees, position or PnL from one. A 50-line bot counts. Skip if the code IS the venue: fin-matching-and-settlement.
+description: >-
+  Use when code trades on a venue you do not operate — ccxt, binance, bybit, okx, kraken, deribit,
+  hyperliquid, alpaca, ib_insync, FIX, polymarket, kalshi — or names create_order/cancelOrder,
+  newClientOrderId/orderLinkId/clOrdId/cloid, tickSize/stepSize/minNotional, a depth or user-data stream,
+  or derives fills, fees, position or PnL from one. A 50-line bot counts. Skip if the code IS the venue:
+  fin-matching-and-settlement.
 license: MIT
 ---
 

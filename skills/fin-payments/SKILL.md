@@ -1,6 +1,11 @@
 ---
 name: fin-payments
-description: Use when the diff imports stripe, adyen, braintree, paypal, squareup, checkout or moderntreasury, or names PaymentIntent, charges.create, Refund.create, capture, dispute, chargeback, payout, transfer_group, pspReference, merchantReference, Idempotency-Key, balance_transaction, a processor webhook route, a settlement report, or ACH/SEPA/wire/RTP/FedNow/pain.001. Skip postings and balances tables: use fin-ledger.
+description: >-
+  Use when the diff imports stripe, adyen, braintree, paypal, squareup, checkout or moderntreasury, or
+  names PaymentIntent, charges.create, Refund.create, capture, dispute, chargeback, payout,
+  transfer_group, pspReference, merchantReference, Idempotency-Key, balance_transaction, a processor
+  webhook route, a settlement report, or ACH/SEPA/wire/RTP/FedNow/pain.001. Skip postings and balances
+  tables: use fin-ledger.
 license: MIT
 ---
 

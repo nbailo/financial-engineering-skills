@@ -1,6 +1,11 @@
 ---
 name: fin-onchain
-description: Use when code crosses the chain boundary: ethers, viem, web3.py, @solana/web3.js, bitcoinjs-lib, xrpl, stellar-sdk, BitGo, Fireblocks; eth_getLogs, nonce, blockHash, logIndex, decimals(), destination_tag, memo, PSBT, changeAddress, gap limit, sweeps, deposit crediting, reorgs, withdrawal queues, bridges, oracles. Load it before writing the indexer, not after. Skip centralized venue APIs: fin-exchange-integration.
+description: >-
+  Use when code crosses the chain boundary: ethers, viem, web3.py, @solana/web3.js, bitcoinjs-lib, xrpl,
+  stellar-sdk, BitGo, Fireblocks; eth_getLogs, nonce, blockHash, logIndex, decimals(), destination_tag,
+  memo, PSBT, changeAddress, gap limit, sweeps, deposit crediting, reorgs, withdrawal queues, bridges,
+  oracles. Load it before writing the indexer, not after. Skip centralized venue APIs:
+  fin-exchange-integration.
 license: MIT
 ---
 

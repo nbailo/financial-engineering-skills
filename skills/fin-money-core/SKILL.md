@@ -1,6 +1,11 @@
 ---
 name: fin-money-core
-description: Use when a diff touches an amount, price, qty, balance, fee or rate; a value-moving call and its retry/except path; an idempotency key, cursor or dedupe key; a rounding or scale conversion; a SELECT-then-UPDATE, FOR UPDATE, isolation level or lock on a money row; or a flag/shard rollout of one. Defer to fin-exchange-integration, fin-payments, fin-ledger, fin-onchain or fin-matching-and-settlement if the diff names their APIs.
+description: >-
+  Use when a diff touches an amount, price, qty, balance, fee or rate; a value-moving call and its
+  retry/except path; an idempotency key, cursor or dedupe key; a rounding or scale conversion; a
+  SELECT-then-UPDATE, FOR UPDATE, isolation level or lock on a money row; or a flag/shard rollout of one.
+  Defer to fin-exchange-integration, fin-payments, fin-ledger, fin-onchain or fin-matching-and-settlement
+  if the diff names their APIs.
 license: MIT
 ---
 

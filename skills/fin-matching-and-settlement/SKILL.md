@@ -1,6 +1,11 @@
 ---
 name: fin-matching-and-settlement
-description: Use when the code IS the venue, not its client: matching an order against resting orders, order_book/price_level/total_qty you own, pro-rata allocation, an auction or cross, self-trade prevention, price bands, LULD, halt/resume, a feed you publish (RptSeq, MoldUDP64, ITCH, snapshot vs incremental), netting, DVP, settlement, liquidation, ADL, reportPayouts. Skip when calling someone else's venue: fin-exchange-integration.
+description: >-
+  Use when the code IS the venue, not its client: matching an order against resting orders,
+  order_book/price_level/total_qty you own, pro-rata allocation, an auction or cross, self-trade
+  prevention, price bands, LULD, halt/resume, a feed you publish (RptSeq, MoldUDP64, ITCH, snapshot vs
+  incremental), netting, DVP, settlement, liquidation, ADL, reportPayouts. Skip when calling someone
+  else's venue: fin-exchange-integration.
 license: MIT
 ---
 

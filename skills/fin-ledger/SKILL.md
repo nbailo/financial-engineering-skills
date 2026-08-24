@@ -1,6 +1,11 @@
 ---
 name: fin-ledger
-description: Use when code writes or reads an authoritative balance: tables entries, postings, journal, ledger_transactions, accounts, balances, holds; debit/credit legs; TigerBeetle, Formance; posted, pending, available; reversal, clawback, suspense, trial balance, period close, as-of balance, accrual. Fires on `balance += amount`, `CHECK (balance_cents >= 0)`. Read it before the first INSERT. Skip processor lifecycles: use fin-payments.
+description: >-
+  Use when code writes or reads an authoritative balance: tables entries, postings, journal,
+  ledger_transactions, accounts, balances, holds; debit/credit legs; TigerBeetle, Formance; posted,
+  pending, available; reversal, clawback, suspense, trial balance, period close, as-of balance, accrual.
+  Fires on `balance += amount`, `CHECK (balance_cents >= 0)`. Read it before the first INSERT. Skip
+  processor lifecycles: use fin-payments.
 license: MIT
 ---
 
