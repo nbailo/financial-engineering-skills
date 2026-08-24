@@ -30,6 +30,8 @@ MAX_SKILL_LINES = 500
 MAX_DESC = 430
 SPEC_MAX_DESC = 1024
 TOTAL_DESC_BUDGET = 3000
+MIN_REF_LINES = 120
+MIN_REF_PROSE_WORDS = 400
 AGENTS_BUDGET = 8192
 
 RED, YEL, GRN, BLD, OFF = "\033[31m", "\033[33m", "\033[32m", "\033[1m", "\033[0m"
@@ -137,6 +139,16 @@ def check_skill(skill_md: Path) -> int:
             head = "\n".join(rtext.split("\n")[:40])
             if not re.search(r"(?i)(##\s*)?(contents|table of contents)", head):
                 warn(f"{ref} is {rlines} lines with no table of contents in its first 40 lines")
+        # A contents-only stub passes every structural check while delivering nothing.
+        # The dispatch line in SKILL.md promises the agent this file answers the question;
+        # an outline does not. Require prose under the headings, not just headings.
+        if rlines < MIN_REF_LINES:
+            body = re.sub(r"(?m)^\s*(#{1,6}\s.*|[-*]\s.*|\|.*)$", "", rtext)
+            if len(body.split()) < MIN_REF_PROSE_WORDS:
+                err(
+                    f"{ref} is a contents-only stub ({rlines} lines, "
+                    f"{len(body.split())} words of prose) — SKILL.md points an agent at it"
+                )
 
     # Every reference file on disk should be reachable from its SKILL.md.
     refs_on_disk = {
