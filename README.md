@@ -48,6 +48,49 @@ anything else you have:
 
 ---
 
+## How to use it
+
+You do not invoke these skills. They load when the agent sees matching code. A request for a Binance bot pulls
+in `fin-exchange-integration`, because the task names `create_order` and `binance`.
+
+**New code.**
+
+> Write a Python bot that places a limit buy on Binance when the 5-minute RSI drops below 30.
+
+`fin-exchange-integration` loads, and the agent now:
+
+- commits a client order ID to an intent row before the socket write, carrying the full economic intent, the
+  venue + account + API-key identity, and `state = INTENT_RECORDED`
+- treats a timeout, a 5XX, a 429 and Binance `-1006`/`-1007` as `UNKNOWN`, and resolves by querying that client
+  order ID instead of resubmitting
+- validates price and quantity against `tickSize`, `stepSize`, `minNotional`, `minQty` and `maxQty` together in
+  `Decimal`, and returns an explicit skip signal when quantization would produce `qty == 0`
+- emits `test_timeout_that_already_filled` and the filter property test as code in the same response
+
+**Existing code.**
+
+> Review this refund handler for financial correctness.
+
+`fin-payments` loads. The agent computes the ceiling as
+`captured_amount − already_refunded − pending_refunds − disputed_amount` from the processor's numbers rather
+than from your `orders.amount_cents`, refuses to refund while any dispute on that charge is open or another
+refund on it is `pending`, and reverses the principal only, because Stripe does not return the processing fee.
+
+**The output slot.** Any response touching a money path ends with a NAMED RISKS table, one row per risk named:
+
+| risk | implemented at file:line | test name |
+|---|---|---|
+| ambiguous submit resubmits and doubles the position | `bot/execution.py:118` | `test_timeout_that_already_filled` |
+| quantized order violates `minNotional` | `bot/filters.py:42` | `test_normalize_satisfies_every_filter_simultaneously` |
+
+A row with no `file:line` is a defect. The most common failure in generated money code is naming the
+correct control accurately and then writing a comment instead of implementing it.
+
+**Turning it off.**
+
+```bash
+scripts/install-guardrails.sh --uninstall .
+```
 
 ---
 
