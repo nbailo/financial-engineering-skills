@@ -181,6 +181,29 @@ def main() -> int:
     # A skill that cites a repo path or a CI job which does not exist is making a
     # promise the artefact does not keep. This shipped once (shared/seams/, a seam-diff
     # CI job, both fictional) and was only caught by an external reviewer.
+    # In skills/ and AGENTS.md a dangling path misleads an agent mid-task, so it is an
+    # error. In docs/ it is usually a roadmap proposal, so it is a warning the maintainer
+    # must keep honest. This shipped once (shared/seams/ and a seam-diff CI job, both
+    # fictional, asserted as fact inside SKILL.md files) and only an external reviewer caught it.
+    def cited_paths(md: Path) -> set[str]:
+        found = set()
+        for path in re.findall(r"`((?:shared|scripts|evals|skills|docs)/[A-Za-z0-9_./<>-]+)`",
+                               md.read_text(encoding="utf-8")):
+            if "<" in path or ">" in path:   # a template, not a literal path
+                continue
+            if not (ROOT / path).exists():
+                found.add(path)
+        return found
+
+    binding = sorted(ROOT.glob("skills/*/SKILL.md"))
+    if (ROOT / "AGENTS.md").is_file():
+        binding.append(ROOT / "AGENTS.md")
+    for md in binding:
+        for path in sorted(cited_paths(md)):
+            err(f"cited path does not exist: {path} (in {md.relative_to(ROOT)})")
+    for md in sorted((ROOT / "docs").glob("*.md")):
+        for path in sorted(cited_paths(md)):
+            warn(f"cited path does not exist: {path} (in {md.relative_to(ROOT)}) — mark it as proposed")
 
     agents = ROOT / "AGENTS.md"
     if not agents.is_file():
