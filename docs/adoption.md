@@ -2,12 +2,13 @@
 
 Audience is the maintainers of this repository. None of this is copy for the README.
 
-The project has three assets no comparable suite has — an incident catalogue built from primary documents, a
-set of per-venue divergence tables that exist nowhere else, and a deliberately small rule set — and one
+The project has three assets no comparable suite has (an incident catalogue built from primary documents, a
+set of per-venue divergence tables that exist nowhere else, and a deliberately small rule set), and one
 structural liability no amount of good content fixes: the layer we ship into is a shared, budgeted,
 silently-degrading resource we do not control. This document is about spending the first on the second.
-Status today: seven skills, a 7,834-byte always-on block, 20 incident files behind a 51-row mapping table, a
-rule spine, and **no published evaluation of any of it in the configuration a user would actually install**.
+Status today: seven self-sufficient skills, a 1,464-byte optional routing block, 20 incident files behind a
+51-row mapping table, a rule spine, and **no published evaluation of any of it in the configuration a user
+would actually install**.
 
 ## 1. The distribution problem, stated honestly
 
@@ -21,8 +22,8 @@ and that listing is budgeted:
 
 Three properties matter more than anything about our content. **It is shared, not allocated:** a user running
 `superpowers` (14 skills), Trail of Bits' `building-secure-contracts` (11) and a dozen personal skills has
-spent most of it before we arrive, and our seven descriptions total 2,955 characters — 37% of Codex's hard
-8,000-character ceiling from one suite.
+spent most of it before we arrive, and our seven descriptions total under 3,000 characters, roughly 37% of
+Codex's hard 8,000-character ceiling from one suite.
 
 **Overflow selects against us specifically.** Eviction order is least-invoked first, and a newly installed
 suite is by definition the least-invoked population in the directory; climbing that ordering requires
@@ -34,25 +35,30 @@ nothing surfaces it elsewhere.
 An unresolved reading of the primary documentation makes it worse. Claude Code documents a *character*
 budget that "scales at 1% of the model's context window", and its override `SLASH_COMMAND_TOOL_CHAR_BUDGET`
 as a fixed character count; if that is literally 1% *in characters*, a 200k-token window yields ~2,000
-characters of listing — less than our suite alone. The architecture assumes the permissive reading
+characters of listing, less than our suite alone. The architecture assumes the permissive reading
 (~4 chars/token → ~8,000, which matches the 8,000-character ceiling Codex states outright); the strict one
 puts us over budget on a single-suite install, and the documentation does not say which is right.
 
 ### What follows
 
-1. **The skill layer cannot be the primary delivery vehicle, and we designed around that.** G1–G7 live in
-   `AGENTS.md` because passive context has no decision point, no ordering dependency and no shared budget.
-   Adoption is therefore *guardrails-first* everywhere, including README ordering.
+1. **The skill layer is the delivery vehicle, and the rules are inside it.** v0.1 put the seven
+   cross-cutting rules in `AGENTS.md`, because passive context has no decision point, no ordering dependency
+   and no shared budget. That reasoning is sound about delivery and it cost us the property that matters
+   more: a rule living outside the skill is absent whenever the block was not installed, and `npx skills add`
+   does not install it. v0.2 states every rule in the skill, and `AGENTS.md` carries the routing table and
+   one instruction, at 1,464 bytes, optional. Adoption is therefore *skills-first*, with the block offered
+   as reinforcement rather than as a second required command (`architecture.md` §1.4).
 2. **Seven skills is the permanent ceiling.** `scope-adjudication.md` already refused three well-argued
-   claimants. Not revisitable on a domain's importance — only on evidence that an existing dispatch row is
+   claimants. Not revisitable on a domain's importance, only on evidence that an existing dispatch row is
    being skipped in practice. An eighth description spends ~420 characters of somebody else's budget.
 3. **Two of the seven are the designated casualties.** `fin-matching-and-settlement` is almost certainly our
    least-invoked entry; `fin-verification` is plausibly second and overlaps hosts' bundled review commands.
-   The documented fallback (R4/R6) merges `fin-verification` into `fin-money-core` for ~80 core lines — a live
+   The documented fallback (R4/R6) merges `fin-verification` into `fin-money-core` for ~80 core lines, a live
    option to be settled by trigger evals, not a defeat.
-4. **Installs are a vanity metric.** What matters is the fraction carrying the guardrails block, and we ship
-   no telemetry, so we cannot measure it. The design must be robust to its own absence — which is why every
-   non-negotiable rule is restated in the first 60 lines of its skill.
+4. **Installs are a vanity metric.** What matters is whether a skill is consulted on the change that needed
+   it, and we ship no telemetry, so we cannot measure it. The design has to be robust to its own absence,
+   which is why every rule a skill needs is stated inside that skill and nothing is deferred to a sibling or
+   to a file the user may never have installed.
 
 ## 2. Installation paths, ranked by friction
 
@@ -61,11 +67,11 @@ puts us over budget on a single-suite install, and the documentation does not sa
 |---:|---|---|---|---|
 | 1 | `npx skills add` | 77 agents, auto-detected | **No** | One command, no clone |
 | 2 | Claude Code plugin marketplace | Claude Code only | No | Two slash commands |
-| 3 | `scripts/install-guardrails.sh` | Everything reading `AGENTS.md` / `CLAUDE.md` / `copilot-instructions.md` | **Yes** | Requires a clone today |
+| 3 | `scripts/install-guardrails.sh` (optional, routing only) | Everything reading `AGENTS.md` / `CLAUDE.md` / `copilot-instructions.md` | **Yes** | Requires a clone today |
 | 4 | git submodule + symlinks | Everything, pinned | No (run #3 after) | Four commands, vendored |
 | 5 | Manual copy | Whatever you copy into | No | Forks silently, rots |
 
-**1 — `npx skills add`.** Detects which of 77 agents are installed and symlinks each agent directory to one
+**1. `npx skills add`.** Detects which of 77 agents are installed and symlinks each agent directory to one
 canonical copy, so a single `update` fixes every runtime. Document `--copy` as the thing you do not want.
 
 ```bash
@@ -76,8 +82,8 @@ npx skills add nbailo/financial-engineering-skills -y       # CI, no prompts
 npx skills update                                          # later
 ```
 
-**2 — Claude Code plugin.** Namespaced `plugin:skill`, so it cannot collide with the user's personal or
-project skills — the safest path for a suite meant to coexist, and the only one that can carry a
+**2. Claude Code plugin.** Namespaced `plugin:skill`, so it cannot collide with the user's personal or
+project skills. It is the safest path for a suite meant to coexist, and the only one that can carry a
 `SessionStart` hook (§6).
 
 ```
@@ -85,10 +91,10 @@ project skills — the safest path for a suite meant to coexist, and the only on
 /plugin install financial-engineering-skills@financial-engineering-skills
 ```
 
-**3 — the guardrails, where the value is.** Idempotent between markers, preserves existing content,
+**3. The routing block, optional.** Idempotent between markers, preserves existing content,
 `--uninstall` removes it byte-for-byte, writes `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`
 (which outranks `AGENTS.md` in Copilot's own precedence order and is the only reliable path to Copilot). It is
-also the ugliest command in the README — a clone into `/tmp` and a script run from it, asking for that trust
+also the ugliest command in the README: a clone into `/tmp` and a script run from it, asking for that trust
 in the same breath as telling people a skill is executable code.
 
 ```bash
@@ -96,7 +102,7 @@ git clone https://github.com/nbailo/financial-engineering-skills /tmp/fes \
   && /tmp/fes/scripts/install-guardrails.sh .
 ```
 
-**4 — submodule**, for teams that vendor and want a pinned SHA. **5 — manual copy:** document it, discourage
+**4. Submodule**, for teams that vendor and want a pinned SHA. **5. Manual copy:** document it, discourage
 it; a copy diverges with no runtime signal, the failure class the suite exists to teach against.
 
 ```bash
@@ -106,31 +112,36 @@ mkdir -p .agents .claude && ln -s ../.fin-skills/skills .agents/skills \
 bash .fin-skills/scripts/install-guardrails.sh .
 ```
 
-### The gap, and what to do about it
+### The gap, and how v0.2 closed it
 
-`npx skills add` installs skills. It does not write the consumer's `AGENTS.md`. A user who runs only the
-headline command gets the weaker half of the architecture: seven files on disk, every one of which
-contributes nothing at all unless the model chooses to open it on the turn that matters.
+`npx skills add` installs skills. It does not write the consumer's `AGENTS.md`. In v0.1 that meant a user who
+ran only the headline command got the weaker half of the architecture: seven files on disk, plus a rule set
+that was partly somewhere else and therefore partly nowhere.
 
-That argument does not depend on how good the content is. A skill is discretionary load sitting behind a
-description that competes for a shared, truncatable budget (§1); an always-on block is passive context with
-no decision point, no ordering dependency and no budget to lose. The two failure modes are not comparable —
-wrong guardrails are read and are wrong, absent guardrails are simply absent. How much of the value the
-always-on layer actually carries is exactly what R2 asks and what the evaluation proposed in §3 has to
-settle. Ranked responses:
+The delivery argument behind the split is sound and does not depend on how good the content is. A skill is a
+discretionary load sitting behind a description that competes for a shared, truncatable budget (§1). An
+always-on block is passive context with no decision point, no ordering dependency and no budget to lose. The
+two failure modes are not comparable: wrong guardrails are read and are wrong, absent guardrails are simply
+absent.
 
-1. **Reorder the README so guardrails is step 1.** It is step 2 today, and the caveat that the skills
-   command leaves `AGENTS.md` untouched belongs on the *skills* command, not as a justification bolted to the
-   guardrails command. An afternoon's work and the highest-leverage change available.
-2. **Ship the guardrails as a no-clone one-liner** — an npm package whose `bin` runs
-   `install-guardrails.sh`, so the README says `npx fin-guardrails` and nothing else.
-3. **Detect and say so, once.** One standing line in each `SKILL.md` body: if the guardrails markers are
-   absent from the repo's `AGENTS.md`, say so in the NAMED RISKS table and continue. A required output slot,
-   not a prohibition — our own wording doctrine (`rules.md` §5.1) applies to our tooling.
+What v0.1 did with that argument was put rules in the block, and that is the part v0.2 reverses. Rules live in
+the skill. Routing lives in the description, reinforced by the block for anyone who installs it. The gap that
+remains is the one the argument above describes and it is now the suite's only delivery risk: a skill that is
+never consulted delivers nothing, silently. R2 is still the eval that would size it, and §3 is still where it
+would be settled. Ranked responses, updated:
+
+1. **The README leads with the skills command**, which is now the whole installation, and offers the block
+   under "optional routing guardrails" with an honest statement of what removing it costs. Done.
+2. **Ship the block as a no-clone one-liner**, an npm package whose `bin` runs `install-guardrails.sh`, so the
+   README can say `npx fin-guardrails` and nothing else. Still worth doing, now as a convenience rather than
+   as a rescue.
+3. **Do not have the skills detect the block and complain about it.** v0.1 proposed a standing line in each
+   `SKILL.md` reporting the block's absence as a risk. With no rule living in the block, its absence is not a
+   financial risk, and reporting it as one would train the reader to treat a routing preference as a control.
 4. **Ask upstream.** `vercel-labs/skills` has no post-install hook a suite can declare, and every suite with
    an always-on layer has this problem. Near-zero cost to file; block nothing on it. And **do not** make the
-   skills refuse to run without the guardrails: hostile, unmeasurable from inside a skill, and it defeats the
-   redundancy that makes skills-only degrade rather than fail.
+   skills refuse to run without the block: hostile, unmeasurable from inside a skill, and it defeats the
+   self-sufficiency that makes a skills-only install the supported configuration rather than a degraded one.
 
 ## 3. Proving it works
 
@@ -139,7 +150,7 @@ public evaluation: realistic tasks in the repository, scoring criteria published
 committed as data, and enough tooling that a contributor can run the whole thing against their own model and
 their own API key and get numbers we did not choose.
 
-**The tasks.** Eight families of the prompt someone actually types — issue a refund, reconnect a market-data
+**The tasks.** Eight families of the prompt someone actually types, issue a refund, reconnect a market-data
 socket and resume, credit a deposit when it confirms, compute realised PnL across two venues, close a period
 on a ledger, settle a match, index an on-chain log, queue a withdrawal. Each ships with a written list of the
 specific defects it is looking for, every one a checkable assertion with a severity, so "did the suite help"
@@ -163,31 +174,33 @@ evals/
 **Four arms, not two,** because the two-layer architecture's central claim *is* skills-only vs
 guardrails-only; a two-arm harness confirms the suite works while leaving the actual design decision
 unresolved. **Repeat every cell enough times to see the variance.** These tasks are non-deterministic, and the
-interesting cases are the ones where the same model gets it right sometimes — precisely where wording has
+interesting cases are the ones where the same model gets it right sometimes, precisely where wording has
 leverage and where a single run tells you nothing. **Three models:** one small and one large in the same
 family (a rule binding only on the strongest model is not a rule) and one non-Anthropic runtime, since the
 suite claims cross-runtime reach and has tested none of it. Report per-model; never pool.
 
-**Metrics — publish all six, not the headline.**
+**Metrics, publish all six, not the headline.**
 
 1. **Check pass rate** per task family and suite mean, per arm.
 2. **Spread** (`max run − min run`) per check. *Convergence is the success metric:* a SHIP-strength check
-   that still spreads under guidance means that rule's wording is descriptive, not binding — a bug in the
+   that still spreads under guidance means that rule's wording is descriptive, not binding, a bug in the
    rule, not noise in the run. Almost nobody publishes it, and it separates a real rule from a nice sentence.
 3. **Invocation rate**, separating "the rule is wrong" from "the rule never arrived". Two different defects
    with two different fixes, and the second is invisible unless it is counted.
 4. **Token and wall-clock delta** per arm; a rule that raises cost without raising pass rate is deleted.
 5. **Both-arms-pass and both-arms-fail counts.** The first inflate the with-skill number and are deletion
    candidates; the second mean a broken assertion or a task the model cannot do at all.
-6. **Gate false-negative rate** on `gate-corpus.json`: everything routes through G1, so a gate that
-   under-fires reproduces the never-loaded failure with a respectable justification attached.
+6. **Gate false-negative rate** on a labelled corpus of real diffs: everything routes through *the
+   economic-diff gate*, so a gate that under-fires reproduces the never-loaded failure with a respectable
+   justification attached.
 
 ### Publication, and running it yourself
 
-`evals/results/` committed as JSON plus a generated `docs/evaluation.md`. **Raw transcripts for at least one
-run per (task, arm), committed** — a skeptic must read what the agent wrote, not our summary. Beside every
+A proposed results directory under `evals/`, committed as JSON, plus a generated evaluation page under
+`docs/`. Neither exists today. **Raw transcripts for at least one
+run per (task, arm), committed**: a skeptic must read what the agent wrote, not our summary. Beside every
 rule in `rules.md`, a link to the result that bears on it, rendered `unevaluated` where that is the truth.
-**Publish the arm that loses** — the checks that passed in every arm anyway, the checks that got worse under
+**Publish the arm that loses**: the checks that passed in every arm anyway, the checks that got worse under
 guidance, the families where the suite changed nothing. Not humility; the only reason to believe the rest.
 
 ```bash
@@ -196,12 +209,12 @@ python3 evals/run.py --all --arms control,skills-only,guardrails-only,both && py
 ```
 
 Grading is two-stage: machine assertions where the check is mechanical, the shipped LLM grader where it is
-not, plus a manual spot-check — *read every flagged match by hand, because template echoes and quoted
+not, plus a manual spot-check, *read every flagged match by hand, because template echoes and quoted
 counter-examples masquerade as hits.* Contributors submit results files, not claims.
 
 **Limits to state in the eval document itself.** The tasks are greenfield, single-file, well-scoped prompts;
 they cannot reach the four settings `rules.md` §1.4 names as where a rule still matters even though a prompt
-like these never exercises it — an ORM/driver boundary, a wire schema, an analytics boundary, a multi-host
+like these never exercises it, an ORM/driver boundary, a wire schema, an analytics boundary, a multi-host
 deploy. We wrote the tasks, the checks and the rules, which is not independence however carefully it is done;
 writing the checks before the run helps and does not fix it, so invite an outside re-grade of one family.
 
@@ -209,10 +222,10 @@ writing the checks before the run helps and does not fix it, so invite an outsid
 
 Ranked by expected value, which is not ranked by effort.
 
-**1. The incident catalogue — highest standalone pull, by a distance.** The only artefact here useful to
+**1. The incident catalogue, highest standalone pull, by a distance.** The only artefact here useful to
 someone who will never install a skill, which makes it the only one linkable from somewhere we do not control.
 Three properties do the work. It is *corrective*: the "Corrections you should know about" table overturns
-seven widely circulated claims against the primary documents — the flash-crash report naming Waddell
+seven widely circulated claims against the primary documents, the flash-crash report naming Waddell
 & Reed (the string appears zero times in it), its "$1 trillion" loss (zero times), malleability causing Mt.
 Gox's 850,000 BTC (Decker and Wattenhofer instrumented the network and found 1,811.58 BTC in conflict sets in
 the year to 2014-02-07), and four more. That is a reason to cite us instead of the blog post people would
@@ -222,7 +235,7 @@ list* doing the same job in the other direction. Actions: stable per-incident an
 `incidents.json`, a canonical URL that does not move between releases.
 
 **2. "What we deliberately cut and why."** Second, and what makes a skeptic keep reading. A long list of
-candidate rules was rejected on one criterion — *competent code and current SDK defaults already get this
+candidate rules was rejected on one criterion, *competent code and current SDK defaults already get this
 right, so a rule restating it spends attention the rules that matter need.* `Decimal` and minor units,
 tick/step rounding, `MIN_NOTIONAL`, lock ordering, isolation levels, webhook signature verification, event-id
 dedupe, seven of nine matching-engine cancel semantics, confirmation depth: all considered, all cut. Credible
@@ -236,8 +249,8 @@ one table. Each vendor documents only itself, so it exists nowhere else. It is a
 artefact, with a half-life: a stale cell is worse than a blank one because it will be trusted. Ship per-cell
 dates, the "the venue file is the newer text wins" note, and re-verify before quoting.
 
-**4. Before/after code reviews.** Highest conversion when they land — the README's retry example is the whole
-pitch in twelve lines — and the most fabrication-prone format we have. Hard rule: a before/after may use only
+**4. Before/after code reviews.** Highest conversion when they land (the README's retry example is the whole
+pitch in twelve lines), and the most fabrication-prone format we have. Hard rule: a before/after may use only
 code a model actually produced on a published eval task, linked to its committed transcript; no hand-written
 "before" that no model produced. Without that rule this becomes marketing, and the temptation here is
 structural. The funnel: the catalogue brings people in, the cut-list makes them believe us, the divergence
@@ -259,7 +272,7 @@ tables make a practitioner install.
 - **A divergence cell with a dated citation**, and **tooling bugs**: installer, validator, harness.
 
 **The review bar.** `python3 scripts/validate.py` passes, mechanically and non-negotiably. A primary source,
-or it does not merge — not a blog post citing a blog post. And **behaviour-shaping text is not restructured
+or it does not merge, not a blog post citing a blog post. And **behaviour-shaping text is not restructured
 without before/after eval evidence**: adopt superpowers' standing policy in `CONTRIBUTING.md`, so PRs
 rewording rules to comply with external style guidance are declined without eval results. That rejects
 good-faith work, including a lot of agent-generated work, and is correct anyway.
@@ -268,10 +281,11 @@ good-faith work, including a lot of agent-generated work, and is correct anyway.
 it. Four mechanisms, all mechanical:
 
 1. **Budgets in CI, already partly built.** `validate.py` enforces 500 lines per `SKILL.md`, 430 chars per
-   description, 3,000 chars suite-wide, 8,192 bytes for `AGENTS.md`. Extend it with a **per-skill rule count**
-   read from `shared/invariants.yaml` and fail the build when the count rises.
+   description, 3,000 chars suite-wide, and a size ceiling on `AGENTS.md`. It also fails a retired rule id and
+   warns on an em dash and on a cited path that does not exist. Proposed extension: a **per-skill rule count**
+   read from a shared invariants file that does not exist yet, failing the build when the count rises.
 2. **Admission requires eviction.** With the rule count in CI, a PR adding a rule must either name the rule it
-   replaces or show the budget has room. Not a review norm someone enforces under social pressure — a red
+   replaces or show the budget has room. Not a review norm someone enforces under social pressure, a red
    build.
 3. **Every rule names the failure it prevents.** A rule that cannot point to an incident, a primary source
    documenting the trap, or a task on which the model exhibits the failure is not merged; a rule kept where
@@ -282,9 +296,10 @@ it. Four mechanisms, all mechanical:
    each major model release and delete every rule whose failure has stopped occurring. It is the only
    mechanism here that makes the rule set shrinkable rather than merely appendable.
 
-**The G1–G7 block is closed.** Seven standing rules, ≤8KB, no additions: a candidate always-on rule either
-fits inside an existing G-rule's text or goes in a skill. That block costs tokens on every turn of every
-user's session — the one budget where our growth is a direct tax on everyone who installed us.
+**The cross-cutting rule set is closed.** Seven rules, no additions: a candidate rule either fits inside an
+existing one's text or it goes in the domain skill where the failure happens. Seven is also what the routing
+block is allowed to imply, and that block costs tokens on every turn of every session that installs it, which
+is the one budget where our growth is a direct tax on everyone who installed us.
 
 ## 6. Ecosystem compatibility
 
@@ -304,21 +319,21 @@ artefact.
 **One change owed.** `.github/copilot-instructions.md` is a three-line pointer to `AGENTS.md` today. Copilot
 ranks `copilot-instructions.md` *above* `AGENTS.md` in its own precedence order, and agent instruction files
 are documented as not supported by all Copilot features. A pointer relies on the agent choosing to open what
-it points at — the discretionary-load failure this design exists to avoid. Write the full block.
+it points at, the discretionary-load failure this design exists to avoid. Write the full block.
 
 **Defer.**
 
 - **`gemini-extension.json`, `.codex-plugin/`, and the rest of the per-harness manifest set.** superpowers
   ships nine. Each is a release-time chore with a silent failure mode, and each reaches a runtime
   `.agents/skills/` already reaches. Rule: ship a manifest only when it reaches a runtime nothing else does.
-- **The `SessionStart` hook.** Real value — the difference between installed and activated — and real cost: it
+- **The `SessionStart` hook.** Real value, the difference between installed and activated, and real cost: it
   must emit exactly one JSON key per detected harness, because Claude Code reads both `additional_context` and
   `hookSpecificOutput.additionalContext` without deduplication and will double-inject; superpowers also hit a
   bash 5.3 heredoc hang doing it. Plugin path only, only after the harness shows it moves invocation rate,
   never load-bearing.
 - **claude.ai / Skills API upload.** A separate surface that does not sync, with no network access. Our value
   is in a repository next to code. Defer indefinitely.
-- **`.cursor/rules/*.mdc` and `.github/instructions/*.instructions.md`** — divergent copies of content already
+- **`.cursor/rules/*.mdc` and `.github/instructions/*.instructions.md`**, divergent copies of content already
   delivered, for runtimes already covered; they rot, and the rot is invisible. **`.cursorrules`** never: it is
   absent from Cursor's current docs, which is not a citation for deprecation, so do not assert one.
 
@@ -335,11 +350,11 @@ publish survives the same evidence audit as an incident file, or does not ship.
 
 **Badge collecting.** "Works with 77 agents" is a claim about a CLI's agent table, not about us; we have
 verified behaviour on approximately none of them. The honest claim is that we install into the directories
-those runtimes document, plus — once the evaluation runs — the two or three we actually ran it on. Same for
+those runtimes document, plus, once the evaluation runs, the two or three we actually ran it on. Same for
 stars, awesome-lists, and marketplace listings that require no proof.
 
 **Expanding into general security.** The distinction *is* the product. The first reentrancy section in
-`fin-onchain` makes us a worse `building-secure-contracts` and collapses the framing the suite rests on —
+`fin-onchain` makes us a worse `building-secure-contracts` and collapses the framing the suite rests on,
 *every component behaved exactly as specified.* Route out by name in the README; keep the exclusion list in
 `incidents/README.md`, where Wormhole is the worked example of a real bug that is somebody else's.
 
@@ -348,46 +363,60 @@ score"; accepting an incident because it is famous rather than because it change
 
 ## 8. Staged plan
 
-### v0.1 — what exists now
+### v0.1: what shipped first
 
-Seven skills of roughly 240–340 lines each, 2,955 of 3,000 description characters, `AGENTS.md` at 7,834 of
-8,192 bytes, G1–G7, 20 incident files behind a 51-row mapping table, `docs/rules.md`, `scope-adjudication.md`,
-`scripts/validate.py`, `scripts/install-guardrails.sh`, both plugin manifests, and the `.agents/skills` +
-`.claude/skills` symlinks. Not built, despite being specified in `architecture.md` §10: `evals/` (nothing at
-all), `shared/invariants.yaml` and the four checkers depending on it, any CI workflow (`.github/` holds one
-file), `CONTRIBUTING.md`, the npm package, the hook. Status in one line: **fully specified, not yet
-evaluated.**
+Seven skills of roughly 240 to 340 lines each, 2,955 of 3,000 description characters, `AGENTS.md` at 7,834 of
+8,192 bytes carrying seven numbered rules plus twelve invariants plus the dispatch table, 20 incident files
+behind a 51-row mapping table, `docs/rules.md`, `scope-adjudication.md`, `scripts/validate.py`,
+`scripts/install-guardrails.sh`, both plugin manifests, and the `.agents/skills` and `.claude/skills`
+symlinks. Status in one line: **fully specified, not yet evaluated.**
 
-### Gate v0.1 → v0.2 — three artefacts, not a date
+### v0.2: what is on disk now
+
+Same seven skills, restructured rather than rewritten. Each rule is a semantic proposition with a structural
+shape and an instantiation table, and it must survive renaming every identifier (`architecture.md` §0.1).
+The seven cross-cutting rules are cited by name and their numbered ids are retired (§0.2). Each skill is
+between 406 and 500 lines, and the seven descriptions sit inside the 3,000-character budget. `AGENTS.md` is
+1,464 bytes of routing, optional, stating no rule. The output contract is proportional: `FINANCIAL CHECK` at
+T0 and T1, the domain contract block at T2 and above, no mandatory risk table on a routine change (§0.3).
+`scripts/validate.py` grew checks for retired ids, em dashes, reference floors and cited paths, and
+`.github/workflows/validate.yml` runs it.
+
+Still not built, and each one is a proposal rather than a plan with a date: an `evals/` tree (nothing at all),
+a shared invariants tree and the coverage and parity checkers that depend on it, `CONTRIBUTING.md`, the npm
+package, the plugin hook. Status in one line: **restructured, still not evaluated.**
+
+### Gate v0.2 → v0.3: three artefacts, not a date
 
 1. The four-arm harness exists and has run on two models across **at least the refund, reconnect-and-resume
-   and realised-PnL families** — the three that most directly exercise the rules the suite leads with —
-   results committed.
-2. `gate-corpus.json` exists and G1's **false-negative rate is published**. Everything routes through the
-   gate, and it is currently five questions derived from failure modes rather than from real diffs.
-3. The results are published whatever they say — including `skills-only ≈ control`, and including
-   `guardrails-only ≈ control`. If the second holds, R2 is falsified and the architecture is wrong in its most
-   load-bearing decision. Better to learn that now than after asking people to install.
+   and realised-PnL families**, the three that most directly exercise the rules the suite leads with, results
+   committed.
+2. A labelled corpus of real diffs exists and the gate's **false-negative rate is published**. Everything
+   routes through *the economic-diff gate*, and it is currently five questions derived from failure modes
+   rather than from real diffs.
+3. The results are published whatever they say, including `skills-only ≈ control`, and including
+   `block-only ≈ control`. The second is now the more interesting outcome: v0.2 bet that rules inside the
+   skill beat rules inside the block, and the arm that would falsify that bet is the same one R2 asks for.
 
 Nothing else ships before this: not more incidents, not an eighth skill, not a marketplace listing.
 
-### v0.2 — evaluated, narrower, easier to install
+### v0.3: evaluated, narrower, easier to install
 
-- `evals/` complete; `docs/evaluation.md` generated; every rule in `rules.md` carrying a link to the result
-  that bears on it, with `unevaluated` rendered where that is true.
+- The evaluation harness complete, an evaluation page generated under `docs/`, and every rule in `rules.md`
+  carrying a link to the result that bears on it, with `unevaluated` rendered where that is true.
 - **Rules deleted on the eval data.** If a full run produces zero deletions, the harness is not
   discriminating, and that is the finding.
-- `npx fin-guardrails`, the README reordered so guardrails is step 1, and the full block written into
-  `.github/copilot-instructions.md`.
+- `npx fin-guardrails` for the optional block, and the full block written into
+  `.github/copilot-instructions.md` rather than a pointer to it.
 - `CONTRIBUTING.md` stating the rejection reasons up front, plus admission-requires-eviction and the
   rule-count budget in CI. `incidents.json`, stable anchors, and the cut-list as a standalone page.
 - The `fin-verification` question settled on trigger-eval evidence: keep, or merge into `fin-money-core`.
 
-### Gate v0.2 → v1.0
+### Gate v0.3 → v1.0
 
 1. **Convergence.** Every SHIP-strength check passing on every run, with zero spread, on at least two
-   models. A SHIP check that still spreads means that rule's wording is descriptive rather than binding — a
-   v0.2 bug, not a release note.
+   models. A SHIP check that still spreads means that rule's wording is descriptive rather than binding: a
+   v0.3 bug, not a release note.
 2. **Trigger evals pass.** ≥0.5 on positives, <0.5 on near-miss negatives, 20 labelled queries per skill,
    60/40 train/validation, with the four known-hard near-misses in by name: *"add a refund button"*, *"track
    my position across two exchanges"*, *"credit the user when the deposit confirms"* (must load **both**
@@ -395,13 +424,13 @@ Nothing else ships before this: not more incidents, not an eighth skill, not a m
    transactions and uploads to Postgres"* (must trigger nothing).
 3. **Gate false-negative rate below a published threshold**, survivors listed rather than summarised.
 4. **At least one external contribution merged under the review bar**, proving the bar is workable by someone
-   who did not write it — the one condition here that is a judgement call.
+   who did not write it, which is the one condition here that is a judgement call.
 
-### v1.0 — what it means
+### v1.0: what it means
 
 Stable rule identifiers, and semver on the rule spine: deleting a rule is a major, changing a rule's text with
 eval evidence is a minor, an incident or divergence cell is a patch. A published evaluation with committed raw
 transcripts, a documented deprecation path for rules, and the annual re-evaluation scheduled against major
-model releases. v1.0 is explicitly **not** more content — it is the same content with evidence attached and a
+model releases. v1.0 is explicitly **not** more content: it is the same content with evidence attached and a
 working mechanism for taking it away again. Not in v1.0 in any circumstance: an eighth skill, a hosted
 anything, general security coverage, or a manifest for a runtime `.agents/skills/` already reaches.

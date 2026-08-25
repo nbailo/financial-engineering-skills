@@ -1,4 +1,4 @@
-# Scope adjudication — four domains that asked for their own skill
+# Scope adjudication: four domains that asked for their own skill
 
 Four domains were researched after the taxonomy was decided, each by an agent asked to argue decisively
 whether it justified its own skill: **prediction markets**, **custody/wallets**, **clearing/settlement**, and
@@ -12,7 +12,7 @@ with it in the open.
 ## The binding constraint
 
 Skill *descriptions* are pre-loaded into the agent's system prompt for every installed skill. That listing has
-a budget — 1% of the context window in Claude Code, `min(2%, 8000 chars)` in Codex — and **it is shared with
+a budget (1% of the context window in Claude Code, `min(2%, 8000 chars)` in Codex) and **it is shared with
 every other suite the user has installed**, not reserved for this one. When it overflows, descriptions are
 dropped *starting with the least-invoked skills*, which is always a newly installed suite.
 
@@ -27,17 +27,17 @@ and no dispatch pointer could fix it.**
 ## Prediction markets → reference in `fin-exchange-integration`
 
 **The strongest argument made, and it is a good one:** on a binary venue the general CLOB rules are not merely
-incomplete, they are *inverted*. There is no short — you buy the complementary outcome. Two *bids* can cross
+incomplete, they are *inverted*. There is no short: you buy the complementary outcome. Two *bids* can cross
 each other, and the venue mints the instruments to settle them. The no-arbitrage invariant spans two books.
 Fee models are not `bps × notional` and can be wrong by two orders of magnitude, asymmetrically under an
 identity the venue itself guarantees. An agent applying general priors produces a **wrong collateral number on
 a correct-looking code path**.
 
 **Why it is still a reference.** The failure is real but it is *reachable by dispatch*. Every one of these
-mistakes is triggered by a literal token that is already in the developer's code or task text — `polymarket`,
+mistakes is triggered by a literal token that is already in the developer's code or task text: `polymarket`,
 `kalshi`, `conditionId`, `complete set`, `negRisk`, `payoutNumerators`. That is precisely the routing pattern
 with a demonstrated working implementation: a dispatch row keyed on an observable literal, with an
-anti-paraphrase imperative. The material is deep, stable, and lookup-shaped — the shape references are for.
+anti-paraphrase imperative. The material is deep, stable, and lookup-shaped, which is the shape references are for.
 
 **Therefore:** `fin-exchange-integration/references/prediction-markets.md`, reached by a mandatory dispatch row
 on those literals, and the venue names appear in the skill's frontmatter description so the skill loads at all.
@@ -46,7 +46,7 @@ Promote to its own skill in v2 if usage shows the dispatch row is being skipped.
 ## Custody / wallets → `fin-onchain` broadens to own the wallet's own state
 
 **The strongest argument made, and it changed the design:** custody software maintains a **third state** that
-is neither the chain nor the ledger — the wallet's own view of which outputs are mine, which are spendable,
+is neither the chain nor the ledger: the wallet's own view of which outputs are mine, which are spendable,
 which nonce is next, which address index is next, which signing sessions are live. Almost every custody bug is
 a divergence between that third state and one of the other two. *A skill with no name for the wallet's own
 state cannot express these rules.*
@@ -55,7 +55,7 @@ The original decomposition claimed custody splits cleanly: keys, nonces and conf
 balances and solvency to `fin-ledger`. **That claim was wrong**, and the brief demonstrates it: UTXO change
 outputs and coin selection, derivation paths and gap limits, sweep and gas-tank architecture, memo/tag deposit
 routing, and withdrawal batching with partial failure belong to neither. `fin-onchain` as originally scoped was
-implicitly EVM-flavoured — nonces, logs, decimals — and had no account of UTXO transaction construction, where
+implicitly EVM-flavoured (nonces, logs, decimals) and had no account of UTXO transaction construction, where
 a change output sent to a fee is a total, silent loss.
 
 The brief also produced the sharpest counter-example in the batch: the rule "spendable ≠ confirmed" is true on
@@ -79,7 +79,7 @@ operator's own pipeline, and that skill already carries `and-settlement` in its 
 identity (`EndToEndId`, `TxId`, `UETR`) and the recall/return flow are payments-rail concerns and go to
 `fin-payments`, which already owns rail irrevocability.
 
-No promotion: the audience is small, and unlike prediction markets there is no inverted default — an agent
+No promotion: the audience is small, and unlike prediction markets there is no inverted default: an agent
 without this knowledge is *incomplete*, not confidently wrong.
 
 ## Accruals / corporate actions → split by where the failure happens
