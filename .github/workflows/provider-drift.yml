@@ -11,9 +11,19 @@ name: provider-drift
 # behind. When something here is stale, a maintainer re-reads the source and files the report
 # by hand; .github/ISSUE_TEMPLATE/provider-drift.md is the shape for that.
 #
-# The output lands in the job summary so it is readable without opening logs. The job exits 0
-# whatever it finds: a stale date is expected in a repository that pins vendor behaviour, and
-# a red cross on a scheduled job trains people to ignore it.
+# The output lands in the job summary so it is readable without opening logs.
+#
+# THE JOB FAILS WHEN A REQUIRED SOURCE IS STALE, and that is a deliberate reversal. It used to
+# exit 0 whatever it found, on the argument that a red cross on a scheduled job trains people
+# to ignore it. The argument is real and the cost of the alternative is worse: a report that is
+# green while its evidence is stale converts "nobody has looked" into "somebody checked", which
+# is the exact failure this repository exists to argue against. The report classifies every
+# provenance block as currently revalidated, sourced but revalidation pending, or illustrative
+# or historical only, and fails on the middle state. Clearing it takes one of two honest acts,
+# both by a person: re-read the source and move verified_at, or declare the file
+# `classification: illustrative` and stop presenting it as a current claim.
+#
+# The summary is published whether the report passes or fails, so a red run is still readable.
 
 on:
   schedule:
@@ -50,6 +60,9 @@ jobs:
         id: report
         env:
           MAX_AGE_DAYS: ${{ github.event.inputs.max_age_days || '90' }}
+        # pipefail is what makes the step carry the report's verdict rather than tee's. The
+        # report writes drift-report.txt before it exits, so the summary step below still has
+        # the whole thing to publish on a failing run.
         run: |
           set -euo pipefail
           python3 scripts/validate.py --provenance-report --max-age-days "$MAX_AGE_DAYS" \
@@ -60,9 +73,10 @@ jobs:
           {
             echo '## Provider evidence age'
             echo
-            echo 'This job reports only. It never edits a verified_at date, opens an issue, or'
-            echo 'commits. Re-read the source, then move the date by hand if the source still'
-            echo 'says what the file says.'
+            echo 'This job never edits a verified_at date, opens an issue, or commits. It'
+            echo 'fails when a required source is past its revalidation trigger, and the only'
+            echo 'two things that clear it are done by a person: re-read the source and move'
+            echo 'the date, or declare the file illustrative and stop citing it as current.'
             echo
             echo '```'
             cat drift-report.txt

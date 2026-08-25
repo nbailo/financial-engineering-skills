@@ -1,0 +1,16 @@
+# Who to expect a review from. This file is transparency, not a gate.
+#
+# It does NOT require code-owner approval, and branch protection on this repository must not
+# turn on "Require review from Code Owners". There is one active maintainer, so a rule that
+# can block that maintainer from merging is a defect rather than a control. What gates a
+# merge here is the validate workflow: scripts/validate.py and scripts/eval_routing.py.
+
+*                       @nbailo
+
+# Same owner, listed so the areas a contributor is most likely to touch are explicit.
+/skills/                @nbailo
+/advanced/              @nbailo
+/incidents/             @nbailo
+/scripts/               @nbailo
+/evals/                 @nbailo
+/.github/               @nbailo

@@ -34,9 +34,14 @@ jobs:
       # validator and are deliberately not restated here.
       - run: python3 scripts/validate.py
       # Routing is the product's first correctness property: a skill that never loads is a
-      # skill that does nothing. These fixtures cover a positive and a negative case for each of
-      # the eight skills, including near-misses that must load nothing at all.
-      - run: python3 scripts/eval_routing.py
+      # skill that does nothing. This is a LINT over the words in each description, not an
+      # evaluation of routing: no model runs, and a green result is not evidence that an agent
+      # routes correctly. It catches the regression this suite keeps having, which is a
+      # description losing the vocabulary of the tasks it owns. The fixture carries at least
+      # five positive and five negative cases for each of the eight skills, the minimum is
+      # enforced by the lint itself, and a skill it predicts that a case did not ask for fails
+      # unless that case records it.
+      - run: python3 scripts/lint_routing_lexical.py
       # examples/prediction-market-bot/ is executable, not prose: a fake in-process venue,
       # a safe bot, a counter-example, and a frozen event log. The runner is unittest, so it
       # adds no dependency, and its network guard raises on any socket, name lookup or
@@ -83,43 +88,23 @@ jobs:
           git ls-files -z '*.sh' | xargs -0 -r shellcheck --
 
   routing-block-installer:
-    runs-on: ubuntu-latest
+    # scripts/install-guardrails.sh writes into files it did not create, in a repository that
+    # is not ours. This suite is the evidence for every guarantee its header states: refusal
+    # of symlinks, non-regular files, multiply linked files and unbalanced markers; unique
+    # temporary files inside the destination; preserved modes and preserved bytes outside the
+    # block; replacement by rename; full rollback after a partial failure and after a signal;
+    # and a byte-identical install-then-uninstall round trip. It runs on both userlands the
+    # script claims to support, because the BSD and GNU behaviours of stat, find and mktemp
+    # differ in ways that a Linux-only run would not catch.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: install is idempotent and uninstall restores the host file
-        run: |
-          set -euo pipefail
-          # Three host shapes. The first is what an editor writes and is the guarantee the
-          # README states: byte-identical. The other two document the normalisation, so a
-          # change that alters it fails here instead of quietly breaking the claim.
-          mkdir -p /tmp/host
-          printf '# Host\n\npara one\n\npara two\n' > /tmp/host/normal
-          printf '# Host\n\npara one\n\n\n\n'      > /tmp/host/trailing-blanks
-          printf '# Host\n\npara one'                 > /tmp/host/no-final-newline
-
-          run_case () {
-            d=/tmp/host/$1.d; rm -rf "$d"; mkdir -p "$d"
-            cp "/tmp/host/$1" "$d/AGENTS.md"
-            ./scripts/install-guardrails.sh "$d"
-            a=$(sha256sum < "$d/AGENTS.md")
-            ./scripts/install-guardrails.sh "$d"
-            b=$(sha256sum < "$d/AGENTS.md")
-            [ "$a" = "$b" ] || { echo "install is not idempotent for $1"; exit 1; }
-            ./scripts/install-guardrails.sh --uninstall "$d"
-          }
-
-          run_case normal
-          diff /tmp/host/normal /tmp/host/normal.d/AGENTS.md \
-            || { echo "uninstall is not byte-identical for the normal case"; exit 1; }
-
-          # Normalised cases: content must survive, whitespace may not.
-          for c in trailing-blanks no-final-newline; do
-            run_case "$c"
-            diff <(sed -e 's/[[:space:]]*$//' "/tmp/host/$c" | grep -v '^$') \
-                 <(sed -e 's/[[:space:]]*$//' "/tmp/host/$c.d/AGENTS.md" | grep -v '^$') \
-              || { echo "uninstall lost content for $c"; exit 1; }
-          done
-          echo ok
+      - name: hostile installer suite
+        run: ./scripts/test-install-guardrails.sh
