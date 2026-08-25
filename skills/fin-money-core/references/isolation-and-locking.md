@@ -1,10 +1,10 @@
-# Concurrency and failure boundaries
+# Isolation and locking
 
-The mechanism behind two invariants: *concurrency on authoritative state* and the durability half of
-*operation identity*, where an external money call is three phases and the first one commits. Everything here concerns the two windows in which
-correct-looking code produces an economically wrong outcome: between reading a balance and writing it, and
-between an external effect and the local record of it. Engine semantics are stated per `(engine, level)`,
-because the label is not the guarantee.
+The mechanism behind *concurrency on authoritative state*: the window between reading a balance and
+writing it, and the boundary that has to enclose both. Engine semantics are stated per `(engine, level)`,
+because the label is not the guarantee. Locks that must hold across processes are in
+`distributed-locks-and-fencing.md`; the window between an external effect and the local record of it is in
+`crash-boundaries-and-outbox.md`.
 
 ## Contents
 
@@ -14,14 +14,7 @@ because the label is not the guarantee.
 - [The retry: what a 40001 handler must re-execute](#the-retry-what-a-40001-handler-must-re-execute)
 - [The decorative transaction](#the-decorative-transaction)
 - [Verifying the boundary encloses the check→act region](#verifying-the-boundary-encloses-the-checkact-region)
-- [Cross-process lock keys: `hash()` is salted](#cross-process-lock-keys-hash-is-salted)
-- [Fencing tokens, and why a lease alone is insufficient](#fencing-tokens-and-why-a-lease-alone-is-insufficient)
-- [Persist intent → external effect → persist outcome](#persist-intent--external-effect--persist-outcome)
-- [The dual-write problem and the transactional outbox](#the-dual-write-problem-and-the-transactional-outbox)
-- [Compensation is not rollback](#compensation-is-not-rollback)
-- [Artefact templates: read-then-write, and crash points](#artefact-templates-read-then-write-and-crash-points)
-
----
+- [Artefact template: read-then-write](#artefact-template-read-then-write)
 
 ## Per-engine isolation: what each level actually permits
 
@@ -213,200 +206,12 @@ Mechanical, and executable on a diff:
    while broadcasting a transaction keyed on the *nonce* satisfies duration and determinism and still races.
 6. **Confirm no external call is inside.** For external effects steps 3 and 6 conflict on purpose: an HTTP
    call must **not** be lexically inside a transaction block; it rolls back the intent row on exception and
-   holds row locks for the counterparty's latency. Solved not by a longer transaction but by
-   [persist intent → effect → outcome](#persist-intent--external-effect--persist-outcome).
+   holds row locks for the counterparty's latency. Solved not by a longer transaction but by persist intent,
+   external effect, persist outcome, which `crash-boundaries-and-outbox.md` states with a crash point per phase.
 7. **Test with two processes, not two threads.** A single-process test passes for every one of the six
    instances above and every defect in the next section.
 
-## Cross-process lock keys: `hash()` is salted
-
-```python
-# found independently in 2 of 3 H-withdrawal reps
-conn.execute("SELECT pg_advisory_xact_lock(%s)", (hash(chain) & 0x7FFFFFFF,))
-```
-
-Python's `hash()` is randomised per interpreter by `PYTHONHASHSEED` for `str`, `bytes` and `datetime` objects
-(on by default since 3.3). Verified locally: `hash('ethereum')` returns a different value in every process,
-while `hash(1) == 1` in all of them. So **every replica computes a different advisory-lock key**, the
-fleet-wide mutual exclusion protects nothing, and the code passes every single-process test and every review
-that does not know about the salt. One rep's design notes claim "two app servers or two workers cannot mint
-the same nonce" directly above this line. The precision matters: the defect hashes a chain *name*, so it
-manifests; had `chain` been an integer chain id, `hash()` would be the identity function and nothing would
-show. State the rule as "require a stable digest regardless of the key's current type", never "don't hash
-strings."
-
-```python
-import zlib
-def advisory_key(namespace: str, subject: str) -> int:
-    """Stable across processes, releases, and interpreters. Fits pg_advisory_xact_lock(bigint)."""
-    lo = zlib.crc32(subject.encode("utf-8"))            # deterministic, documented, not salted
-    hi = zlib.crc32(namespace.encode("utf-8"))
-    return ((hi << 32) | lo) - (1 << 63)                # map into signed bigint
-```
-
-Or, where the key space is small and known, a checked-in integer registry
-(`LOCK_NAMESPACE = {"withdrawal_nonce": 1, "payout_batch": 2}`) plus the two-argument
-`pg_advisory_xact_lock(namespace_int, subject_int)`. Two properties either form must have:
-
-- **Stable across deploys.** A digest whose input includes a version string, a pod name, a `uuid4()`, or an
-  enum's `auto()` ordinal reintroduces the defect on the next release.
-- **Namespaced.** PostgreSQL advisory locks share one key space per database across every caller in it, so two
-  unrelated subsystems that both `crc32` a customer id silently serialise against each other. Reserve the
-  high 32 bits for the namespace.
-
-`pg_advisory_xact_lock` releases at `COMMIT`/`ROLLBACK` and is the right default; `pg_advisory_lock` releases
-only on explicit unlock or session end and leaks on an exception path.
-
-## Fencing tokens, and why a lease alone is insufficient
-
-A lease with a TTL does not stop a paused holder from acting: a GC pause, an arbitrary packet delay, or a
-clock jump can each outlive it. Kleppmann's sentence, "if the GC pause lasts longer than the lease expiry
-period, and the client doesn't realise that it has expired, it may go ahead and make some unsafe change."
-Redis's `gettimeofday` "is subject to discontinuous jumps in system time", so the lock service's own notion of
-expiry is not reliable either. The shape (FM-17): worker 1 acquires the lease, GC-pauses past expiry, worker 2
-takes the lease and posts entries, worker 1 resumes and posts *its* entries against a state that has moved.
-**Both sets land, and no exception is raised anywhere.**
-
-The fix is a monotonically increasing **fencing token** on every write, and the load-bearing half is where it
-is checked: "the storage server remembers that it has already processed a write with a higher token number …
-and so it rejects the request." A token the resource does not check is decoration.
-
-```sql
--- enforcement at the resource, not at the lock service
-UPDATE settlement_batches
-   SET state = 'sealed', sealed_by_epoch = :epoch
- WHERE batch_id = :id
-   AND COALESCE(sealed_by_epoch, -1) < :epoch;   -- rowcount 0 ⇒ a newer epoch already acted; abort, do not retry
-```
-
-Two further requirements the corpus establishes:
-
-- **Advance the epoch on every unit of work, not only on failover.** A coarse epoch lets a delayed control
-  message be applied to the *next* unit of work. Precisely KAFKA-17754: no ordering of `EndTxn` across
-  connections plus rarely-bumped producer epochs meant a delayed commit landed on the following transaction,
-  producing "aborted reads, lost writes, and torn transactions", triggered by *following the official
-  documentation* (abort after a commit timeout) and by the Java client's own retries. KIP-890/TV2 bumps the
-  epoch on every transaction and is the server default from Kafka 4.0.
-- **A "single active writer" (matching engine, sequencer, settlement batcher) is enforced by the storage
-  layer's token check, not by deployment discipline.** Kafka's `transactional.id` exists for this:
-  `InitPidRequest` "bumps up the epoch of the PID, so that any previous zombie instance of the producer is
-  fenced off", and without it "we can only guarantee idempotent production within a single producer session."
-
-## Persist intent → external effect → persist outcome
-
-Two Generals: there is exactly one sound shape, and it is not a bigger transaction.
-
-```
-1. BEGIN; INSERT intent(id, idem_key, target, request_bytes, state='INFLIGHT'); COMMIT;   ← COMMIT, not flush()
-2. response = provider.call(request_bytes, idempotency_key=idem_key)                      ← outside any txn block
-3. BEGIN; UPDATE intent SET state='DONE'/'FAILED', provider_ref=…; <state change>; COMMIT;
-```
-
-- **`flush()` is not persistence.** Two control-experiment reps wrote the intent row inside an open
-  transaction and then `db.rollback()` on the exact ambiguous timeout the row exists for: one with the
-  docstring *"Reserve a local row first so we always have a record even if the Stripe call times out"*,
-  contradicted four lines later by `db.rollback()`.
-- **No `with session.begin()` / `engine.begin()` / `@transaction.atomic` may lexically enclose step 2.** Such
-  a block rolls back on exception with no `rollback` token anywhere in the diff, so the defect is invisible to
-  a grep and invisible to review. This is why step 6 of the boundary check is a separate check.
-- **Crash points, and the recovery action for each** (this is the crash-point artefact):
-
-| Crash between | State on disk | Recovery action |
-|---|---|---|
-| 1 and 2 | `INFLIGHT`, no effect | Query the provider by `idem_key`; not found ⇒ re-send the stored bytes under the same key |
-| inside 2 (timeout / socket close / 5xx) | `INFLIGHT`, effect **unknown** | Query by `idem_key`. Never re-send blind, never mark failed |
-| 2 and 3 | `INFLIGHT`, effect **happened** | Query by `idem_key`, converge to the recorded outcome |
-| inside 3 | `INFLIGHT`, effect happened | Same as above; step 3 is idempotent because it is keyed on `idem_key` |
-
-- **Every field written pre-effect is read by the recovery path.** A startup
-  `resolve_unresolved_intents()` that loads each `INFLIGHT` row, queries the counterparty with the persisted
-  identity, and converges to exactly one effect. The common shape of this bug: `phase=BUY_PLACED` is journalled
-  before the POST and `buy_order_id` written *after*, so resume calls `get_order(None)` → `ValueError`. The persisted
-  client id (the entire point) was never read on the crash it existed for. **A persisted identity no code
-  path reads back is the same defect as not persisting it.**
-- **Bound the retries and terminate in a state, not a loop.** Jepsen flagged TigerBeetle clients that
-  "continuously retry requests until they receive a reply" as an unresolved hazard: infinite retry converts
-  definite errors into indefinite ones. The terminal state is `UNRESOLVED` plus an alert, not `FAILED`.
-
-## The dual-write problem and the transactional outbox
-
-A database write and a message publish as two independent operations fails two ways, **neither raising an
-exception**:
-
-```python
-with db.transaction():          # FM-12
-    debit_account(...)
-publish("payment.debited", ...) # process dies here: the ledger moved, nothing downstream knows
-
-publish("payment.debited", ...) # FM-13
-with db.transaction():
-    debit_account(...)          # constraint violation ⇒ rollback; downstream credits a debit that never happened
-```
-
-Kleppmann on the reordering variant: the two datastores "are inconsistent with each other, and they will
-permanently remain inconsistent", and "you probably won't even notice … because no errors occurred."
-
-The outbox moves the atomicity boundary inside one transaction:
-
-```sql
-CREATE TABLE outbox (
-  id bigserial PRIMARY KEY, aggregate text NOT NULL,
-  aggregate_id text NOT NULL,                 -- the business identity consumers dedupe on
-  event_type text NOT NULL, payload jsonb NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  published_at timestamptz                    -- NULL ⇒ unpublished
-);
-BEGIN;                                        -- one transaction, all three writes
-  UPDATE accounts SET balance_minor = balance_minor - :amt WHERE id = :src AND balance_minor >= :amt;
-  INSERT INTO entries (...) VALUES (...);
-  INSERT INTO outbox (aggregate, aggregate_id, event_type, payload) VALUES ('transfer', :transfer_id, 'transfer.posted', :payload);
-COMMIT;
-```
-
-**What the outbox does not do: remove duplicates.** The relay reads unpublished rows, publishes, then marks
-them published, and can crash between the two, so delivery is at-least-once forever. Consumers must dedupe on
-the **business identity of the effect**, not the transport's message id: Stripe states that two separate
-`Event` objects can describe the same underlying fact, so dedupe on `data.object.id` + `event.type`. That
-dedupe row commits in the same transaction as the balance mutation it protects; an in-memory `_seen_ids` set,
-an `@lru_cache`, a module-level `set()` or any process-local dict evaporates on restart, which is exactly
-when the redelivery arrives.
-
-Do not reach for XA/2PC instead without an operator-owned transaction manager: PostgreSQL states
-`PREPARE TRANSACTION` "is not intended for use in applications or interactive sessions", that a lingering
-prepared transaction "continues to hold whatever locks it held" and blocks `VACUUM` to the point that it
-"could cause the database to shut down to prevent transaction ID wraparound", and recommends
-`max_prepared_transactions = 0`.
-
-## Compensation is not rollback
-
-A saga is a sequence of local transactions where a business-rule failure triggers "a series of compensating
-transactions that undo the changes." microservices.io states the deficiency on the same page: sagas are **ACD,
-not ACID**: "Lack of isolation (the 'I' in ACID) … concurrent execution of multiple sagas and transactions
-can [cause] data anomalies." A balance can be observed and acted on in a state later compensated away.
-
-Three properties that separate compensation from rollback:
-
-1. **A compensation is a new economic fact, appended after the original and visible to anyone who looked in
-   between**, with its own fees, FX, tax and timestamp. Never model it as an `UPDATE`/`DELETE` of the original
-   posting; the original was observable, and erasing it corrupts history and breaks reconciliation.
-2. **A compensation is delivered at-least-once like everything else**, so it carries its own idempotency key
-   *derived from the action it compensates*. `refund(order)` executed twice refunds twice.
-3. **For an economically irreversible effect there is no compensating action at all**: only a new transfer in
-   the opposite direction, requiring the counterparty still to hold the funds, be solvent, and be reachable.
-   After settlement finality, an on-chain send, or a cleared card capture, none of that is guaranteed, and
-   the saga reaches a state with no terminal transition.
-
-The design decision must be made **before** the irreversible step. Helland's formulation: use a *tentative
-operation* with an explicit right to cancel: "Essential to a tentative operation, is the right to cancel …
-Every tentative operation eventually confirms or cancels." That is **reserve → confirm/cancel**, not
-**do → undo**. TigerBeetle implements exactly this natively: a `pending` transfer reserves into
-`debits_pending`/`credits_pending` and leaves posted balances untouched; resolution is post, void, or expiry
-by timeout and happens **exactly once** (`pending_transfer_already_posted` / `pending_transfer_already_voided`
-/ `pending_transfer_expired`), the resolving transfer being a *new* record carrying a `pending_id`
-back-reference. And "compensation failed" is a reachable state needing a terminal transition and a human
-escalation path, not a retry loop.
-
-## Artefact templates: read-then-write, and crash points
+## Artefact template: read-then-write
 
 One row per read-then-write on an authoritative quantity. The last column is what makes the row
 falsifiable: if you cannot write the interleaving, you have not found the fix.
@@ -416,6 +221,3 @@ falsifiable: if you cannot write the interleaving, you have not found the fix.
 | `wallet.py:212` | PG RC | conditional `UPDATE`, no lock | none needed | none (predicate is in the write; rowcount asserted) |
 | `withdraw.py:88` | PG RC | `FOR UPDATE` on `withdrawals.id`; **released at the `engine.begin()` dedent, line 94**; act at line 103 | none | admin `reject()` runs between 94 and 103; broadcast lands; balance reversed too |
 | `limits.py:41` | PG RR | none | none | two `INSERT`s of different positions each pass `SUM(notional) <= limit` |
-
-The recovery artefact uses the crash-point table above as its four canonical rows. A row with no recovery action says the
-money is unrecoverable.

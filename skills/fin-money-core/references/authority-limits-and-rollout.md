@@ -25,25 +25,42 @@ adds or moves a cap, or when it reuses an existing flag, enum, helper or config 
 
 ## Reporting authority and exposure
 
-Two orthogonal fields, reported on one line whenever the change is economic:
+Two fields, reported on one line whenever the change is economic:
 
 ```
 authority: EXTERNAL (Binance) · exposure: own
 ```
 
-**Authority** is whether anything outside your process can tell you that you are wrong.
+**Authority** is whether anything outside your process can tell you that a quantity is wrong.
 
-- `EXTERNAL`: a venue, a processor, a chain, a bank. Its copy is the record, reconciliation against it is
-  available, and reconciliation is therefore the primary proof.
-- `SELF`: nothing outside holds the truth. A system-of-record ledger, a matching engine, an ID assigner, a
-  custody signer's own view of its funds and nonces. Replay, determinism and conservation assertions are the
-  proof, because there is nothing to reconcile against.
+- `EXTERNAL`: a venue, a processor, a chain, a bank holds the record for that quantity. Reconciliation
+  against it is available, and reconciliation is therefore the primary proof.
+- `SELF`: nothing outside holds the truth for that quantity. A system-of-record ledger, a matching engine, an
+  ID assigner, a custody signer's own view of its funds and nonces. Replay, determinism and conservation
+  assertions are the proof, because there is nothing to reconcile against.
+
+**Authority is a property of a quantity, not of a codebase, and not of a process.** One process routinely
+holds external authority for settlement state, self authority for the liabilities it books against that
+state, self authority for its wallet nonce and signing state, and external authority for chain inclusion. A
+single finding may also carry its own authority, where that is what makes it a finding.
+
+Where one authority covers every quantity in scope, emit the single line above. Where it does not, emit
+`MIXED` and qualify the quantities that differ, one line each, two or three of them:
+
+```
+authority: MIXED · exposure: customer
+  settlement state      EXTERNAL (Stripe)
+  internal liabilities  SELF
+```
+
+Two or three qualifiers, never a taxonomy and never a matrix. It stays cheap to emit and cheap to read.
 
 **Exposure** is whose money is lost when the code is wrong: `own` capital, a `customer`'s funds, or the
 integrity of a `record` other systems consume.
 
-Exposure decides how much evidence. Authority decides which kind. Do not build a matrix of sixteen cells.
-fin-verification maps the required evidence to the technique that produces it.
+Exposure decides how much evidence. Authority decides which kind, per quantity: reconcile what something else
+holds, replay and conserve what only you hold. fin-verification maps a property to the mechanism that proves
+it.
 
 ## The retired T0 to T3 scale, and what it encoded
 
@@ -128,9 +145,10 @@ Three incidents, each isolating a different half of that rule.
 
 ## Where the anomaly signal goes
 
-The signal goes to a destination that is configured, fail-closed, and read by a human on a schedule: a config
-key with no default, so a missing configuration raises rather than silently degrading to nowhere. Not a log
-line, not a metric nobody alerts on, not a distribution list.
+The signal goes to a destination that is configured, fail-closed, and read by a human on a schedule. The
+property is that an unconfigured destination stops the money path rather than degrading silently to nowhere;
+a config key with no default, read where a miss raises before any value moves, is one mechanism that gets
+there. Not a log line, not a metric nobody alerts on, not a distribution list.
 
 **Knight ¶23 and ¶24** is the counter-example that names the failure precisely: the 33 Account's $2m limit
 was *"linked to no automated controls"*. The number existed, was correct, was breached, and nothing was

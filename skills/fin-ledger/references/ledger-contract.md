@@ -2,8 +2,8 @@
 
 Two artefacts. The **verb index** says, for the operation you are actually writing, which artefacts have to be
 visible in the diff before the path counts as done. The **ledger contract block** is the richer output form,
-emitted only when this system is its own authority for the balance (`authority: SELF`) and the change adds,
-routes or reshapes a write to the entries. For anything smaller, the default finding entries in `SKILL.md` are
+emitted only when this system is its own authority for the balance in scope (`authority: SELF` for that
+quantity, including inside a `MIXED` report) and the change adds, routes or reshapes a write to the entries. For anything smaller, the default finding entries in `SKILL.md` are
 the whole output.
 
 Neither is a new rule. Both are the same invariants read from the other end: instead of "here is the property",
@@ -77,8 +77,10 @@ the common one.
 
 Three kinds of change are not the system of record for the balance and stay on findings alone:
 
-1. **A mirror.** A ledger that reflects an external processor and is reconciled against it has
-   `authority: EXTERNAL`, and the proof that matters is the reconciliation, not the internal contract table.
+1. **A mirror.** For a balance that only reflects an external processor and is reconciled against it,
+   authority for that quantity is `EXTERNAL`, and the proof that matters is the reconciliation, not the
+   internal contract table. A quantity the same ledger originates itself is not a mirror, and the block still
+   applies to it.
 2. **A read-only derivation.** A report, an export or an as-of query that writes no balance changes nothing
    another system will be owed.
 3. **No reachable value-moving path.** A fixture, a paper or dry-run mode with every host a sandbox, or a
@@ -92,8 +94,8 @@ reporting view is below it.
 ## 5 · Evidence when authority is SELF
 
 A ledger of record has no external oracle to reconcile against, so the evidence has to come from replay,
-determinism and conservation instead. Load `fin-verification` alongside this skill and emit one row per proof
-technique it marks required for a system that is its own authority, each row marked PRESENT or ABSENT with its
+determinism and conservation instead. Load `fin-verification` here, because this is a case where the ledger demands stronger proof, and emit one row
+per proof mechanism that fits a self-authoritative quantity, each row marked PRESENT or ABSENT with its
 `file:line`. The techniques that carry the weight here are the ones that survive without an external
 counterparty:
 
