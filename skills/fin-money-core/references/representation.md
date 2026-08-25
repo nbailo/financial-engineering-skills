@@ -3,7 +3,7 @@
 The mechanism behind MC1 and MC2: which concrete type holds an obligation in each language, which column
 type holds it in each database, where the scale comes from, and the six boundaries at which a correct
 in-memory value is silently degraded on its way to storage or to a counterparty. Everything here assumes the
-obligation/estimate split is already the question — a value a counterparty can demand is an obligation and
+obligation/estimate split is already the question: a value a counterparty can demand is an obligation and
 lives its whole life exact; a value nobody can demand is an estimate and binary floating point is the
 correct type for it. Read this before you declare the column, the struct field, or the protobuf message.
 
@@ -25,8 +25,8 @@ correct type for it. Read this before you declare the column, the struct field, 
 
 The observable predicate is **"can a counterparty send you a message that says *you owe me this number*?"**
 If yes, it is an obligation: integer minor units, a scaled integer with a declared exponent, or an
-arbitrary-precision decimal constructed only from `str`/`int`. If no — greeks, implied vol, VaR, Monte Carlo
-paths, backtest statistics, ML features, chart coordinates — binary64 is correct, because the functions those
+arbitrary-precision decimal constructed only from `str`/`int`. If no (greeks, implied vol, VaR, Monte Carlo
+paths, backtest statistics, ML features, chart coordinates), binary64 is correct, because the functions those
 values need (`exp`, `ln`, `sqrt`, `Φ`, matrix decompositions, root-finders) are inexact in every radix and
 model error dominates 1e-16 by ten or more orders of magnitude.
 
@@ -34,10 +34,10 @@ model error dominates 1e-16 by ten or more orders of magnitude.
 |---|---|---|---|---|
 | **Python** | `int` minor units, or `decimal.Decimal` built **only** from `str`/`int` | `Decimal` inside an explicit `localcontext(prec=…)`, one `quantize()` at the boundary | `Decimal(0.1)` → `Decimal('0.1000000000000000055511151231257827021181583404541015625')` | none for `==`; `Decimal('1.30')+Decimal('1.20')` is `2.50`, trailing zeros are significant |
 | **TypeScript/JS** | `bigint` minor units, or Dinero.js v2 / `big.js` / `decimal.js` | `big.js`/`decimal.js`, never `number` | `Number(x)`, `parseFloat`, `JSON.parse` of a numeric amount | `toFixed()` rounds the *float's* value: `(1.005).toFixed(2) === "1.00"` |
-| **Go** | `int64`/`int128` minor units, or `shopspring/decimal` | `shopspring/decimal`; `Div` reads a **package-global** `DivisionPrecision` — use `DivRound`/`RoundBank` with an explicit precision per call | `decimal.NewFromFloat(x)` | scan nullable columns as `decimal.NullDecimal`, not `*float64` |
-| **Rust** | `i128`/`u128` minor units, or `rust_decimal::Decimal` | `rust_decimal` `checked_*` variants; `num-rational` for intermediate pro-rata | `Decimal::from_f64_retain` | bounded type — see [overflow](#integer-width-and-overflow) |
-| **Java** | `long` minor units, `BigDecimal` from `String`, or JSR-354 `Money` | `BigDecimal` with an explicit `MathContext` **and** an explicit `RoundingMode` on every `divide`/`setScale` | `new BigDecimal(0.1)` | `new BigDecimal("2.0").equals(new BigDecimal("2.00"))` is **false** — use `compareTo` |
-| **C#** | `long` minor units, or `decimal` | `decimal` with `Math.Round(x, n, MidpointRounding.…)` — the argument is not optional in a money path | `(decimal)someDouble` | `Math.Round` without `MidpointRounding` silently uses banker's (`ToEven`) |
+| **Go** | `int64`/`int128` minor units, or `shopspring/decimal` | `shopspring/decimal`; `Div` reads a **package-global** `DivisionPrecision`; use `DivRound`/`RoundBank` with an explicit precision per call | `decimal.NewFromFloat(x)` | scan nullable columns as `decimal.NullDecimal`, not `*float64` |
+| **Rust** | `i128`/`u128` minor units, or `rust_decimal::Decimal` | `rust_decimal` `checked_*` variants; `num-rational` for intermediate pro-rata | `Decimal::from_f64_retain` | bounded type; see [overflow](#integer-width-and-overflow) |
+| **Java** | `long` minor units, `BigDecimal` from `String`, or JSR-354 `Money` | `BigDecimal` with an explicit `MathContext` **and** an explicit `RoundingMode` on every `divide`/`setScale` | `new BigDecimal(0.1)` | `new BigDecimal("2.0").equals(new BigDecimal("2.00"))` is **false**; use `compareTo` |
+| **C#** | `long` minor units, or `decimal` | `decimal` with `Math.Round(x, n, MidpointRounding.…)`; the argument is not optional in a money path | `(decimal)someDouble` | `Math.Round` without `MidpointRounding` silently uses banker's (`ToEven`) |
 
 Two carve-outs that stop this from being the useless "never use a float" rule:
 
@@ -47,7 +47,7 @@ serialization step and nothing else. Deribit `/private/buy` declares `amount` an
 `LmtPrice` and `AuxPrice` as `double` while `TotalQuantity` is `decimal`
 (<https://interactivebrokers.github.io/tws-api/classIBApi_1_1Order.html>). Compute and store exact, convert
 once at the boundary, assert the encoding round-trips (`Decimal(repr(f)) == exact`), and re-derive the
-authoritative record from the venue's own decimal/string echo — never from the float you sent.
+authoritative record from the venue's own decimal/string echo, never from the float you sent.
 
 **Book of record for nobody.** freqtrade declares every money field as SQL `Float`
 (`trade_model.py:95-117`, `verified-source-code.md` §6.2) while aggregating in `ccxt.Precise` string math and
@@ -61,8 +61,8 @@ not "is this finance". Once a `user_id` appears on the row, the carve-out is gon
 
 | Engine | Use | Never use | Why |
 |---|---|---|---|
-| **PostgreSQL** | `NUMERIC(p,s)` with `p` and `s` both declared, **or** `BIGINT`/`NUMERIC(38,0)` minor units, always beside a `currency` column | `REAL`, `DOUBLE PRECISION`, and PG's own `money` | PG documents `numeric` as "especially recommended for storing monetary amounts and other quantities where exactness is required"; the `money` page says casting from `real`/`double precision` "is not recommended. Floating point numbers should not be used to handle money due to the potential for rounding errors" — and `money` output is `lc_monetary`-dependent and truncates on integer division (<https://www.postgresql.org/docs/current/datatype-money.html>) |
-| **MySQL** | `DECIMAL(p,s)` with both declared, or `BIGINT` minor units + currency | `FLOAT`, `DOUBLE` | `DECIMAL` is exact fixed point; `FLOAT`/`DOUBLE` are binary64 with the same 1/10 failure. *(MySQL's maximum `p` and `s` are not established by the sources read for this file — check the server docs before choosing them.)* |
+| **PostgreSQL** | `NUMERIC(p,s)` with `p` and `s` both declared, **or** `BIGINT`/`NUMERIC(38,0)` minor units, always beside a `currency` column | `REAL`, `DOUBLE PRECISION`, and PG's own `money` | PG documents `numeric` as "especially recommended for storing monetary amounts and other quantities where exactness is required"; the `money` page says casting from `real`/`double precision` "is not recommended. Floating point numbers should not be used to handle money due to the potential for rounding errors", and `money` output is `lc_monetary`-dependent and truncates on integer division (<https://www.postgresql.org/docs/current/datatype-money.html>) |
+| **MySQL** | `DECIMAL(p,s)` with both declared, or `BIGINT` minor units + currency | `FLOAT`, `DOUBLE` | `DECIMAL` is exact fixed point; `FLOAT`/`DOUBLE` are binary64 with the same 1/10 failure. *(MySQL's maximum `p` and `s` are not established by the sources read for this file; check the server docs before choosing them.)* |
 | **SQL Server** | `DECIMAL(19,4)` or wider | `MONEY`, `SMALLMONEY`, `FLOAT` | `money`/`smallmoney` are fixed scale 4 **and truncate intermediate division results to scale 4 before subsequent operations**, so `@m/10*10 ≠ @m` (secondary: Red Gate BP022; reproduce before quoting) |
 
 Three Postgres specifics that decide a schema review:
@@ -92,7 +92,7 @@ def test_amount_column_returns_decimal(session):
     assert str(amount) == "0.10"          # declared scale survived the round trip; a float gives "0.1"
 ```
 
-The value assertion alone is not enough — `Decimal("0.50") == 0.5` is `True`, so a driver returning floats
+The value assertion alone is not enough: `Decimal("0.50") == 0.5` is `True`, so a driver returning floats
 passes every test written with a value ending in a power of two.
 
 ---
@@ -106,10 +106,10 @@ published" (<https://www.dinerojs.com/docs/core-concepts/currency>).
 | Exponent | Codes | Worked failure of a hardcoded `×100` |
 |---|---|---|
 | **0** | JPY, KRW, VND, CLP, ISK, UGX, PYG, RWF, BIF, DJF, GNF, KMF, VUV, XOF, XAF, XPF | ¥100 stored as `10000` is a **100× overcharge** |
-| **2** | most | — |
+| **2** | most | none |
 | **3** | BHD, KWD, JOD, OMR, TND, IQD, LYD | 1.234 KWD is `1234` fils; forcing 2 decimals drops the third digit **and** misprices by 10× |
-| **4** | CLF (Chilean Unidad de Fomento) | an inflation-indexed unit of account — and a **funds code**, so any "code ⇒ physical currency" assumption also breaks |
-| **non-decimal** | MGA, MRU subdivide by **5**, not by a power of ten (ISO's minor-unit column still lists 2 — a documented disconnect) | a base-10 exponent cannot express the subdivision at all |
+| **4** | CLF (Chilean Unidad de Fomento) | an inflation-indexed unit of account, and a **funds code**, so any "code ⇒ physical currency" assumption also breaks |
+| **non-decimal** | MGA, MRU subdivide by **5**, not by a power of ten (ISO's minor-unit column still lists 2, a documented disconnect) | a base-10 exponent cannot express the subdivision at all |
 | **no minor unit** | XAU/XAG/XPT/XPD are one troy ounce of metal; XXX means "no currency"; XTS is reserved for testing | a `Money` type keyed on ISO code will happily invent cents for gold |
 
 Sources: `money-representation.md` src 21 and `payments-processors.md` src 35, cross-checked against
@@ -132,7 +132,7 @@ Downstream, the exponent is also a **validation** rule: ISO 20022 requires the n
 comply with ISO 4217 for the stated currency, and `<InstdAmt Ccy="EUR">10.403</InstdAmt>` is rejected with
 "Too many decimal digits given. Maximum of 2 may be present for the given currency". Round at the currency's
 exponent *before* serialising, and post the residue somewhere named. (Secondary: xmldation quoting the
-standard, `payments-processors.md` src 36 — not read from the ISO 20022 e-Repository.)
+standard, `payments-processors.md` src 36; not read from the ISO 20022 e-Repository.)
 
 ---
 
@@ -144,7 +144,7 @@ same currency at the same vendor. All four are runtime metadata.
 | Scale | Who defines it | Evidence | Failure if you use another scale here |
 |---|---|---|---|
 | **Charge** | the processor's create-charge API | Stripe: HUF and TWD are chargeable at **2** decimals | reject or 100× |
-| **Payout** | the processor's payout rails | Stripe: HUF/TWD **payout amounts must be evenly divisible by 100**; ISK and UGX transitioned to zero-decimal but "backward compatibility requires you to represent it as a two-decimal value, where the decimal amount is always `00`" — 5 ISK is `500` | a HUF 10.45 balance **cannot be paid out in full**; an ISK amount not ending in `00` is rejected |
+| **Payout** | the processor's payout rails | Stripe: HUF/TWD **payout amounts must be evenly divisible by 100**; ISK and UGX transitioned to zero-decimal but "backward compatibility requires you to represent it as a two-decimal value, where the decimal amount is always `00`": 5 ISK is `500` | a HUF 10.45 balance **cannot be paid out in full**; an ISK amount not ending in `00` is rejected |
 | **Calculation** | the venue's own ledger | Kraken exposes `decimals` on the Assets endpoint: **BTC 10**, USD 4 | your locally computed number will not reconcile with the exchange's ledger |
 | **Display** | the venue's UI convention | Kraken exposes `display_decimals`: **BTC 5**, USD 2 | display precision used as calculation precision truncates 5 significant digits off every BTC figure |
 
@@ -154,10 +154,10 @@ Stripe currencies: <https://docs.stripe.com/currencies.md>. Kraken decimal preci
 Stripe also documents the residue policy for the exponent-0-encoded-as-2 currencies: where proration,
 coupons or tax produce a fractional UGX amount, "Stripe automatically rounds that amount to the nearest
 number evenly divisible by 100. We credit or debit any difference from rounding to the customer balance."
-The residue is posted to a real account, not discarded — copy that shape.
+The residue is posted to a real account, not discarded; copy that shape.
 
 There is also a **wire-format ceiling** that is neither the type's range nor the currency's exponent: Stripe
-bounds amounts by *digit count* — 12 digits for most card rails, 9 for Amex, 8 for most non-card methods,
+bounds amounts by *digit count*: 12 digits for most card rails, 9 for Amex, 8 for most non-card methods,
 with tighter per-network and per-region caps. A cart total that fits `BIGINT` can still be unpayable.
 
 The resolver, not a constant:
@@ -188,7 +188,7 @@ Decimal(1) / Decimal(3) * 3   ->  Decimal('0.9999999999999999999999999999')
 ```
 
 A rule that governs construction and storage but says nothing about division leaves that silent. So: every
-inexact operation — division, `**`, any scale conversion — executes inside a context with a **declared
+inexact operation (division, `**`, any scale conversion) executes inside a context with a **declared
 `prec`** and **`traps[Inexact]` set**, and rounding is permitted in exactly one named function.
 
 ```python
@@ -215,16 +215,16 @@ def quantize(value: Decimal, exponent: int, mode: str) -> Decimal:
 
 Inside `exact()`, `Decimal("1") / Decimal("3")` raises `decimal.Inexact` at the line that caused it rather
 than returning `0.333…` and losing a residue four call frames later. That is Java's `RoundingMode.UNNECESSARY`
-— which throws `ArithmeticException` when the result is inexact — ported to Python, and it is the single
+(which throws `ArithmeticException` when the result is inexact) ported to Python, and it is the single
 most under-used correctness tool in either runtime.
 
 Language-specific mechanics of the same idea:
 
 | Language | Declare the precision | Force inexactness to raise |
 |---|---|---|
-| Python | `localcontext(); ctx.prec = N` — the context is **thread-local**, so a `getcontext().prec` set at import does not reach threads started later | `ctx.traps[Inexact] = True` |
+| Python | `localcontext(); ctx.prec = N`: the context is **thread-local**, so a `getcontext().prec` set at import does not reach threads started later | `ctx.traps[Inexact] = True` |
 | Java | an explicit `MathContext` on every `divide`/`setScale` | `RoundingMode.UNNECESSARY`; also, `divide` with **no** rounding mode already throws on a non-terminating expansion |
-| C# | `Math.Round(x, n, MidpointRounding.…)` | no equivalent trap — compare against the unrounded value explicitly |
+| C# | `Math.Round(x, n, MidpointRounding.…)` | no equivalent trap; compare against the unrounded value explicitly |
 | Go | `decimal.DivRound(d, precision)` per call; do not rely on the package-global `DivisionPrecision` | no equivalent trap |
 | Rust | `rust_decimal` `checked_div` / `round_dp_with_strategy` | no equivalent trap; the bounded range makes `checked_*` mandatory anyway |
 
@@ -248,7 +248,7 @@ The arithmetic is rarely where this fails. These six are.
 
 | Boundary | Mechanism | What the value becomes | Correct shape |
 |---|---|---|---|
-| **JSON number** | RFC 8259 §6: "good interoperability can be achieved by implementations that expect no more precision or range than IEEE 754 binary64 … integers in the range [-(2\*\*53)+1, (2\*\*53)-1] are interoperable". Damage happens **inside the parser** | `JSON.parse('{"amount":0.1}')` yields the double `0.1000000000000000055511…`; `JSON.parse("12345678901234567890")` yields `12345678901234567000` | amounts as **strings** or integer minor units. `Decimal(str(json_number))` is *not* a fix — `str()` of an already-damaged double is already wrong |
+| **JSON number** | RFC 8259 §6: "good interoperability can be achieved by implementations that expect no more precision or range than IEEE 754 binary64 … integers in the range [-(2\*\*53)+1, (2\*\*53)-1] are interoperable". Damage happens **inside the parser** | `JSON.parse('{"amount":0.1}')` yields the double `0.1000000000000000055511…`; `JSON.parse("12345678901234567890")` yields `12345678901234567000` | amounts as **strings** or integer minor units. `Decimal(str(json_number))` is *not* a fix: `str()` of an already-damaged double is already wrong |
 | **ORM / driver coercion** | a correct `NUMERIC(18,8)` handed back as `float64` / JS `Number` | scale and exactness gone after a correct write | assert the returned **type** in a test (see above) |
 | **protobuf `double`** | identical to binary64 | same as JSON | `google.type.Money` `{currency_code, units:int64, nanos:int32}`, a string field, or `{scaled_int, scale}`. Note `Money`'s fixed 10⁻⁹ scale **cannot** hold an 18-decimal token amount |
 | **Avro / Parquet `decimal`** | `precision` and `scale` live in the **schema**; the payload is only the two's-complement big-endian unscaled integer | a schema evolution changing `scale` from 2 to 4 reinterprets every historical record as 1/100 of its true value, with no error | treat `scale` as immutable once data exists |
@@ -267,10 +267,10 @@ Two more that show up as one-line diffs:
 
 Two documented positives worth copying. Kraken's spot WS book v2 instructs clients to "Parse `price` and
 `qty` fields using a decimal or string decoder to preserve full precision through deserialisation", and the
-book checksum is computed over the **string** forms — so a JSON parser yielding floats breaks the checksum,
+book checksum is computed over the **string** forms, so a JSON parser yielding floats breaks the checksum,
 which makes the float bug **detectable at runtime** rather than silent
 (<https://docs.kraken.com/api/docs/guides/spot-ws-book-v2/>). Nasdaq TotalView-ITCH puts prices on the wire
-as `Price(4)` fixed-point integers with four implied decimals — no float exists in the format.
+as `Price(4)` fixed-point integers with four implied decimals; no float exists in the format.
 
 And the counterexample that shows the pattern is conditional, not universal: the Bitcoin JSON-RPC mitigation
 `int64(round(value * 1e8))` is sound only because 21e6 × 1e8 = 2.1e15 < 2⁵³ ≈ 9.007e15, so every satoshi
@@ -288,12 +288,12 @@ next to the type.
 |---|---|---|---|
 | `2^53` (JS `number`, JSON) | $90,071,992,547,409.92 | 0.009007 tokens | exact for *integers* only; any `*` or `/` leaves the safe set |
 | `int64` (`2^63−1`) | ≈ $9.22e16 | 9.22 tokens | comfortable for fiat cents and for satoshis |
-| `uint64` (`2^64−1`) | — | **18.446744073709553 tokens** — a `u64` cannot hold 19 ETH in wei | this single fact is why EVM values are `uint256` |
-| `u128` | — | 3.4e38 minor units | TigerBeetle's choice; 1M transfers/sec for 1000 years at micro-cent scale ≈ 3.154e36 |
-| `uint256` | — | ≈ 1.158e59 tokens | why 18-decimal tokens are viable at all |
-| .NET `decimal`, `rust_decimal` | ≈ 7.9228e28 total (`OVERFLOW_U96` = 79,228,162,514,264,337,593,543,950,336) | **bounded — these overflow.** Python `Decimal`, Java `BigDecimal` and unconstrained PG `numeric` do not; code ported between them silently acquires the failure |
+| `uint64` (`2^64−1`) | n/a | **18.446744073709553 tokens**: a `u64` cannot hold 19 ETH in wei | this single fact is why EVM values are `uint256` |
+| `u128` | n/a | 3.4e38 minor units | TigerBeetle's choice; 1M transfers/sec for 1000 years at micro-cent scale ≈ 3.154e36 |
+| `uint256` | n/a | ≈ 1.158e59 tokens | why 18-decimal tokens are viable at all |
+| .NET `decimal`, `rust_decimal` | ≈ 7.9228e28 total (`OVERFLOW_U96` = 79,228,162,514,264,337,593,543,950,336) | **bounded: these overflow.** Python `Decimal`, Java `BigDecimal` and unconstrained PG `numeric` do not; code ported between them silently acquires the failure |
 
-**The Bitcoin 2010 shape — the sum wrapped before the comparison ran.** 2010-08-15, block **74638**: a
+**The Bitcoin 2010 shape: the sum wrapped before the comparison ran.** 2010-08-15, block **74638**: a
 transaction created **184,467,440,737.09551616 BTC** across three outputs, exactly the 2⁶⁴-satoshi wrap
 point. The wiki states the cause: "The code used for checking transactions before including them in a block
 didn't account for the case of outputs so large that they overflowed when summed." The overflow happened
@@ -324,7 +324,7 @@ if total <= input_total { accept(); }
 Concretely: `checked_add`/`checked_mul` on every add and multiply in a money path on a bounded type; never
 `unchecked { }` around value math in Solidity; `a * b / c` computed with a full-precision `mulDiv` carrying
 an explicit rounding argument, because the intermediate `a*b` can exceed 2²⁵⁶ even when the result fits
-(phantom overflow). In Python and Java the integers are unbounded — but the **column** is not, which is the
+(phantom overflow). In Python and Java the integers are unbounded, but the **column** is not, which is the
 reason to declare `p` in `NUMERIC(p,s)` rather than leaving it bare.
 
 ---
@@ -335,17 +335,17 @@ Every stored amount carries its currency/asset identifier in the same row, struc
 comparison, sum and equality check reads it. The failure prevented is not exotic: `total += line.amount`
 across a mixed-currency order, `SUM(amount)` with no `GROUP BY currency`, a USD refund issued against an EUR
 charge, an FX result still labelled with the source currency. TigerBeetle makes it structurally
-unrepresentable — the `ledger` field partitions accounts by asset and only accounts on the same ledger
+unrepresentable: the `ledger` field partitions accounts by asset and only accounts on the same ledger
 transact directly, so a cross-currency transfer must be modelled as **atomically linked transfers** on two
 ledgers, never as one transfer with a conversion inside.
 
-How much a type system buys, per language — the honest version:
+How much a type system buys, per language (the honest version):
 
 | Language | Mechanism | What it actually guarantees |
 |---|---|---|
 | F# | `[<Measure>] type USD` | true compile-time units; `usd + eur` does not compile, erased at runtime, free |
 | Rust | newtype + `PhantomData<C>`, restricted operator impls | compile-time; `Money<USD> + Money<EUR>` does not typecheck |
-| TypeScript | branded types | compile-time only and **fully erased** — brand a `bigint` or a Dinero object, never a `number`, or you have typed a float |
+| TypeScript | branded types | compile-time only and **fully erased**; brand a `bigint` or a Dinero object, never a `number`, or you have typed a float |
 | Java / C# | JSR-354 `MonetaryAmount` throws on mismatched `CurrencyUnit` | runtime |
 | Go | struct with an unexported field, constructor-only creation, runtime currency check | runtime; this is the pragmatic ceiling |
 | Python | `py-moneyed` raises on cross-currency ops; `NewType` for mypy | runtime; the static hint does not survive `Decimal` arithmetic |
@@ -381,7 +381,7 @@ made, it is **prohibited to round or truncate the conversion rate**"; "Bilateral
 national currency units are not defined and **cannot be used** since this may lead to inaccuracies"; "To
 convert from one national currency into another, the national currency **must first be converted into euro**.
 The resulting amount will be **rounded to at least three decimals** and then converted into the other
-national currency"; and monetary amounts round **half-up** — "€1.264 becomes €1.26 … €1.265 becomes €1.27"
+national currency"; and monetary amounts round **half-up**: "€1.264 becomes €1.26 … €1.265 becomes €1.27"
 (<https://economy-finance.ec.europa.eu/euro/enlargement-euro-area/adoption-fixed-euro-conversion-rate/converting-euro_en>).
 Mandated precision, mandated direction, mandated path, mandated intermediate precision, mandated final mode.
 Generalise the shape, not the numbers: a conversion has a pivot, an intermediate precision, and exactly one
@@ -391,15 +391,39 @@ final rounding.
 
 ## The four tests this reference owes
 
-1. **Round-trip across every serialization boundary**, with adversarial values — `0.1`, `1.005`, `8.475`, a
+1. **Round-trip across every serialization boundary**, with adversarial values: `0.1`, `1.005`, `8.475`, a
    value above 2⁵³, an 18-decimal token amount, a negative, and `-0`. `parse(serialize(x)) == x` exactly,
    and the *type* on the way back is the exact type, not merely a numerically equal one.
 2. **The driver/ORM type assertion**, per money column, as written above. Float money rarely enters through
-   *arithmetic* any more; it enters through a column type — freqtrade still declares every money field as SQL
+   *arithmetic* any more; it enters through a column type: freqtrade still declares every money field as SQL
    `Float` (`trade_model.py:95-117`).
 3. **The width bound**, as an executable assertion rather than a comment:
    `assert max_expected_amount * 10**scale < TYPE_MAX` next to the type declaration, plus a
    `checked_*`-returns-`None` case in the overflow path.
-4. **Cross-currency arithmetic raises.** `Money("10.00", "USD") + Money("10.00", "EUR")` must fail — at
-   compile time where the language allows it, at runtime everywhere else — and the test asserts the
+4. **Cross-currency arithmetic raises.** `Money("10.00", "USD") + Money("10.00", "EUR")` must fail (at
+   compile time where the language allows it, at runtime everywhere else), and the test asserts the
    exception, not a comment saying it would.
+
+## An instant is a quantity, and the business date is derived from it
+
+A timestamp on a money path is a represented quantity like any other: it has a type, a zone that
+plays the role of scale, and an authority that fixes it. Getting it wrong moves an obligation into
+the wrong period rather than changing its amount, which is why it survives review.
+
+Every money-path timestamp is timezone-aware UTC with an explicit type, and the business date derives from a named cutoff in a
+named timezone. Funding intervals, settlement dates, accrual periods, statement cutoffs, failure windows and retention bounds
+all key on it, and events across nodes are ordered by a sequence, never a wall clock.
+
+**Shape**
+
+```
+instant -> timezone-aware UTC, explicit type; business date -> cutoff(named time, named zone) applied to it
+```
+
+**How it appears** `date.today()`, a naive `datetime.now()`, `utcnow()` with no tzinfo, a `TIMESTAMP` column with no time zone.
+
+Funding intervals, settlement dates, accrual periods, statement cutoffs, failure windows and
+retention bounds all key on the business date, so the cutoff time and its zone are configuration,
+per jurisdiction and per instrument, never a constant in the function that reads the clock. Events
+originating on different nodes are ordered by a sequence the writer controls, never by a wall clock:
+two clocks that agree to a millisecond still disagree about which of two postings came first.

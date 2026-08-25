@@ -19,10 +19,10 @@ open. Written for the case where the reconciliation already exists and finds not
 - Suspense and clearing accounts: keeping the trial balance balanced while a break is open
 - Fail-closed policy: what stops, what must keep working, who reopens the gate
 - Alert routing and the detect-test
-- Worked shape 1 — exchange position and balance
-- Worked shape 2 — payment processor payout
-- Worked shape 3 — on-chain deposit crediting
-- Worked shape 4 — internal double-entry ledger
+- Worked shape 1: exchange position and balance
+- Worked shape 2: payment processor payout
+- Worked shape 3: on-chain deposit crediting
+- Worked shape 4: internal double-entry ledger
 - Canary and tripwire probes
 - Migration reconciliation: version-gap detection during a dual-write cutover
 
@@ -45,11 +45,11 @@ Three rules this table encodes:
 1. **Payments state is not money.** Stripe: *"Subsequent refunds, disputes, and outcomes are reflected on the
    Charge… even though the PaymentIntent remains `succeeded`"*, and it names balance transactions as the
    recommended starting point for balance reporting. Adyen names the Settlement details report as *the*
-   transaction-level reconciliation record — *"all balance movements that explain the financial standing of
+   transaction-level reconciliation record: *"all balance movements that explain the financial standing of
    your merchant account"*. A system that closes its books on lifecycle state alone is structurally wrong.
 2. **Never reconcile a vendor against the same vendor.** For custody, the independently checkable identity is
    `Σ(observed inbound) − Σ(observed outbound) − Σ(fees paid) == current on-chain balance`, computed from
-   block data — not from the custodian's balance endpoint, which cannot detect vendor-side bugs.
+   block data, not from the custodian's balance endpoint, which cannot detect vendor-side bugs.
 3. **When two authorities disagree, the one that moved the money wins, and the disagreement is itself a
    break.** Do not pick the larger, the newer, or the one that makes the totals work. Record both values in
    the break row (`source_a`, `source_b`) and let the aged bucket force a human decision.
@@ -62,9 +62,9 @@ Three rules this table encodes:
 |---|---|---|
 | `merchantReference` (Adyen) | `pspReference` | Adyen does not enforce uniqueness. One retried attempt produces two `pspReference`s under one `merchantReference`; the join drops or duplicates a row silently |
 | `clientOrderId` / `newClientOrderId` (Binance) | `orderId`, `tradeId` | unique only among **open** orders; a re-sent create after a timeout carries the identical id (CCXT does exactly this, `ts/src/binance.ts:6969`) |
-| your `Idempotency-Key` | the created object's id | the key is an input, not a record; Adyen scopes keys to the company account, max 64 chars, valid a documented **minimum of 7 days** — beyond that horizon it identifies nothing |
+| your `Idempotency-Key` | the created object's id | the key is an input, not a record; Adyen scopes keys to the company account, max 64 chars, valid a documented **minimum of 7 days**; beyond that horizon it identifies nothing |
 | `txHash` | `(chainId, blockHash, txHash, logIndex)` | one tx carries many transfers; a reorg reuses the hash on a different block |
-| ARN (card) | the processor's refund/reversal object id | a refund processed as a **reversal produces no ARN at all** — the charge drops off the statement instead |
+| ARN (card) | the processor's refund/reversal object id | a refund processed as a **reversal produces no ARN at all**; the charge drops off the statement instead |
 
 Keep your identifier as a **secondary, non-unique attribute** on the break row so a human can find the intent.
 Never make it the join predicate.
@@ -77,7 +77,7 @@ as missing-there.
 ## Deriving a deterministic identifier for an inferred event
 
 A reconciliation that *infers* a fill, a fee or a credit the venue never gave you an id for must mint one, and
-minting it from a UUID4 means the same inference after a restart produces a second, different record — the
+minting it from a UUID4 means the same inference after a restart produces a second, different record; the
 reconciliation double-counts itself. Derive it from venue-supplied fields only, including a venue-supplied
 timestamp. `nautilus_trader`, `crates/execution/src/reconciliation/ids.rs:71-101`:
 
@@ -111,8 +111,8 @@ them. Concretely:
 | A fresh REST/report query against the counterparty | Yes | missing writes, extra writes, amount and attribution errors |
 | A replay of the append-only log by a separate process | Yes | writer logic errors, ordering errors |
 
-The failure is not subtle. The "reconciliation" re-reads the cache the writer populated — the first row of
-that table — and reports agreement forever. Even `nautilus_trader` computes the continuous check and discards
+The failure is not subtle. The "reconciliation" re-reads the cache the writer populated (the first row of
+that table) and reports agreement forever. Even `nautilus_trader` computes the continuous check and discards
 the result: `crates/execution/src/engine/mod.rs:1737`
 
 ```rust
@@ -184,7 +184,7 @@ Two shapes that masquerade as amount mismatches and are not:
 
 - **Partial capture.** Stripe emits a `charge` balance transaction for the **full authorized amount** plus a
   `refund` balance transaction for the uncaptured portion. A reconciler that reads `type=refund` as "customer
-  was refunded" double-counts revenue reductions. Reconcile on `reporting_category`, not `type` — `adjustment`
+  was refunded" double-counts revenue reductions. Reconcile on `reporting_category`, not `type`; `adjustment`
   alone is overloaded across dispute debits, dispute reversals and refund failures, disambiguated only by
   `description`.
 - **Force post / late presentment.** A clearing record can arrive with no matching authorization, or long
@@ -217,13 +217,13 @@ CREATE TABLE recon_break (
 CREATE INDEX ON recon_break (status, detected_at) WHERE status <> 'resolved';
 ```
 
-`amount` is `numeric(38,0)` in minor units, never `float` — mature projects still declare `Float` money
+`amount` is `numeric(38,0)` in minor units, never `float`; mature projects still declare `Float` money
 columns (freqtrade does), and the storage boundary is where the type survives or is lost.
 
 **Aging.** `open → aging` when the authority's lag has not elapsed; `→ escalated` at a hard threshold stated in
 the same unit as the cadence (not "soon", not "a few days"); `→ swept` by a **periodic sweep with a fixed
 schedule** that expenses the residue to a named account and leaves the audit trail. The Federal Reserve's own
-Difference account is swept monthly and expensed — the sweep is not an admission of defeat, it is what stops
+Difference account is swept monthly and expensed; the sweep is not an admission of defeat, it is what stops
 the bucket from becoming an unbounded liability nobody reads.
 
 **A break is never resolved by an automatic corrective write.** Repair is a separate, reviewed job with its own
@@ -231,8 +231,8 @@ entrypoint. An automatic corrective writer that is itself wrong writes the error
 
 ## Suspense and clearing accounts
 
-The delta posts to a real `suspense`/`clearing` account **in the chart of accounts** — not a nullable column,
-not a log line — so the trial balance still balances while the break is open. Square's Books is append-only:
+The delta posts to a real `suspense`/`clearing` account **in the chart of accounts** (not a nullable column,
+not a log line), so the trial balance still balances while the break is open. Square's Books is append-only:
 *"there are no update statements for the tables presented on the diagram, only inserts"*, and errors are
 corrected by **new balancing entries**.
 
@@ -252,7 +252,7 @@ GROUP BY 1,2 HAVING SUM(amount) <> 0;   -- every row here is a break, per curren
 naive FX booking breaks it. Each clearing account carries a declared expected settlement window; a nonzero
 balance older than that window escalates.
 
-Reconcile on three axes, not one — Stripe's Data Quality Platform names them: **clearing** (did the flow reach
+Reconcile on three axes, not one; Stripe's Data Quality Platform names them: **clearing** (did the flow reach
 a terminal state?), **timeliness** (did the data arrive on time?), **completeness** (do we have all of it?).
 Balance equality alone catches neither lateness nor self-consistent missing data. Prove completeness with
 **order-independent checksums over bounded time windows** between the system of record and each derived store,
@@ -265,13 +265,13 @@ the code, at the call site.
 
 | Break state | What stops | What must keep working | Reopened by |
 |---|---|---|---|
-| Position/balance mismatch on one instrument | new and increasing exposure **on that instrument** | `cancel_all`, `flatten`, `close`, settle — with a test proving they work while the gate is closed | a **successful reconcile**, never a timer, and never the code path that closed the gate |
+| Position/balance mismatch on one instrument | new and increasing exposure **on that instrument** | `cancel_all`, `flatten`, `close`, settle, with a test proving they work while the gate is closed | a **successful reconcile**, never a timer, and never the code path that closed the gate |
 | Overfill (venue reports more filled than ordered) | trading on that instrument | reads, cancels | successful reconcile after the fill is booked |
 | Break on a customer-facing balance | debits from that account | reversals and clawbacks against the frozen account | reviewed repair job |
 | Reconciliation job itself failed to run or errored | treat as **unknown**, not as clean | everything else | next successful run |
 
 **An overfill is an unreconciled economic fact: record it as a break and stop trading that instrument. Never
-silently drop it and never silently clamp it.** `nautilus_trader` ships the opposite default —
+silently drop it and never silently clamp it.** `nautilus_trader` ships the opposite default:
 `allow_overfills: bool` with `#[serde(default)]` ⇒ `false` (`execution/src/engine/config.rs:61-65`), and with
 `false` the fill report is **discarded entirely** (`return None`, `reconciliation/orders.rs:785-796`) while
 the live path `anyhow::bail!`s (`engine/mod.rs:3600-3624`). The venue sent you units; your model now disagrees
@@ -314,7 +314,7 @@ def test_recon_clean_run_produces_no_break_and_no_alert(fresh_migrated_db, fake_
 
 Both halves are required: the clean-run assertion is what stops a job that alerts on everything from passing.
 
-## Worked shape 1 — exchange position and balance
+## Worked shape 1: exchange position and balance
 
 Authority: the venue. Join key: the venue's `tradeId` and `orderId`. Assertions, per `(symbol, positionSide)`:
 
@@ -331,7 +331,7 @@ to anything is the common failure: the authority's own number arrives free and g
 exceed the venue's replication lag (ME/Memory/Database). Tolerance in the instrument's tick. On mismatch:
 record the venue's value, level-3 fail-closed on that instrument, reopen only on a successful reconcile.
 
-## Worked shape 2 — payment processor payout
+## Worked shape 2: payment processor payout
 
 Authority: the processor's money ledger, then the bank statement. Two joins, in order:
 
@@ -349,9 +349,9 @@ for asynchronous payment methods, *"Stripe doesn't automatically reverse a trans
 payment fails… your platform's balance is debited for the transfer amount. You must then manually reverse the
 transfer."* Both produce a clearing account that never drains unless the reconciliation opens a break.
 
-## Worked shape 3 — on-chain deposit crediting
+## Worked shape 3: on-chain deposit crediting
 
-Authority: the chain, read from block data — not the custodian's API, and not your indexer's own cache.
+Authority: the chain, read from block data, not the custodian's API, and not your indexer's own cache.
 
 ```
 per address you control, over the FINALIZED view only:
@@ -362,14 +362,14 @@ per credit:
 
 Traps this shape must encode: `(hash, traceId)` is the key for an EVM **internal** transfer (a deposit
 detector iterating `block.transactions[].to` misses every contract-initiated transfer); `(txid, vout)` for
-UTXO; `(account, Sequence)` for XRPL. Read contract state at the log's own block —
+UTXO; `(account, Sequence)` for XRPL. Read contract state at the log's own block:
 EIP-1898's stated motivation is *"if there is a re-org in between when the balance of the sender is queried via
 `eth_getBalance` and when the balance of the recipient is queried, the balances may not reconcile"* (errors
 `-32000` non-canonical, `-32001` block not found). And gas-tank fees are paid from an enterprise address that
 is neither leg of the sweep, so a "sum the deltas of the two wallets" reconciliation balances perfectly while
-house fee expense is understated without bound — post the fee leg explicitly or it is invisible forever.
+house fee expense is understated without bound; post the fee leg explicitly or it is invisible forever.
 
-## Worked shape 4 — internal double-entry ledger
+## Worked shape 4: internal double-entry ledger
 
 No external oracle exists: the ledger *is* the authority (Axis B = no). The reconciliation therefore compares
 independent derivations of the same facts inside your own store, and the proof burden shifts before deployment.
@@ -387,14 +387,14 @@ WHERE b.amount <> e.s;
 ```
 
 The materialised `UPDATE` belongs in the **same transaction** as the entry `INSERT` and carries a monotonic
-version; the recompute above runs on a schedule and **does not fix the balance in place** — it raises a break.
+version; the recompute above runs on a schedule and **does not fix the balance in place**: it raises a break.
 Uber's version of this runs *"every 24hrs"* and checks *"whether we collected and disbursed on every order"*.
 
 ## Canary and tripwire probes
 
 A low-value probe transaction pushed through the **real** money path on a schedule, with an expected terminal
 balance asserted afterwards, tests the parts a comparison job cannot: that the path is reachable, that the
-webhook still arrives, that the report still contains the row. It is a **SHOULD**, not a MUST — treat it as a
+webhook still arrives, that the report still contains the row. It is a **SHOULD**, not a MUST: treat it as a
 liveness probe for the pipeline, never as a substitute for the comparison. Keep the canary account in the
 chart of accounts, exclude it from customer-facing aggregates by account kind (never by hardcoded id), and
 alarm on *any* deviation, since its expected balance is known exactly.
@@ -403,11 +403,11 @@ alarm on *any* deviation, since its expected balance is known exactly.
 
 A dual-write cutover needs three mechanisms, and teams routinely ship only the first:
 
-1. **Shadow (dual-read) validation on live traffic** — catches divergence on recent, frequently-read data only.
+1. **Shadow (dual-read) validation on live traffic**: catches divergence on recent, frequently-read data only.
 2. **A full offline comparison of historical data**, feeding an **incremental backfill loop**, iterated until
    clean. Shadow traffic never touches cold rows; this is the leg that finds them.
 3. **Version-gap detection on the change log.** Uber's `EntityChangeLog` consumer detects **version gaps** and
-   back-fills — i.e. the migration's safety net is a reconciliation, not a test.
+   back-fills; i.e. the migration's safety net is a reconciliation, not a test.
 
 Retain fallback to the old store through cutover, and gate the cutover on a pre/post reconciliation asserting
 per-account **and** aggregate balance equality plus referential binding. The absence of exactly this discipline

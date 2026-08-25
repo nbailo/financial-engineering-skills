@@ -25,12 +25,12 @@ the delivery-killing traps that live in framework and CDN configuration rather t
 ## 1. Signature verification over the raw unparsed body
 
 The signature is an HMAC over the **bytes on the wire**. Any framework that parses the body before your code
-sees it, and hands you a dict you then re-serialise, changes key order, whitespace and unicode escaping — the
+sees it, and hands you a dict you then re-serialise, changes key order, whitespace and unicode escaping; the
 HMAC fails on a payload that is perfectly authentic, and the usual "fix" is to disable verification.
 
 | framework | the byte-preserving accessor | the trap |
 |---|---|---|
-| Flask / Quart | `request.get_data()` | `request.get_json()` — parsed, bytes gone |
+| Flask / Quart | `request.get_data()` | `request.get_json()`: parsed, bytes gone |
 | Django | `request.body` | reading `request.POST` first consumes the stream; `@csrf_exempt` also required |
 | Express | `express.raw({type: 'application/json'})` on that route | a global `express.json()` mounted earlier |
 | FastAPI | `await request.body()` | a Pydantic body model in the signature |
@@ -38,7 +38,7 @@ HMAC fails on a payload that is perfectly authentic, and the usual "fix" is to d
 
 Stripe's scheme, per <https://docs.stripe.com/webhooks>: header `Stripe-Signature: t=<unix>,v1=<hex>,…`,
 HMAC-SHA256 over the concatenation `t + "." + <raw payload>` with the endpoint's signing secret; compare in
-constant time; **ignore any scheme other than `v1`** — future schemes will appear in the same header and a
+constant time; **ignore any scheme other than `v1`**. Future schemes will appear in the same header and a
 verifier that accepts "any matching element" is trivially downgraded. Default tolerance is **5 minutes**, and
 Stripe warns explicitly: *"Don't use a tolerance value of `0`. Using a tolerance value of `0` disables the
 recency check entirely."* A tolerance smaller than your host clock skew rejects live traffic; a tolerance of
@@ -52,7 +52,7 @@ Adyen signs each notification item, not the request: the HMAC arrives in that it
 item**, and one unsigned item does not invalidate the others. Use the SDK's `HmacValidator`
 (`Adyen::Utils::HmacValidator`, `com.adyen.util.HmacValidator`, `@adyen/api-library`'s `hmacValidator`) rather
 than reimplementing the concatenation: *the exact field order of Adyen's signed payload is not established by
-this repository's research — do not hand-roll it from memory.* Adyen additionally supports HTTP basic auth on
+this repository's research; do not hand-roll it from memory.* Adyen additionally supports HTTP basic auth on
 the webhook endpoint; that is a second, independent check, not a substitute.
 
 ## 2. Ack-then-work
@@ -65,10 +65,10 @@ Both vendors instruct you to respond before doing work, and their reasons differ
 | Adyen | respond with a success status (e.g. `202`) within **10 seconds**; *"Do not validate or process the data at this step"* | past 10s the webhook is marked **Failing** and queued for retry |
 
 Adyen's instruction is the sharper one: it tells you to ack **before validating**, which means your 2xx cannot
-be conditional on the HMAC being valid. The consequence is structural — the inbox row must carry a
+be conditional on the HMAC being valid. The consequence is structural: the inbox row must carry a
 `sig_valid` column, and the async processor must refuse to act on a row where it is false. Adyen integrations
 that ack a request body also expect the literal body `[accepted]`; *which Adyen integration versions require
-that body is not established by this repository's research — read the webhook page for the integration you
+that body is not established by this repository's research; read the webhook page for the integration you
 are on. The 2xx-within-10-seconds part is documented and load-bearing.*
 
 The receive endpoint therefore does exactly three things: verify, insert one row, return. No `retrieve` call,
@@ -76,7 +76,7 @@ no ledger write, no email, no fulfilment.
 
 ```python
 # routes.py
-@app.post("/webhooks/stripe")                       # exact path, no trailing slash — see §8
+@app.post("/webhooks/stripe")                       # exact path, no trailing slash; see §8
 def receive_stripe():
     raw = request.get_data()                        # bytes, before any JSON parse
     sig = request.headers.get("Stripe-Signature", "")
@@ -140,24 +140,25 @@ SELECT count(*) FROM webhook_inbox
    AND received_at < now() - interval '5 minutes';   -- alert > 0
 ```
 
-Per G7 the alert destination is a config key with **no default** that raises at import when unset.
+Under *reconciliation runs in production* the alert destination is a config key with **no default** that
+raises at import when unset.
 
 ## 4. Dedupe keys per provider
 
 | provider | transport identity | business identity of the effect | what the wrong key does |
 |---|---|---|---|
-| Stripe | `event.id` — unique index, necessary | `(event.type, data.object.id)` | Stripe: *"In some cases, two separate Event objects are generated and sent. To identify these duplicates, use the ID of the object in `data.object` along with the `event.type`."* Event-id dedupe alone lets the same fact apply twice |
+| Stripe | `event.id`: unique index, necessary | `(event.type, data.object.id)` | Stripe: *"In some cases, two separate Event objects are generated and sent. To identify these duplicates, use the ID of the object in `data.object` along with the `event.type`."* Event-id dedupe alone lets the same fact apply twice |
 | Adyen | the notification's own `pspReference` | `(eventCode, pspReference)` | Adyen: duplicates *"have the same values in the `eventCode` and `pspReference` fields"*. `pspReference` alone collapses `AUTHORISATION` with `CAPTURE`, and two refunds on one payment into one |
-| PayPal | `id` on the webhook event | *not established by this repository's research* — do not invent one |
+| PayPal | `id` on the webhook event | *not established by this repository's research*; do not invent one |
 
 Two Adyen-specific facts that break naive joins: a **modification's** `pspReference` differs from the
 payment's, which is carried separately as `originalReference`; and `merchantReference` is yours and Adyen does
-not enforce uniqueness on it — a retried payment attempt for one order produces two `pspReference`s under one
+not enforce uniqueness on it: a retried payment attempt for one order produces two `pspReference`s under one
 `merchantReference`.
 
 **`(event.type, object_id)` is a *collapsing* key, not a discard key.** Two `refund.updated` events on one
 `re_…` are genuinely distinct facts (pending → succeeded). Collapsing them is safe only because the handler's
-whole job is *re-read the object and reconcile to its current state* (PAY2) — under that handler a duplicate
+whole job is *re-read the object and reconcile to its current state* (PAY2); under that handler a duplicate
 is a no-op by construction. If your handler applies a delta taken from the payload, neither key saves you:
 `balance += event.data.object.amount` is wrong under both.
 
@@ -185,7 +186,7 @@ data-loss pattern with an extra hop.
 ## 6. The `(created, applied_event_ids)` watermark
 
 `event.created` is second-granularity, and `refund.created` and `refund.updated` on the same `re_…` routinely
-share a second. The plain monotonic guard `if event.created <= wm: return` is therefore not conservative —
+share a second. The plain monotonic guard `if event.created <= wm: return` is therefore not conservative;
 it is a money bug.
 
 ```sql
@@ -198,10 +199,11 @@ CREATE TABLE object_watermarks (
 );
 ```
 
-`applied_ids` is bounded by the number of events sharing one second on one object — it is reset, not
+`applied_ids` is bounded by the number of events sharing one second on one object; it is reset, not
 appended, whenever `applied_at` advances.
 
-Admission, in the same transaction as the effect, with the guard **being** the write (G5):
+Admission, in the same transaction as the effect, with the guard **being** the write
+(*arrival order is not occurrence order*):
 
 ```python
 def admit(tx, provider, object_id, created, event_id) -> bool:
@@ -225,11 +227,11 @@ def admit(tx, provider, object_id, created, event_id) -> bool:
     return n == 1                                       # same second, id not yet applied
 ```
 
-`rowcount 0` from all three means *already applied, or strictly older* — drop it. Do not read that as "done"
+`rowcount 0` from all three means *already applied, or strictly older*; drop it. Do not read that as "done"
 without the three-branch structure: a bare `UPDATE … WHERE status='pending'` returning 0 rows conflates
 "someone else did it" with "the predicate missed".
 
-### Worked case — the refund that stays pending forever
+### Worked case: the refund that stays pending forever
 
 One refund `re_1Px…` on charge `ch_9Qz…`, two Stripe events emitted in the same second:
 
@@ -252,8 +254,8 @@ A *late* `refund.created` carries an `event.id` your `processed_events` table ha
 money branch; the watermark is what refuses it. Conversely a redelivery of an admitted event carries the same
 `event.id`, and the unique index is what refuses that.
 
-Legality is the second half of G5: enumerate the legal `(state, event)` pairs with an explicit
-`_ => reject` arm. `succeeded`, `failed` and `canceled` never regress to `pending` on a *status* message — but
+Legality is the second half of *arrival order is not occurrence order*: enumerate the legal `(state, event)` pairs with an explicit
+`_ => reject` arm. `succeeded`, `failed` and `canceled` never regress to `pending` on a *status* message, but
 a terminal state does accept the events by which the processor corrects a fact you already booked. Stripe
 refunds are the concrete case: a `succeeded` refund can later report `failed` (return of funds, up to 30 days
 from the post date), and `charge.dispute.funds_reinstated` arrives after you wrote the loss off. Those are
@@ -261,7 +263,7 @@ economic corrections and they must be admitted.
 
 ## 7. Dead-letter, alert, replay
 
-Insert into `processed_events` — or set `processed_at` — **only in the transaction that applied the effect**
+Insert into `processed_events`, or set `processed_at`, **only in the transaction that applied the effect**
 (PAY4). An event you cannot resolve (unknown object, order row not yet created, a dependency in flight) is
 dead-lettered and alerted and is **NOT** marked processed, so the provider's redelivery still reaches you.
 
@@ -285,7 +287,7 @@ except UnresolvedDependency as e:
 
 Replay is a re-run of the same processor over the stored row with `processed_at IS NULL`. It is safe for the
 same reason duplicate delivery is safe: the handler re-reads the object and the watermark decides. Never
-replay by re-parsing `raw_body` into a state change — `raw_body` exists so the signature stays checkable and
+replay by re-parsing `raw_body` into a state change; `raw_body` exists so the signature stays checkable and
 so an incident has the exact bytes, not so you can apply it.
 
 Stripe's manual resend (Dashboard 15 days, CLI 30 days) is a second replay source; it lands on the same
@@ -295,7 +297,7 @@ endpoint and needs no special path.
 
 Stripe counts a `301`/`302` on the webhook URL as a **delivery failure**. The retry budget burns down over
 3 days and the events are then gone. The symptom is "payments succeed, orders never fulfil", with a clean
-`200` in your own logs — at the redirect *target*, which the provider never followed.
+`200` in your own logs, at the redirect *target*, which the provider never followed.
 
 Sources, in the order they actually bite:
 
@@ -316,7 +318,7 @@ Assert it, don't inspect it:
 ```python
 def test_webhook_endpoint_does_not_redirect():
     r = requests.post(WEBHOOK_URL, data=b"{}", allow_redirects=False, timeout=5)
-    assert r.status_code == 400, r.status_code   # signature rejected — proves the route was REACHED
+    assert r.status_code == 400, r.status_code   # signature rejected; proves the route was REACHED
     assert not r.is_redirect
 ```
 
@@ -327,33 +329,34 @@ unsigned bodies.
 
 3DS `return_url`, Checkout `success_url` and the `redirect_status` query parameter are **client-controlled and
 optional**. The customer closes the tab, the mobile browser drops the deep link, or an attacker requests the
-success URL directly — and Stripe is explicit: *"Don't attempt to handle order fulfillment on the client
+success URL directly, and Stripe is explicit: *"Don't attempt to handle order fulfillment on the client
 side."*
 
 The redirect landing page is allowed to be a *trigger*, on exactly the same terms as a webhook: re-read the
 object from the API and run the same admit-and-apply path, sharing the code with the inbox processor. It is
 never a second code path, and it never writes a fulfilment or a ledger entry from the query string.
 
-For an asynchronous method — SEPA Direct Debit, ACH Direct Debit, Bacs, most bank redirects — the customer
+For an asynchronous method (SEPA Direct Debit, ACH Direct Debit, Bacs, most bank redirects), the customer
 reaches the success page while the PaymentIntent is still `processing`. A success page that fulfils has
 shipped goods for a payment that has not happened yet and may never.
 
 ## 10. The sweeper
 
 A webhook that is never delivered produces no error anywhere. The self-healing job is two loops, and it is a
-**scheduled entrypoint in production**, not a script (G7).
+**scheduled entrypoint in production**, not a script (*reconciliation runs in production*).
 
-**Loop A — gap fill from the event stream.** Page `stripe.Event.list(created={"gte": cursor - overlap},
+**Loop A: gap fill from the event stream.** Page `stripe.Event.list(created={"gte": cursor - overlap},
 limit=100)` with `starting_after`, inserting each event into the same inbox with `source='sweeper'`; the
 unique index makes overlap free. Use an overlap of at least the tolerance window, because `created` is a
-second-granularity clock and a cursor set to the exact last `created` skips events sharing that second — the
+second-granularity clock and a cursor set to the exact last `created` skips events sharing that second, the
 same failure as §6, one layer up.
 
-**Advance the cursor only over a range you verifiably covered (G6):** a page that comes back with
+**Advance the cursor only over a range you verifiably covered, which is *proven coverage before the
+cursor advances*:** a page that comes back with
 `has_more = true`, an API error mid-page, or a count at the documented cap is a hole, not an end. Advance
 inside the same transaction that inserted the page, never in a `finally`.
 
-**Loop B — re-read your own non-terminal set.** Loop A cannot help once events age out of the list window.
+**Loop B: re-read your own non-terminal set.** Loop A cannot help once events age out of the list window.
 Select your own rows in a non-terminal state (`pending`, `processing`, `requires_capture`, refunds not yet
 `succeeded`/`failed`, disputes not yet closed) older than a threshold, and re-read each one from the API
 through the same admit-and-apply path. This loop has no dependency on the event stream at all, and it is the
@@ -361,7 +364,7 @@ one that survives a multi-day outage. It is the same shape as freqtrade's `manag
 the order from the venue before deciding anything (`freqtrade/freqtradebot.py:1613`).
 
 Loop B is also the only thing that finds the charge Stripe's back office rolled forward after a cached `500`,
-which *"surfaces only via webhook"* — and therefore not at all if that webhook was the one you dropped.
+which *"surfaces only via webhook"*, and therefore not at all if that webhook was the one you dropped.
 
 ## 11. Retry horizons and what expires
 
@@ -372,7 +375,7 @@ which *"surfaces only via webhook"* — and therefore not at all if that webhook
 | Stripe manual resend | **15 days** (Dashboard) / **30 days** (CLI) | Stripe webhooks doc |
 | Stripe signature tolerance | **5 minutes** default; never `0` | Stripe webhooks doc |
 | Adyen ack deadline | **10 seconds**, then marked *Failing* and queued for retry | Adyen handle-webhook-events |
-| Adyen total retry horizon | **not established** — no primary page in this repository's research states it. Do not code against a number | — |
+| Adyen total retry horizon | **not established**: no primary page in this repository's research states it. Do not code against a number | n/a |
 | Stripe idempotency-key retention | ≥ **24 hours**, then a reused key produces a *new request* | Stripe idempotent requests |
 | Adyen idempotency-key retention | ≥ **7 days**, scoped to the company account, not checked across regions | Adyen API idempotency |
 

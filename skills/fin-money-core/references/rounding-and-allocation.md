@@ -5,11 +5,11 @@ You arrived here because the diff contains `round(`, `floor`, `ceil`, `trunc`, `
 the mechanism behind MC3: the per-operation direction table for an exchange, the largest-remainder algorithm
 with its arithmetic written out, the regimes where mode and *level* are prescribed by law, and the
 boundary-test triple that finds the bug class invisible at every input except one. Everything here assumes
-integer minor units or an exact decimal — a rounding argument over a `float` is about the wrong number.
+integer minor units or an exact decimal; a rounding argument over a `float` is about the wrong number.
 
 ## Contents
 
-- Which of the three rounding problems you have — the dispatch table
+- Which of the three rounding problems you have: the dispatch table
 - Rounding mode names, and what each one actually does
 - Directed rounding as a security property: the pool/vault direction table
 - The round-trip property test, and the exhaustive small-domain search that proves it
@@ -18,7 +18,7 @@ integer minor units or an exact decimal — a rounding argument over a `float` i
 - Where the direction is not yours to choose: statute, regulation, contract
 - Interest accrual: the day-count fraction is contract data, not a coding choice
 - Largest-remainder allocation, with complete worked arithmetic
-- Where the residue goes — and when there isn't one
+- Where the residue goes, and when there isn't one
 - Boundary testing at `threshold-1 / threshold / threshold+1`: the Cetus shape
 - Truncation is a biased rounding, and the bias flips with sign
 - Integer-division traps, by language
@@ -37,7 +37,7 @@ arguments; the commonest defect here is applying one column's answer in another.
 | **Residue goes to** | the pool/vault/ledger holding the conservation invariant | wherever the specification says | distributed one minor unit at a time; nothing is left |
 | **Canonical source** | EIP-4626 Security Considerations; OZ `ERC4626.sol`; Balancer `_upscale` | CJEU C-302/07; Reg (EC) 1103/97 Arts. 4–5; IRS i1040; 12 CFR 1030.3(f), 1026.22(a); FpML/ISDA | Fowler `Money.allocate`; Dinero.js v2 `allocate`; IRS "round only the total" |
 
-"Round in the house's favour" is the **Exchange** column only, and wrong even there as one global helper —
+"Round in the house's favour" is the **Exchange** column only, and wrong even there as one global helper;
 the sources say *opposing* directions per leg. In a Prescribed calculation it is a supervisory finding; in a
 Split it destroys conservation.
 
@@ -50,22 +50,22 @@ modes ignore the midpoint and always go one way.
 |---|---|---|---|---|---|
 | nearest, ties away from 0 | `ROUND_HALF_UP` | `HALF_UP` | `MidpointRounding.AwayFromZero` | `roundTiesToAway` | IRS filing; euro conversion; VAT where the state mandates it |
 | nearest, ties to even | `ROUND_HALF_EVEN` | `HALF_EVEN` | `MidpointRounding.ToEven` (default) | `roundTiesToEven` | statistical/interbank contexts that want zero cumulative bias |
-| toward −∞ | `ROUND_FLOOR` | `FLOOR` | — | `roundTowardNegative` | the leg the system **pays out** |
-| toward +∞ | `ROUND_CEILING` | `CEILING` | — | `roundTowardPositive` | the leg the system **collects** |
-| toward 0 (truncate) | `ROUND_DOWN` | `DOWN` | — | `roundTowardZero` | almost never — see the truncation section |
+| toward −∞ | `ROUND_FLOOR` | `FLOOR` | n/a | `roundTowardNegative` | the leg the system **pays out** |
+| toward +∞ | `ROUND_CEILING` | `CEILING` | n/a | `roundTowardPositive` | the leg the system **collects** |
+| toward 0 (truncate) | `ROUND_DOWN` | `DOWN` | n/a | `roundTowardZero` | almost never; see the truncation section |
 
 Sources: Python `decimal` docs (default `prec=28`, `ROUND_HALF_EVEN`); Java `RoundingMode` (which calls
 `HALF_UP` "the rounding mode commonly taught at school" and `HALF_EVEN` "Banker's rounding"); .NET
 `MidpointRounding`; OZ exposes the two a vault needs as `Math.Rounding.Floor` / `.Ceil`.
 
 **`FLOOR`/`CEILING` are not mirror images across zero; `DOWN`/`UP` are.** "Round in the customer's favour"
-means CEILING on a payout and FLOOR on a charge — different modes — and the two swap the moment the amount
+means CEILING on a payout and FLOOR on a charge (different modes), and the two swap the moment the amount
 goes negative (a refund, a credit, a reversal). That is why "we always round our way" is not one helper.
 
-**Direction without a scale is a no-op** — `ceil` at 18 decimals on an 18-decimal token rounds nothing. Name
+**Direction without a scale is a no-op**: `ceil` at 18 decimals on an 18-decimal token rounds nothing. Name
 the scale at every call site (`quantize(x, Decimal("0.01"), ROUND_HALF_UP)`, `mulDiv(a, b, c, Ceil)`) and
 resolve it from runtime metadata: exponent 0 for JPY/KRW/VND/CLP/ISK/UGX, 3 for BHD/KWD/JOD/OMR/TND, 4 for
-CLF — and Stripe's charge, payout and display scales differ within one currency.
+CLF, and Stripe's charge, payout and display scales differ within one currency.
 
 ## Directed rounding as a security property: the pool/vault direction table
 
@@ -86,7 +86,7 @@ time.
 | `mint(shares)` | assets (derived) | shares (exact) | assets in | **Ceil** | `_convertToAssets(s, Math.Rounding.Ceil)` |
 | `withdraw(assets)` | shares (derived) | assets (exact) | shares in | **Ceil** | `_convertToShares(a, Math.Rounding.Ceil)` |
 | `redeem(shares)` | shares (exact) | assets (derived) | assets out | **Floor** | `_convertToAssets(s, Math.Rounding.Floor)` |
-| `convertToShares` / `convertToAssets` | — | — | view/oracle estimate, not an obligation | **Floor**, both, by spec | — |
+| `convertToShares` / `convertToAssets` | n/a | n/a | view/oracle estimate, not an obligation | **Floor**, both, by spec | n/a |
 
 The same table governs an FX booking, a points-to-cash redemption, a fee taken in a different asset from the
 one quoted, a base↔quote conversion. One sentence: **floor the amount the system pays out, ceil the amount
@@ -94,13 +94,13 @@ it collects, measured in the unit the counterparty receives or supplies, per leg
 
 Note the *shape* of the preview spec: `previewDeposit` "MUST return as close to and **no more than** the
 exact amount of Vault shares that would be minted"; `previewMint` and `previewWithdraw` "no fewer than";
-`previewRedeem` "no more than". Those are **inequalities against the truth**, not rounding modes — the
+`previewRedeem` "no more than". Those are **inequalities against the truth**, not rounding modes: the
 falsifiable form, and the form to assert in tests.
 
 ## The round-trip property test, and the exhaustive small-domain search
 
 The direction table is not an aesthetic preference; an exhaustive search over a tiny state space proves it.
-`TS, TA ∈ [0,40)`, `x ∈ [1,40)` — 64,000 cases, reproduced locally against the OZ formulas:
+`TS, TA ∈ [0,40)`, `x ∈ [1,40)`, 64,000 cases, reproduced locally against the OZ formulas:
 
 ```python
 def cdiv(a, b): return -(-a // b)                            # ceil, positive ints
@@ -116,11 +116,11 @@ for TS in range(40):
 # inverted (Ceil/Ceil):  bad == 50,068 profitable round-trips
 ```
 
-Ship that as a property test, not a comment — and ship the **multi-actor** form, which survives a real
+Ship that as a property test, not a comment, and ship the **multi-actor** form, which survives a real
 extraction: for an adversarially ordered sequence by *different* principals, assert `Σ outputs ≤ Σ inputs` per
 asset and that no user-initiated round trip returns more than it put in. A single-actor test passes on designs
 that leak when A deposits and B withdraws. Second property test, from the Balancer post-mortem: run **N ≥ 50
-minimum-magnitude operations inside one atomic transaction** and assert the pool is not worse off — the
+minimum-magnitude operations inside one atomic transaction** and assert the pool is not worse off: the
 attacker packed 65 micro-swaps (amounts as small as 17 units) into one `batchSwap`, so losses accumulated
 against transient internal balances before settlement and no per-operation tolerance test could see them.
 
@@ -141,8 +141,8 @@ attacker: redeem 1 share     -> assets = 1 * (15e18+1) / 1  = 15,000,000,000,000
           attacker outlay 10e18+1, attacker take 15e18+1 -> +5e18 profit, victim gets nothing
 ```
 
-Same arithmetic with OZ's virtual units — `+1` on `totalAssets()`, `+10 ** _decimalsOffset()` on
-`totalSupply()`:
+Same arithmetic with OZ's virtual units (`+1` on `totalAssets()`, `+10 ** _decimalsOffset()` on
+`totalSupply()`):
 
 | `_decimalsOffset()` | victim's shares | attacker's redeem | attacker P&L on a 10e18 donation |
 |---|---|---|---|
@@ -159,7 +159,7 @@ small part of the yield.
 party inflate the numerator by a direct transfer that bypasses the accounting entrypoint?* If yes, add
 virtual shares/assets, seed-and-burn at launch, or an initialisation deposit burned to the vault. This class
 recurred through **Hundred Finance → Midas Capital** (>$10M combined, 2023) and then **Onyx Protocol** (1–2
-Nov 2023, $2.1M / 1,164 ETH) *after* the mitigation was documented — the Compound-V2 zero-supply
+Nov 2023, $2.1M / 1,164 ETH) *after* the mitigation was documented; the Compound-V2 zero-supply
 exchange-rate bug and the ERC-4626 first-depositor attack are one shape, four incidents.
 
 ## One helper on both legs: Balancer V2 ComposableStablePool
@@ -179,40 +179,40 @@ function _upscale(uint256 amount, uint256 scalingFactor) pure returns (uint256) 
 
 OpenZeppelin's analysis: *"These functions always round-down (`mulDown`) independently from the direction of
 the swap"*, and *"if amounts are orders of magnitude less than `scalingFactors` ones, the precision loss
-becomes non-negligible."* The safety argument was **conditional** — "there's no rounding error unless
-`_scalingFactor()` is overriden" — and `ComposableStablePool` overrode it to fold in a live exchange rate
+becomes non-negligible."* The safety argument was **conditional** ("there's no rounding error unless
+`_scalingFactor()` is overriden"), and `ComposableStablePool` overrode it to fold in a live exchange rate
 (e.g. `1.058132408689971699e18`), silently deleting the precondition.
 
 Three grep-able smells fall out: (1) one rounding helper (`mulDown`, `round()`, `floor()`, a shared `_q()`)
 applied to **both** legs of an exchange; (2) a safety comment predicated on a value a subclass, config row or
-later migration can change — `_scalingFactor()`, `decimals()`, a `rate_provider`; (3) a batch primitive that
+later migration can change: `_scalingFactor()`, `decimals()`, a `rate_provider`; (3) a batch primitive that
 settles only at the end of a sequence, so intermediate rounding lands on transient balances no invariant
 check sees.
 
 ## Where the direction is not yours to choose
 
 In every regime below the authority fixes the **mode**, the **level** (per line / per basket / per invoice /
-per return), or the **precision and tolerance** — and **none** says "round toward the party doing the
+per return), or the **precision and tolerance**, and **none** says "round toward the party doing the
 computing". Mode and level both change the answer, so both are per-jurisdiction/per-instrument configuration,
 never constants.
 
 | Regime | What is fixed | Verbatim / normative |
 |---|---|---|
-| **EU VAT** | *nothing* at EU level — Member States fix it; round-**up** may be mandatory | CJEU C-302/07 *J D Wetherspoon* (5 Mar 2009): EU law "contains **no specific requirement concerning the method of rounding**"; it "does not require that taxable persons be allowed to round down"; it "**does not preclude** … a national rule which requires an amount of VAT to be rounded up whenever the fraction … is at or above 0.50"; each Member State determines "**the level at which the rounding** … may or must occur" |
+| **EU VAT** | *nothing* at EU level: Member States fix it; round-**up** may be mandatory | CJEU C-302/07 *J D Wetherspoon* (5 Mar 2009): EU law "contains **no specific requirement concerning the method of rounding**"; it "does not require that taxable persons be allowed to round down"; it "**does not preclude** … a national rule which requires an amount of VAT to be rounded up whenever the fraction … is at or above 0.50"; each Member State determines "**the level at which the rounding** … may or must occur" |
 | **Euro conversion** | rate precision, direction, path, intermediate precision, final mode = **half-up** | Council Reg (EC) 1103/97 Arts. 4–5 as restated by the European Commission: rate is **6 significant figures**; "it is **prohibited to round or truncate the conversion rate**"; bilateral rates "cannot be used"; convert *through* EUR, round the EUR leg "to at least three decimals"; "€1.264 becomes €1.26 … €1.265 becomes €1.27" |
 | **US federal tax** | **half-up**, and the **level is the total** | IRS Form 1040 instructions: "Drop amounts under 50 cents and increase amounts from 50 to 99 cents to the next dollar"; if you round, "add the amounts **including cents**, then **round off only the total**" |
 | **Truth in Savings (Reg DD)** | APY/APYE/rate **rounded to the nearest 0.01%**, two decimals; two-sided accuracy tolerance **±0.05%** | 12 CFR 1030.3(f)(1)–(2); APY formula fixed by Appendix A: `APY = 100[(1 + Interest/Principal)^(365/Days) − 1]` |
 | **Truth in Lending (Reg Z)** | APR accurate to **±1/8 of 1 percentage point**; **±1/4** for irregular transactions | 12 CFR 1026.22(a)(2)–(3) |
 | **Interest accrual** | the **day-count fraction** is a contract term with a normative definition | FpML `dayCountFraction` coding scheme → ISDA Definitions (see below) |
 
-Half-up is **symmetric** — it favours the payer half the time — so house-favouring rounding on a euro
+Half-up is **symmetric** (it favours the payer half the time), so house-favouring rounding on a euro
 conversion or a tax line is non-compliant and trivially auditable. And "above **or** below" is a two-sided
 tolerance: systematically landing on the house-favouring edge is a supervisory finding even when every
 individual number is within tolerance.
 
 *(Unverified, do not cite as authority: HMRC VAT Notice 700 §17.5–17.7, the UK concession said to let invoice
-traders — not retailers — round total VAT **down** to a whole penny; gov.uk truncates that section in every
-fetch. The C-302/07 operative part above is a secondary rendering — EUR-Lex and InfoCuria render empty to
+traders (not retailers) round total VAT **down** to a whole penny; gov.uk truncates that section in every
+fetch. The C-302/07 operative part above is a secondary rendering: EUR-Lex and InfoCuria render empty to
 fetch tooling; CELEX `62007CJ0302`, companion `62006CJ0484` *Koninklijke Ahold*.)*
 
 ## Interest accrual: the day-count fraction is contract data, not a coding choice
@@ -225,19 +225,19 @@ points each at its normative definition:
 |---|---|---|
 | `1/1` · `ACT/ACT.ISDA` · `ACT/365.FIXED` | §4.6.1(i) · (ii) · (iv) | §4.16(a) · (b) · (d) |
 | `ACT/360` · `30/360` | §4.6.1(v) · (vi) | §4.16(e) · (f) |
-| `30E/360` — *"the algorithm defined for this day count fraction has changed between the 2000 ISDA Definitions and 2006 ISDA Definitions"* | §4.6.1(vii) | §4.16(g) |
+| `30E/360`: *"the algorithm defined for this day count fraction has changed between the 2000 ISDA Definitions and 2006 ISDA Definitions"* | §4.6.1(vii) | §4.16(g) |
 | `30E/360.ISDA` | §4.6.1(viii) | §4.16(h) |
 
-Three consequences: (i) store the convention **on the instrument** and carry it into the calculation — never
+Three consequences: (i) store the convention **on the instrument** and carry it into the calculation, never
 default it, never infer it from the currency; (ii) the `30E/360` note proves the algorithm behind a *stable
 code* changed between definition versions, so the **definitions version** is contract data too; (iii) test
-the engine against the convention named on the trade, not "a year". *(ISDA body text is paywalled — the
+the engine against the convention named on the trade, not "a year". *(ISDA body text is paywalled: the
 day-adjustment algorithms are not verified here; only the enumeration and section references are.)*
 
 ## Largest-remainder allocation, with complete worked arithmetic
 
 Naive per-part rounding does not conserve. Matt Foemmel's conundrum: split 5¢ 30/70 half-up and you get
-`round(1.5)=2` plus `round(3.5)=4` — **6¢ out of 5¢**; three ways, each part rounds to 2¢ — 6¢ again; floor
+`round(1.5)=2` plus `round(3.5)=4`, **6¢ out of 5¢**; three ways, each part rounds to 2¢, 6¢ again; floor
 everything and $100.00 three ways loses 1¢.
 
 The algorithm (largest remainder / Hamilton), **in integer minor units only, no decimals, no floats**:
@@ -269,14 +269,14 @@ total = 1003, weights = [1, 1]   -> [502, 501]  (this is Dinero.js v2's own docu
 total = -500, weights = [1, 1, 1]-> base [-167,-167,-167], rem 1                            -> [-166,-167,-167] Σ=-500 ✓
 ```
 
-**The invariant is `sum(parts) == whole`, exactly, asserted at runtime — for every input including
+**The invariant is `sum(parts) == whole`, exactly, asserted at runtime: for every input including
 `total = 0`, `total < 0`, `len(weights) == 1`, and a weight of `0`.** A zero weight must receive 0: base 0,
-residue 0, so it sorts last and never collects a remainder unit — test that rather than trust it.
+residue 0, so it sorts last and never collects a remainder unit; test that rather than trust it.
 
-**The tie-break is load-bearing.** `order` must be a total order over a stable key — declared sort position,
+**The tie-break is load-bearing.** `order` must be a total order over a stable key: declared sort position,
 then entity id; never `dict` insertion order, `set` iteration order, or a hash-map walk. An unstable
 tie-break makes the *same* input split differently on different runs, breaking replay, reconciliation and
-idempotent retry — the retry lands a different cent on a different seller.
+idempotent retry; the retry lands a different cent on a different seller.
 
 **Negative totals break this in every language whose `/` truncates.** Python's `//` floors, so
 `remainder ∈ [0, n)` holds for negative totals and the code above is correct as written. In C, Go, Rust, Java
@@ -284,13 +284,13 @@ and JavaScript integer division truncates toward zero, `base` comes out *larger*
 goes **negative**, the `order[:remainder]` loop silently does nothing, and `Σ parts` misses by up to `n-1`
 minor units. Use `Math.floorDiv` (Java) / `div_euclid` (Rust), or allocate `abs(total)` and negate.
 
-## Where the residue goes — and when there isn't one
+## Where the residue goes, and when there isn't one
 
 Two situations get confused, and only one has a leftover.
 
 **(a) Splitting an exact total.** Largest-remainder distributes the whole remainder one minor unit at a time:
 nothing is left over and **no rounding account is involved**. Split code that posts to a rounding account is
-not conserving — find the bug.
+not conserving; find the bug.
 
 **(b) Applying a rate, then reconciling lines against the total.** Rounding at two levels produces a real
 difference that has to land somewhere:
@@ -301,16 +301,16 @@ lines: 19.99, 4.95, 0.70 USD;  tax rate 5%;  HALF_UP to 0.01
   difference = 0.01  <- this is not noise; it is a posting
 ```
 
-Choose one of exactly two policies and write it down: **round once at the aggregate** (the IRS instruction —
+Choose one of exactly two policies and write it down: **round once at the aggregate** (the IRS instruction:
 "add the amounts including cents, then round off only the total") *or* **sum the rounded lines and post the
 difference to a named account**. Stripe does the second: where a payout must be a multiple of 100 minor units
 (HUF, TWD; ISK/UGX payouts must end in `00`) it "automatically rounds that amount to the nearest number
 evenly divisible by 100. We credit or debit any difference from rounding to the customer balance." **The
-residue is posted somewhere named, never dropped** — a discarded residue is an unbalanced ledger, and a
+residue is posted somewhere named, never dropped**; a discarded residue is an unbalanced ledger, and a
 "kept" residue with no account is theft with extra steps.
 
 The observable form of "the party the residue accrues to" is **the party whose balance the conservation or
-solvency check reads** — the pool in a vault, the platform's named rounding-difference account in a processor,
+solvency check reads**: the pool in a vault, the platform's named rounding-difference account in a processor,
 whoever the statute names. If no such account exists in the schema, the design is wrong before you reach the
 rounding decision. Magnitude, from Cowlishaw's telco example: 5% tax on a $0.70 call in binary64 gives
 `0.70 * 1.05 == 0.7349999999999999` → `0.73`, exact decimal gives `0.7350` → `0.74`. "Taken over a million
@@ -321,7 +321,7 @@ whole year the error then **exceeds $5 million**."
 
 Cetus, 22 May 2025, **$223M**. `checked_shlw()` in `integer_mate` guarded a left-shift-by-64 on a `u256`;
 overflow occurs iff `n ≥ 2^192`. The guard used the mask `0xffffffffffffffff << 192` where `1 << 192` was
-intended — **and** compared with `>` where `>=` was required (BlockSec, "Cetus Incident: One Unchecked Shift
+intended, **and** compared with `>` where `>=` was required (BlockSec, "Cetus Incident: One Unchecked Shift
 Drains $223M").
 
 ```
@@ -333,7 +333,7 @@ Two independent errors, each invisible except at the boundary:
 | input | shipped guard says | truth | shipped `>` with the *correct* mask |
 |---|---|---|---|
 | `2^192 - 1` | safe | safe ✓ | safe ✓ |
-| `2^192` | **safe** | overflows | **safe** ✗ — a single-point defect in a 2²⁵⁶ domain |
+| `2^192` | **safe** | overflows | **safe** ✗: a single-point defect in a 2²⁵⁶ domain |
 | `2^192 + 1` | **safe** | overflows | rejected ✓ |
 | `2^256 - 2^192` | **safe** | overflows | rejected ✓ |
 
@@ -358,7 +358,7 @@ ulp for negative** ones, against ≈ 0 for round-to-nearest. Over N operations t
 ~3,000 truncations/day × 473 trading days × 0.0005 ≈ **710 index points** against an observed 574-point gap.
 
 Because the bias reverses sign, a system that truncates "in the house's favour" on charges becomes
-customer-favouring — or unbounded — on refunds, credits and reversals: the second reason a single global
+customer-favouring (or unbounded) on refunds, credits and reversals: the second reason a single global
 rounding helper cannot exist. Truncation of a **scaled float** is the specific killer, because ordinary
 retail prices are already below their decimal value as binary64:
 
@@ -372,9 +372,9 @@ retail prices are already below their decimal value as binary64:
 `int()` / `floor()` / `trunc()` on a scaled float loses a whole cent on three of these four. The Bitcoin
 community's canonical conversion rule says the same: use `long(round(value * 1e8))`, because "if you truncate
 instead of doing proper rounding … your software will display the value '0.1 BTC' as '0.09999999 BTC' (or,
-worse, '0.09 BTC')" — sound for BTC only because `21e6 × 1e8 = 2.1e15 < 2^53`, and catastrophic verbatim on
-an 18-decimal ERC-20. And `round()` is not a rescue: `round(1.005, 2) == 1.0` and `round(2.675, 2) == 2.67`
-in Python and most languages, because `2.675` as a double is `2.67499999999999982…` — not a bug in `round`,
+worse, '0.09 BTC')" (sound for BTC only because `21e6 × 1e8 = 2.1e15 < 2^53`, and catastrophic verbatim on
+an 18-decimal ERC-20). And `round()` is not a rescue: `round(1.005, 2) == 1.0` and `round(2.675, 2) == 2.67`
+in Python and most languages, because `2.675` as a double is `2.67499999999999982…`, not a bug in `round`,
 just the literal being the wrong number before `round` ran.
 
 ## Integer-division traps, by language
@@ -386,16 +386,16 @@ just the literal being the wrong number before `round` ran.
 | Rust | `-3` (truncates) | `-1` | `i64::div_euclid` → `-4`, `rem_euclid` → `1` |
 | Java | `-3` (truncates, JLS §15.17.2) | `-1` | `Math.floorDiv` / `Math.floorMod` |
 | JavaScript | `Math.trunc(-7/2) === -3`, `(-7/2)|0 === -3` | `-1` | `Math.floor(-7/2) === -4` |
-| Solidity | truncates toward zero (moot for `uint`, not for `int`) | — | none; `mulDiv(..., Rounding)` in OZ `Math` |
+| Solidity | truncates toward zero (moot for `uint`, not for `int`) | n/a | none; `mulDiv(..., Rounding)` in OZ `Math` |
 
 Verified locally for Python, Go, Rust and Node; Java from the JLS. Four rules follow.
 
 - **Never write `x / y` on money and call the result rounded.** In every truncating language that expression
-  is `ROUND_DOWN` — a *directed* mode, chosen by accident, and wrong for negatives.
+  is `ROUND_DOWN`, a *directed* mode, chosen by accident, and wrong for negatives.
 - **`a * b / c` order matters.** Multiply first, divide last, in a width that cannot overflow the product:
   `(total * weight) // D`, never `total * (weight // D)` and never `total * (weight / D)` through a float.
-- **`%` on money is exact only on integers.** Venue filters are literal exact-decimal modulo —
-  `price % tickSize == 0` (Binance `PRICE_FILTER`), `quantity % stepSize == 0` (`LOT_SIZE`) — and float
+- **`%` on money is exact only on integers.** Venue filters are literal exact-decimal modulo,
+  `price % tickSize == 0` (Binance `PRICE_FILTER`), `quantity % stepSize == 0` (`LOT_SIZE`); and float
   modulo does not satisfy them: `0.29 % 0.01 == 0.009999999999999974`, `4.7 % 0.1 == 0.09999999999999992`.
   Represent price as an integer count of ticks, or a decimal at the instrument's declared scale.
 - **A decimal type removes representation error, not rounding error.** At the default 28-digit context

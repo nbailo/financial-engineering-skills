@@ -8,14 +8,14 @@ payments), and the oracle-read contract for integrators.
 
 ## Contents
 
-- [Amount provenance: measure it, do not read it](#amount-provenance-measure-it-do-not-read-it) — the block-delta reconciliation an off-chain indexer can actually run
-- [The weird-ERC20 taxonomy, with guards](#the-weird-erc20-taxonomy-with-guards) — one row per behaviour, one guard per row
-- [`decimals()` is runtime metadata](#decimals-is-runtime-metadata) — read, cache per `(chainId, address)`, and what a constant table costs
-- [Allowances](#allowances) — the approve race, `forceApprove`, and the two nonce spaces
-- [The same shape off EVM](#the-same-shape-off-evm) — XRPL `delivered_amount`, Stellar path payments
-- [Share/asset conversion an integrator must review](#shareasset-conversion-an-integrator-must-review) — direction per leg, and the manipulable denominator
-- [Oracle reads](#oracle-reads) — the five checks, in order, with the deprecation
-- [What a price is](#what-a-price-is) — spot as a quantity, not a valuation
+- [Amount provenance: measure it, do not read it](#amount-provenance-measure-it-do-not-read-it) (the block-delta reconciliation an off-chain indexer can actually run)
+- [The weird-ERC20 taxonomy, with guards](#the-weird-erc20-taxonomy-with-guards): one row per behaviour, one guard per row
+- [`decimals()` is runtime metadata](#decimals-is-runtime-metadata): read, cache per `(chainId, address)`, and what a constant table costs
+- [Allowances](#allowances): the approve race, `forceApprove`, and the two nonce spaces
+- [The same shape off EVM](#the-same-shape-off-evm): XRPL `delivered_amount`, Stellar path payments
+- [Share/asset conversion an integrator must review](#shareasset-conversion-an-integrator-must-review): direction per leg, and the manipulable denominator
+- [Oracle reads](#oracle-reads): the five checks, in order, with the deprecation
+- [What a price is](#what-a-price-is): spot as a quantity, not a valuation
 
 ---
 
@@ -72,7 +72,7 @@ Three consequences that are schema decisions:
 - **Rebasing tokens move balances with no `Transfer` at all**, so step 2 above fires spuriously on every
   rebase. For those, credit in the token's internal non-rebasing unit (a share or scaled-balance accessor)
   and store the accessor name in the token record. *(stETH's `sharesOf` and Aave's `scaledBalanceOf` are the
-  commonly cited accessors; the exact signatures are **not established by the sources behind this file** —
+  commonly cited accessors; the exact signatures are **not established by the sources behind this file**;
   read them off the deployed contract before writing against them.)*
 
 ---
@@ -90,7 +90,7 @@ One row, one guard. The right-hand column is the thing to grep the diff for.
 | **Non-reverting `false`** | ZRX, EURS | tx succeeds, no value moved → **fake deposit** (DEPOSafe, arXiv 2006.06419) | `SafeERC20`; and never credit on "tx mined" |
 | **`false` on *success*** | Tether Gold | correct return handling is impossible for all tokens simultaneously | allowlist-with-quirk-record; there is no generic wrapper that is right here |
 | **Codeless address** | any mainnet address copied to a chain without that deployment | `CALL` to no code returns success + empty returndata; every transfer is a silent no-op | `extcodesize(token) > 0`, asserted **per chain**, at startup |
-| **Phantom function** | WETH's `function() public payable { deposit(); }` swallowing `permit(...)` | optional-interface probe "succeeds" and did nothing — Multichain/AnySwap then spent a *pre-existing* allowance, **$431M at risk**, $1M bounty ×2 (Dedaub) | check `returndatasize() >= 32`, not call success |
+| **Phantom function** | WETH's `function() public payable { deposit(); }` swallowing `permit(...)` | optional-interface probe "succeeds" and did nothing; Multichain/AnySwap then spent a *pre-existing* allowance, **$431M at risk**, $1M bounty ×2 (Dedaub) | check `returndatasize() >= 32`, not call success |
 | **Approve race protection** | USDT, KNC | non-zero → non-zero `approve` reverts | `forceApprove`: try `approve(v)`; on failure `approve(0)` then `approve(v)` |
 | **Revert on zero-value approve/transfer** | LEND | a legitimate zero clear reverts | branch on `v == 0` before the call, per token record |
 | **`uint96` caps on `approve`/`transfer`** | UNI, COMP | a `type(uint256).max` allowance reverts | store the max representable amount in the token record |
@@ -98,7 +98,7 @@ One row, one guard. The right-hand column is the thing to grep the diff for.
 | **Blocklist** | USDC, USDT | a sweep or payout reverts forever for one address; funds are held, not lost | classify the revert; route to manual, do not retry-loop |
 | **Pausable** | BNB, ZIL | whole-asset outage mid-batch | per-asset kill switch and a partial-batch story |
 | **Upgradeable proxy** | USDC, USDT | transfer semantics change under a live integration | watch the implementation slot; freeze the integration on change (weird-erc20's own recommendation) |
-| **More than one address for one token** | proxy + implementation both callable | two entry points, one internal balance → bookkeeping splits | ToB checklist: *"The token has only one address"* — assert it, per chain |
+| **More than one address for one token** | proxy + implementation both callable | two entry points, one internal balance → bookkeeping splits | ToB checklist: *"The token has only one address"*; assert it, per chain |
 | **Transfer hooks (ERC-777 / ERC-1820)** | AMP (Cream, 2021-08-30, ~$18.8M) | `transfer` is a reentrancy point | no state read or write may straddle a token transfer |
 | **`bytes32` metadata** | MKR | `symbol()`/`name()` ABI-decode failure | decode metadata defensively or skip it; never on the money path |
 | **`transferFrom` with `src == msg.sender`** | divergent implementations | allowance consumed or not, depending on token | pick one call shape per token and record it |
@@ -133,7 +133,7 @@ not a constant and not a table you write by hand.
 
 | Getting it wrong | Concrete error |
 |---|---|
-| `1e18` against USDC (6) | `amount * price / 1e18` under-reports by **10¹²** — a collateral position reads as worthless (spurious liquidation); the same expression on a payout leg overpays by 10¹² |
+| `1e18` against USDC (6) | `amount * price / 1e18` under-reports by **10¹²**: a collateral position reads as worthless (spurious liquidation); the same expression on a payout leg overpays by 10¹² |
 | `1e18` against GUSD (2) | 10¹⁶ |
 | `1e18` against YAM-V2 (24) | 10⁻⁶, i.e. a million-fold under-credit |
 | A hand-written constant table | correct on mainnet, wrong for the bridged deployment of the same symbol on another chain |
@@ -141,11 +141,11 @@ not a constant and not a table you write by hand.
 **The rule with the cache key spelled out:** read `decimals()` from the contract at runtime; cache it under
 `(chainId, tokenAddress)`, never under `symbol`; refuse to price a token whose `decimals()` call did not
 return ≥32 bytes of returndata. For an upgradeable token (USDC, USDT), invalidate the cache entry when the
-implementation address changes — the same watcher the taxonomy table already requires.
+implementation address changes, the same watcher the taxonomy table already requires.
 
 The scaling itself is an obligation computation, not an estimate: do it in integer/`Decimal` arithmetic in
 the token's own unit. In Solidity that means `Math.mulDiv(a, b, c, Rounding)` with an explicit direction, not
-`a * b / c` — the intermediate `a * b` overflows `uint256` long before the quotient does ("phantom
+`a * b / c`; the intermediate `a * b` overflows `uint256` long before the quotient does ("phantom
 overflow"), and `a * b / c` has no place to state which way the last unit goes.
 
 ---
@@ -159,8 +159,8 @@ spends the old allowance, and then spends the new one.
 | Resolution | Correct? | Why |
 |---|---|---|
 | `approve(0)` then `approve(v)` (`SafeERC20.forceApprove`) | **yes** | compatible with USDT/KNC, which revert on non-zero → non-zero |
-| `permit` / Permit2 — signed, amount-scoped, deadline-scoped | **yes** | the allowance never sits idle between two transactions |
-| `approve(spender, type(uint256).max)` | **no** | it removes the race by removing the bound. It is also not universally accepted — UNI/COMP cap at `uint96` — and on cUSDCv3 `max` is a *sentinel meaning "whole balance"* |
+| `permit` / Permit2: signed, amount-scoped, deadline-scoped | **yes** | the allowance never sits idle between two transactions |
+| `approve(spender, type(uint256).max)` | **no** | it removes the race by removing the bound. It is also not universally accepted (UNI/COMP cap at `uint96`) and on cUSDCv3 `max` is a *sentinel meaning "whole balance"* |
 | `increaseAllowance` / `decreaseAllowance` | partial | fine where the token has them; not in EIP-20, and `decreaseAllowance` underflows/reverts against a concurrently-spent allowance |
 
 **Two nonce spaces, and they are not interchangeable.** A backend that issues signatures concurrently races
@@ -172,7 +172,7 @@ itself in both, but at different granularity:
 | Advance | `nonces[owner]` must equal the signed nonce, then `++` | `_updateApproval` requires equality, then `+1` |
 | Clocks | one: `deadline` | **two**: `expiration` (allowance validity) and `sigDeadline` (signature validity); expiry surfaces as `AllowanceExpired` |
 | Bulk invalidation | none | `invalidateNonces`, requires `newNonce > oldNonce`, rejects a jump `> type(uint16).max` (`ExcessiveInvalidation`) |
-| Field widths | — | `PermitDetails{token, uint160 amount, uint48 expiration, uint48 nonce}` |
+| Field widths | n/a | `PermitDetails{token, uint160 amount, uint48 expiration, uint48 nonce}` |
 
 So: serialize permit issuance per `(owner, token)` for EIP-2612 and per `(owner, token, spender)` for
 Permit2. Two permits signed at the same nonce cannot both be valid; under load this presents as *random*
@@ -181,7 +181,7 @@ permit failures with no useful error, and the retry re-signs at a nonce that has
 EIP-2612's security considerations also bind the domain: `owner != address(0)` must be checked, because
 `ecrecover` on a malformed message returns `0` and creates zombie approvals; and *"if `DOMAIN_SEPARATOR`
 embeds `chainId` at deployment rather than reconstructing it per signature, future chain splits could enable
-replay attacks across chains."* DAI's permit predates EIP-2612 and has a different signature — check which
+replay attacks across chains."* DAI's permit predates EIP-2612 and has a different signature; check which
 one the token implements before generating a signature against it.
 
 ---
@@ -191,8 +191,8 @@ one the token implements before generating a signature against it.
 The requested-versus-delivered split is not an ERC-20 quirk. It is a protocol feature on two of the chains
 most commonly used for exchange deposits.
 
-**XRP Ledger.** A `Payment` carries `Amount` — renamed `DeliverMax` in rippled API v2 *"to make the field
-name more specific to its behavior and help prevent the misunderstandings and exploit described below"* — and
+**XRP Ledger.** A `Payment` carries `Amount` (renamed `DeliverMax` in rippled API v2 *"to make the field
+name more specific to its behavior and help prevent the misunderstandings and exploit described below"*) and
 the transaction metadata carries `delivered_amount`. With `tfPartialPayment` set, `Amount` is a **maximum**,
 and the transaction returns `tesSUCCESS` having delivered an arbitrarily small fraction. XRPL publishes the
 exploit as a numbered procedure, verbatim:
@@ -212,7 +212,7 @@ Two traps behind the obvious one:
 
 - `delivered_amount` is *"generated on-demand for the request, and is not included in the binary format for
   transaction metadata, nor is it used when calculating the hash of the transaction metadata."* A pipeline
-  that re-derives state from stored binary metadata **will not have the field at all** — and the fallback
+  that re-derives state from stored binary metadata **will not have the field at all**, and the fallback
   someone writes is `Amount`, which is the exploit.
 - For partial payments in ledgers before **2014-01-20** the field is the literal string `"unavailable"`.
   A parser that coerces it gets `0` or throws. **Quarantine, never coerce, never fall back to `Amount`.**
@@ -225,7 +225,7 @@ obligations."* That is the same assertion as SEAM S2(iv), stated by the protocol
 exchange rate when trading currencies may vary"*; a Stellar path payment can deliver a **different asset**
 than the one the sender named. In both cases the field naming the sender's intent and the field naming the
 delivery are different fields. The generalisation for every chain in this file: **credit the observed delta
-in your own balance, or the protocol's own delivery-metadata field — never the amount the sender requested.**
+in your own balance, or the protocol's own delivery-metadata field, never the amount the sender requested.**
 
 ---
 
@@ -257,9 +257,9 @@ trip returns more than it put in.* An exhaustive small-domain search over `TS, T
 both legs; the smallest counterexample is `TS=0, TA=1, deposit 1 → redeem returns 2`.
 
 One rounding helper on both legs of an exchange is the diff-visible smell, and it is not hypothetical:
-Balancer V2's `_upscale` documented its own bug in a comment — *"in a swap for example the balance of token
+Balancer V2's `_upscale` documented its own bug in a comment: *"in a swap for example the balance of token
 in should be rounded up, and that of token out rounded down. This is the only place where we round in the
-same direction for all amounts"* — with a safety argument (*"there's no rounding error unless
+same direction for all amounts"*, with a safety argument (*"there's no rounding error unless
 `_scalingFactor()` is overriden"*) that `ComposableStablePool` then overrode. >$120M, 2025-11-03
 (OpenZeppelin's analysis).
 
@@ -270,7 +270,7 @@ same direction for all amounts"* — with a safety argument (*"there's no roundi
 
 An attacker needs only `u + 1` assets to steal a deposit of `u` in a fresh vault. `shares = assets *
 totalSupply / totalAssets` with `totalSupply == 1` and a donated, inflated `totalAssets` floors the victim to
-**0 shares** — with every rounding direction correct. The mitigation in OZ v4.9+ is the `+1` on
+**0 shares**, with every rounding direction correct. The mitigation in OZ v4.9+ is the `+1` on
 `totalAssets()` and `+10 ** _decimalsOffset()` on `totalSupply()` (virtual assets and shares); the offset
 raises the attacker's minimum loss to `10^δ × u`. Alternatives in production: a non-trivial seed deposit, or
 an initialisation deposit burned to the vault itself.
@@ -278,7 +278,7 @@ an initialisation deposit burned to the vault itself.
 **The companion predicate, for any pool, not only ERC-4626:** *is the denominator reachable at 0 or 1, and
 can a third party inflate the numerator by a direct transfer that bypasses the accounting entrypoint?* If
 `totalAssets()` is implemented as `asset.balanceOf(address(this))`, the answer to the second half is yes by
-construction — an accounted total that only the entrypoint can move is the fix. The same Compound-V2
+construction; an accounted total that only the entrypoint can move is the fix. The same Compound-V2
 zero-supply `exchangeRate` bug cost Hundred Finance and Midas Capital >$10M in 2023 and then Onyx Protocol
 $2.1M (1,164 ETH) on 1–2 November 2023, *after* the mitigation was publicly documented; Sonne Finance lost ~$20M to
 the same fork bug in May 2024.
@@ -297,7 +297,7 @@ Five checks, in the order they must run:
 
 | # | Check | Failure it catches |
 |---|---|---|
-| 1 | **Never `latestAnswer()`** | *"No timestamp is included to check data freshness"* — the whole class |
+| 1 | **Never `latestAnswer()`** | *"No timestamp is included to check data freshness"*, the whole class |
 | 2 | `answer > 0` and `updatedAt != 0` | uninitialised / absent round |
 | 3 | `block.timestamp - updatedAt <= heartbeat + slack`, where `heartbeat` is **that feed's published heartbeat read from configuration** | a low-volatility feed that has not moved for hours, liquidating healthy positions at a stale mark |
 | 4 | answer is **strictly inside** the aggregator's `minAnswer` / `maxAnswer` bounds | Venus (BSC) and Blizz (Avalanche), 2022-05-13: the LUNA/USD aggregator's `minAnswer` floor of **$0.10** kept reporting $0.10 as LUNA went to ~$0, so LUNA stayed borrowable at ~100× its market value. **−$13.5M and −$8.3M**; Blizz could not pause in time because of its timelock |
@@ -313,10 +313,10 @@ Two things the check list does not contain, deliberately:
   `MAX_STALENESS = 3600` applied to every feed is either too tight (spurious reverts on a 24h-heartbeat feed)
   or useless (a 1h-heartbeat feed 20 hours stale passes).
 
-The `minAnswer`/`maxAnswer` bounds live on the **underlying aggregator**, not on `AggregatorV3Interface` —
+The `minAnswer`/`maxAnswer` bounds live on the **underlying aggregator**, not on `AggregatorV3Interface`;
 you reach them through the proxy's current aggregator, and their values are per-feed configuration you must
 record alongside the heartbeat. *(The exact accessor names on the deployed aggregator are not established by
-the sources behind this file — read them off the contract.)*
+the sources behind this file; read them off the contract.)*
 
 **L2 sequencer uptime.** Chainlink's prescribed pattern: read the uptime feed, where `answer == 0` means the
 sequencer is **up** and `1` means **down**; after recovery, require
@@ -324,12 +324,12 @@ sequencer is **up** and `1` means **down**; after recovery, require
 L2 price. The failure this prevents: sequencer down two hours, feed frozen, sequencer returns, liquidation
 bots fire in the first block against pre-outage prices before any user could top up collateral.
 **Arbitrum-specific:** *"The `startedAt` variable returns `0` only on Arbitrum when the Sequencer Uptime
-contract is not yet initialized"* — on other L2s `startedAt` is never 0 — so `block.timestamp - 0` passes a
+contract is not yet initialized"* (on other L2s `startedAt` is never 0), so `block.timestamp - 0` passes a
 naive grace check trivially. Reject `startedAt == 0` explicitly.
 
 **Feed decimals are not token decimals.** ETH/USD is 8; some feeds are 18; the token is whatever the token
 says. Scale by the **feed's** `decimals()` and the **token's** `decimals()` as two separate reads, both
-cached by address. Mixing them is a silent 10ⁿ error in a collateral computation — the same shape as the
+cached by address. Mixing them is a silent 10ⁿ error in a collateral computation, the same shape as the
 `1e18`-against-USDC row above, and just as invisible.
 
 ---
@@ -343,7 +343,7 @@ their own collateral value if the venue is thin enough.
 The worked case is Compound's DAI feed, **2020-11-26**. The Open Price Feed took DAI from **Coinbase Pro
 alone**. DAI briefly printed ~$1.30 there while Kraken and Huobi stayed near $1.00, and **~$89M of positions
 were liquidated across 124 of 225,793 users** (dYdX took ~$8M more). Nobody has to have attacked it: *the
-"adverse market conditions vs manipulation" debate is unresolved and irrelevant — the design is wrong either
+"adverse market conditions vs manipulation" debate is unresolved and irrelevant; the design is wrong either
 way.* A single-venue feed is a design defect on the day it ships.
 
 Mango Markets, **2022-10-12**, is the same failure with the opposite label: the reported price was
@@ -353,7 +353,7 @@ section would have fired. What is missing there is a **liquidity-aware haircut**
 position's collateral value may derive from a mark the holder can move.
 
 TWAPs bound *cost*, not *truth*. A TWAP over window `W` forces an attacker to hold the manipulated price for
-a meaningful fraction of `W`, which prices the attack — it does not make the resulting number a valuation,
+a meaningful fraction of `W`, which prices the attack; it does not make the resulting number a valuation,
 and it makes the feed lag by construction, which is its own liquidation hazard on a real move. State the
 window, state what holding the price for that window costs on the specific venue, and compare that to the
 maximum extractable value. If you cannot write those two numbers down, the feed is not sized.
@@ -362,5 +362,5 @@ maximum extractable value. If you cannot write those two numbers down, the feed 
 parameters rather than UX ones: an explicit, non-zero, caller-supplied `amountOutMin` (or maximum-input), and
 a bounded `deadline`. `amountOutMin = 0` is "give the sandwicher whatever they want"; the loss shows up as
 market impact in the P&L and is never diagnosed. `deadline = type(uint256).max` is what lets a swap evicted
-from the mempool at a low fee mine hours later against a market that has moved — the deadline is the thing
+from the mempool at a low fee mine hours later against a market that has moved; the deadline is the thing
 that makes it fail instead.

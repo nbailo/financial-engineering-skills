@@ -2,8 +2,8 @@
 
 The snapshot/incremental join, per venue, written out as an algorithm you can implement without inference.
 Binance Spot and Binance Futures use different algorithms and the wrong one is the single most-copied incorrect
-snippet in the ecosystem. The two durable rules — use your venue's exact algorithm and nothing else, and on any
-sequence gap discard the book and re-snapshot rather than patch — hold regardless of what the per-venue detail
+snippet in the ecosystem. The two durable rules (use your venue's exact algorithm and nothing else, and on any
+sequence gap discard the book and re-snapshot rather than patch) hold regardless of what the per-venue detail
 says. **The venue-specific facts here are dated (read 2026-08-24) and volatile: re-verify against the venue's
 current documentation before relying on any of them.**
 
@@ -13,11 +13,11 @@ current documentation before relying on any of them.**
 - Applying a delta: absolute quantities, `qty == 0` deletes, and the delete-miss that is normal
 - Binance Spot: buffer, snapshot, drop, first-event condition, `U`/`u` continuity
 - Binance USDⓈ-M Futures: the `pu` field and how the continuity condition differs from Spot
-- The two Binance algorithms side by side — the four lines that differ
+- The two Binance algorithms side by side: the four lines that differ
 - OKX: `seqId`/`prevSeqId` validation, and the checksum that is always 0 from 2026-06-23
 - Bybit: `u == 1` means a service restart; level-1 re-sends a snapshot with the same `u`
 - Kraken: CRC32 over exactly the top 10 levels, on string forms with the decimal point and leading zeros
-  stripped — a float-yielding JSON parser destroys it
+  stripped; a float-yielding JSON parser destroys it
 - Coinbase, Deribit and Hyperliquid book channels and their sequence fields
 - Gap detection that keeps working: integrity checks that fail loudly when their field disappears
 - Snapshot depth limits: a truncated book used for deep-size pricing
@@ -29,20 +29,20 @@ current documentation before relying on any of them.**
 
 ## The two durable rules
 
-**Rule 1 — implement your venue's exact algorithm, per venue and per product.** No cross-venue abstraction is
+**Rule 1: implement your venue's exact algorithm, per venue and per product.** No cross-venue abstraction is
 correct for all of them. Binance Spot and USDⓈ-M Futures have no in-band snapshot at all (you re-fetch REST);
 Kraken and Coinbase deliver one in-band; Bybit delivers one in-band and signals a service restart in the same
-field it uses for updates. A shared `on_orderbook_message` handler across venues is an anti-pattern — it is the
+field it uses for updates. A shared `on_orderbook_message` handler across venues is an anti-pattern; it is the
 shape that produces the Spot/Futures cross-copy.
 
-**Rule 2 — on any gap, discard the book and re-snapshot. Never patch, interpolate, or "resync the missing
+**Rule 2: on any gap, discard the book and re-snapshot. Never patch, interpolate, or "resync the missing
 levels".** A gap is any of: a sequence discontinuity, a checksum mismatch, a `pu` / `prevSeqId` /
 `prev_change_id` mismatch, or a per-product `sequence_num` that skipped.
 
 Patching is not merely suboptimal; its failure is silent and directional. Depth deltas carry absolute
 quantities, so the update that *removes* a level is a message like any other. Lose it and the level stays in
 your book forever, at a price inside the real spread. Every subsequent message is well-formed, every remaining
-integrity field passes, the book renders normally — and you are quoting inside a spread that does not exist,
+integrity field passes, the book renders normally, and you are quoting inside a spread that does not exist,
 adversely selected on every print. Nothing throws. P&L is the only alarm.
 
 **Rule 2's usually-missing third clause: suppress quoting and order submission on that instrument between the
@@ -52,7 +52,7 @@ trading on a book you have already proven wrong.
 ## Applying a delta
 
 ```python
-# CORRECT — absolute quantity semantics
+# CORRECT: absolute quantity semantics
 for price, qty in event["b"]:          # bids; "a" for asks
     if Decimal(qty) == 0:
         book.bids.pop(Decimal(price), None)   # a delete for a level you don't hold is NORMAL
@@ -75,7 +75,7 @@ Fields: `U` = first update ID in event, `u` = final update ID in event. Spot has
 1. Open `wss://stream.binance.com:9443/ws/<symbol>@depth`.
 2. Buffer the events. **Note the `U` of the first event you received.**
 3. `GET /api/v3/depth?symbol=…&limit=5000`.
-4. If the snapshot's `lastUpdateId` **is less than the `U` from step 2**, the snapshot is too old — **go back
+4. If the snapshot's `lastUpdateId` **is less than the `U` from step 2**, the snapshot is too old: **go back
    to step 3**. (The branch almost always dropped when the algorithm is retyped from memory.)
 5. Discard buffered events with `u <= lastUpdateId`. **The first remaining event must have `lastUpdateId`
    within `[U, u]`.** If it does not, start over from step 1.
@@ -105,7 +105,7 @@ Same `U`/`u`, **plus `pu` = the `u` of the previous event on the stream**.
 Two changes, both of which matter:
 
 - **The first-event acceptance condition is different.** The first processed event must satisfy
-  `U <= lastUpdateId AND u >= lastUpdateId` — the snapshot ID must fall *inside* the event's range.
+  `U <= lastUpdateId AND u >= lastUpdateId`: the snapshot ID must fall *inside* the event's range.
 - **Every subsequent event must satisfy `pu == previous event's u`, otherwise initialize from step 3.**
 
 ```python
@@ -117,7 +117,7 @@ def apply_futures(evt, book):
 ```
 
 `pu` is not redundant with `U`/`u`. Server-side coalescing can produce a frame whose `[U, u]` looks adjacent to
-what you last applied while an intermediate frame was dropped — the ranges are contiguous and the
+what you last applied while an intermediate frame was dropped; the ranges are contiguous and the
 `U > local_id + 1` test passes. **`pu` is the only field that catches that case.**
 
 ## The two Binance algorithms side by side
@@ -142,15 +142,15 @@ indefinitely.
 **Do not validate `checksum`.** OKX's [checksum deprecation
 notice](https://www.okx.com/en-sg/help/okx-order-book-channels-checksum-field-deprecation) states that on the
 `books`, `books-l2-tbt` and `books50-l2-tbt` channels *"the checksum field will remain present in push messages
-but will always return 0 and must no longer be used for data integrity validation"* — demo environment
-2026-06-02, production **2026-06-23** — and directs integrators to *"migrate from checksum to
+but will always return 0 and must no longer be used for data integrity validation"* (demo environment
+2026-06-02, production **2026-06-23**) and directs integrators to *"migrate from checksum to
 seqId/prevSeqId"*. `books5` and `bbo-tbt` are unaffected; `books-rpi` never carried one.
 
 Both obvious guard shapes fail, in opposite ways, on the day the field goes to zero:
 
 | Guard as written | Behaviour after 2026-06-23 |
 |---|---|
-| `if computed != msg["checksum"]: resync()` | resyncs on **every frame** — a permanent resnapshot loop |
+| `if computed != msg["checksum"]: resync()` | resyncs on **every frame**: a permanent resnapshot loop |
 | `if msg.get("checksum") and computed != msg["checksum"]: resync()` | **silently stops validating**; no error, no log line |
 | `if msg["checksum"] == 0: raise ChecksumFieldRetired(...)` | fails loudly, once, when the contract changed |
 
@@ -159,11 +159,11 @@ on disappears.** A truthiness guard around a validator is a validator with a sch
 
 **Sequence linkage.** Validate `prevSeqId` against the `seqId` you last applied. The operator implementation to
 copy is NautilusTrader's OKX adapter: on a `prevSeqId` mismatch, **drop the frame and suppress further updates
-until a fresh snapshot arrives with `prevSeqId: -1`** — do not attempt to patch
+until a fresh snapshot arrives with `prevSeqId: -1`**; do not attempt to patch
 ([nautilustrader.io OKX integration](https://nautilustrader.io/docs/latest/integrations/okx/)).
 
 **Unverified:** whether `seqId` can legitimately decrease, and the full semantics of the `prevSeqId == -1`
-sentinel, are *not* established by a primary source here — the OKX WS order-book channel page is a JS-rendered
+sentinel, are *not* established by a primary source here: the OKX WS order-book channel page is a JS-rendered
 SPA that could not be fetched. The NautilusTrader behaviour above is operator evidence, not vendor
 documentation. Re-read that page before encoding this branch.
 
@@ -180,7 +180,7 @@ Messages carry `type: "snapshot" | "delta"`, an update id `u`, and a `seq`.
   generated earlier"*. Use it to order messages that arrived from different depth subscriptions; do not build
   gap detection on it.
 
-So `assert u > last_u` — the guard you would write for any other venue — is wrong here in both directions at
+So `assert u > last_u` (the guard you would write for any other venue) is wrong here in both directions at
 once: it **false-positives** on the level-1 3-second re-snapshot and **misses** the restart, the one event that
 actually invalidates your book.
 
@@ -232,7 +232,7 @@ def kraken_checksum(asks, bids) -> int:
 
 The guide says it explicitly: *"Parse `price` and `qty` fields using a decimal or string decoder to preserve
 full precision."* A JSON parser that yields `float` destroys the checksum before your code runs, and does so
-non-deterministically — most levels round-trip, one in a few thousand does not, and you get a resync loop that
+non-deterministically: most levels round-trip, one in a few thousand does not, and you get a resync loop that
 looks like a network problem. In Python: `json.loads(raw, parse_float=Decimal)`; in JS you need a
 string-preserving parser, because `JSON.parse` has already lost the digits by the time you see them. Keep the
 original wire strings on the level: `str(Decimal("0.0100"))` and the venue's `"0.01000"` tokenize differently.
@@ -253,7 +253,7 @@ the transport.
 
 Three properties, all violated by ordinary-looking code:
 
-1. **The validator must fail loudly when its input field disappears** — the OKX zero-checksum case above. Any
+1. **The validator must fail loudly when its input field disappears**: the OKX zero-checksum case above. Any
    guard of the form `if <integrity_field>: validate()` degrades to a no-op on a contract change and emits
    nothing. Assert the field's presence and shape separately from validating its value.
 2. **The validator must not stop after the first mismatch.** A checksum path that disables itself after N
@@ -262,19 +262,19 @@ Three properties, all violated by ordinary-looking code:
    by instrument.
 3. **Sequence and event time are high-water marks, and every regression is logged.** NautilusTrader applies
    out-of-order deltas so a venue that replays still converges, but never lets `sequence` or `ts_last` regress.
-   It carves out L1 books driven by quotes/trades, where a stale `QuoteTick`/`TradeTick` is skipped outright —
+   It carves out L1 books driven by quotes/trades, where a stale `QuoteTick`/`TradeTick` is skipped outright:
    two answers inside one system, justified by book type. Pick yours deliberately and write down which.
 
 ## Snapshot depth limits
 
-A REST snapshot is depth-limited — 5000 levels per side on Binance Spot. Binance warns that you *"won't learn
+A REST snapshot is depth-limited: 5000 levels per side on Binance Spot. Binance warns that you *"won't learn
 the quantities for the levels outside of the initial snapshot unless they change."*
 
 **Levels outside the snapshot horizon are unknown, not empty.** `sum(qty for level in local_book)` is not
 available liquidity; it is available liquidity *within the horizon*, plus whatever has ticked since. A
 depth-weighted VWAP over the whole local book over-estimates fillable size for any order large enough to reach
 past it, and the error is one-directional: you always think there is more depth than there is. Carry the
-horizon explicitly — record the worst price present in the snapshot per side at join time, and if a sizing
+horizon explicitly: record the worst price present in the snapshot per side at join time, and if a sizing
 calculation walks past it, return **an explicit "insufficient known depth" signal**, not a number.
 
 ## Absent is not empty; crossed is not locked
@@ -283,7 +283,7 @@ calculation walks past it, return **an explicit "insufficient known depth" signa
 object whose `best_bid()` returns `None`, and sizing code that reads `None` as "no liquidity, fall back to last
 price" or as zero. Same defect as treating a failed position query as flat: NautilusTrader's reconciler
 *"skips cached positions for that venue during the cycle instead of treating missing reports as flat"*. Model
-three states — `SYNCED`, `UNSYNCED` (gap seen, resnapshot in flight), `NEVER_RECEIVED` — and let only `SYNCED`
+three states: `SYNCED`, `UNSYNCED` (gap seen, resnapshot in flight), `NEVER_RECEIVED`. Let only `SYNCED`
 reach the order path.
 
 **Crossed and locked are different, and only one of them is an error.**
@@ -296,25 +296,25 @@ reach the order path.
 NautilusTrader's `book_check_integrity` returns `BookIntegrityError::OrdersCrossed` **only** when
 `best_bid > best_ask`; `bid == ask` passes. A crossed book on a single venue is almost always your own
 mid-update state or a phantom level from a swallowed gap, and code that reads it as an arbitrage fires into
-both sides of a market that does not exist — free money in a backtest, a position in production. **A crossed
+both sides of a market that does not exist: free money in a backtest, a position in production. **A crossed
 book is a signal that your reconstruction is wrong, not a trading opportunity.**
 
 ## Prices you may quote from
 
-**Last trade price is not a quote.** It is a print — one counterparty pair, at a size you do not know, possibly
+**Last trade price is not a quote.** It is a print: one counterparty pair, at a size you do not know, possibly
 from the other side of the book, possibly a wick a single order through thin liquidity produced. Sizing or
 bounding an order from it turns one bad print into a position. Two failure shapes from the evidence base:
 unrealised PnL and liquidation distance computed from last price (mark price does not move on a single thin
 print; last price does), and the silent ladder *mark → last quote → last trade → yesterday's bar close*, where
 each rung is a bigger lie and none is surfaced to the caller.
 
-The rule: **use the side-appropriate quote — ask for buys, bid for sells** — and where a worst case is needed,
+The rule: **use the side-appropriate quote (ask for buys, bid for sells)** and where a worst case is needed,
 take the **adverse side, not the mid**. NautilusTrader's risk engine bounds a quote-quantity limit order with
 `min(limit, ask)` for buys and `max(limit, bid)` for sells; with no price it logs
-`Cannot check order risk: no price available` and `continue`s — **a missing price is a hard stop for sizing,
+`Cannot check order risk: no price available` and `continue`s; **a missing price is a hard stop for sizing,
 not a reason to fall back.** Where a fallback ladder is required for *valuation*, it must be ordered, explicit
-and reported: the instrument lands in `stale_instruments` on fallback, in `unpriced_instruments` — excluded
-from the sum — if it never had a price, and `is_stale` propagates to the caller. FX conversion never silently
+and reported: the instrument lands in `stale_instruments` on fallback, in `unpriced_instruments` (excluded
+from the sum) if it never had a price, and `is_stale` propagates to the caller. FX conversion never silently
 falls back to a rate of 1.0.
 
 **Mid vs microprice.** Both are derived numbers; neither is a price you can trade.
@@ -329,7 +329,7 @@ toward the ask, because the thin side is the side that will be consumed. Mid ign
 is therefore the wrong reference when the two sides differ by an order of magnitude, which at the top of a
 crypto book is most of the time. Both collapse to the same number when `bid_qty == ask_qty`.
 
-Two things neither one is. First, **neither is an executable price** — quoting size against a mid that sits
+Two things neither one is. First, **neither is an executable price**: quoting size against a mid that sits
 half a tick inside the spread understates your cost by exactly that half-tick per side; use the side you will
 actually cross. Second, **the top-of-book quantities are the ones you can see**; where a venue publishes
 aggregated or throttled depth, `bid_qty`/`ask_qty` are a sample and the microprice inherits that sampling
@@ -347,7 +347,7 @@ venue-side delay, which is exactly the delay you need to see. NautilusTrader car
 **This is not the ordering guard, and greping for `stale` will find the wrong one.** `ts < last_seen`
 (ordering) and `now − ts > max_age` (freshness) fail in opposite situations: a perfectly ordered feed that
 stopped ten seconds ago passes the ordering guard and fails the freshness gate. nautilus's `is_stale`
-(`crates/data/src/aggregation.rs:451`) is `ts_init < self.builder.ts_last` — an ordering guard. Write the
+(`crates/data/src/aggregation.rs:451`) is `ts_init < self.builder.ts_last`, an ordering guard. Write the
 `now − ts_event` form explicitly, as its own predicate, on the send path.
 
 The related trap is the snapshot captured before an `await`: an order priced from a book read before a lock, a
@@ -355,14 +355,14 @@ rate-limit sleep or a retry backoff is priced from a book hundreds of millisecon
 age **relative to the send timestamp**, using venue event time, and re-read or abort past it.
 
 Quoting stops on any of: age > `max_age`, a sequence gap, an unsynced book, or a subscription silent for longer
-than its expected inter-message interval. **Track time-since-last-message per subscription** — a socket can be
+than its expected inter-message interval. **Track time-since-last-message per subscription**: a socket can be
 open, healthy at the TCP level, and delivering nothing.
 
 ## Reconnect storms
 
 The failure sequence: a venue blip disconnects every symbol at once, each task reconnects immediately, the
 connection-rate limiter bans the IP, every retry then fails at the transport layer, and the ban extends. Your
-book is unsynced for minutes, not the 200ms your code assumed — and if you did not gate order submission on
+book is unsynced for minutes, not the 200ms your code assumed, and if you did not gate order submission on
 sync state, you are trading the whole time.
 
 Binance Spot's published limits: **300 connections per 5 minutes per IP**, 1024 streams per connection,
@@ -371,14 +371,14 @@ connection lifetime, 20-second server ping requiring a pong within a minute. Sub
 messages: a re-subscribe burst across 200 symbols on one connection trips the 5/s cap before the connection
 cap. What to build:
 
-- **One global connection-attempt budget per IP**, shared across every symbol task, sized under the venue's cap
-  — not a per-task budget, which multiplies by the task count exactly when they all fail together.
+- **One global connection-attempt budget per IP**, shared across every symbol task, sized under the venue's cap,
+  not a per-task budget, which multiplies by the task count exactly when they all fail together.
 - **Jittered exponential backoff**; un-jittered backoff re-synchronises the herd on every subsequent attempt.
 - **Batch re-subscription under the inbound message cap**, with the batches themselves rate-limited.
 - **Re-subscribe and confirm the subscription before the first order.** A program that places before the socket
   is up misses the first events for that order; one that awaits a watcher which only resolves on an update
   never places at all (ccxt#8245 documents both halves).
-- **Plan the 24-hour disconnect** — it is scheduled, so reconnect on your own clock, new connection synced
+- **Plan the 24-hour disconnect**: it is scheduled, so reconnect on your own clock, new connection synced
   before the old one drops.
 - **Recognise the venue's escalation codes and stop.** Bybit returns HTTP 403 "access too frequent" and
   documents terminating all sessions and waiting **≥10 minutes**; Deribit's `too_many_requests` (10028)
@@ -386,7 +386,7 @@ cap. What to build:
 
 ## Test recipes
 
-**(1) Replay with an injected gap.** Capture a real stream to a file (raw frames, unparsed — you need the wire
+**(1) Replay with an injected gap.** Capture a real stream to a file (raw frames, unparsed; you need the wire
 strings). Replay it through your handler, dropping frame *k* in the middle. Assert:
 
 ```python
@@ -405,7 +405,7 @@ counter, and then apply the frame anyway.
 
 **(2) The venue-mismatch test.** Feed a recorded **futures** stream through the handler with `pu` checking
 disabled and assert the resulting book diverges from one built with `pu` checking on. If the two agree, your
-capture contains no coalescing boundary — capture a longer one, across a volatile minute. This is the test that
+capture contains no coalescing boundary; capture a longer one, across a volatile minute. This is the test that
 would have caught the most-copied incorrect snippet.
 
 **(3) Kraken checksum against a captured frame.** Assert `kraken_checksum(...) == frame["checksum"]` on a real
@@ -415,5 +415,5 @@ someone swaps the JSON library.
 
 **(4) Absent vs empty, and crossed.** Assert that a handler which never received a message makes the sizing
 path raise or return an explicit no-price signal rather than reading `best_bid() is None` as zero liquidity;
-and that a frame producing `best_bid > best_ask` marks the book `UNSYNCED` and generates no order — including
+and that a frame producing `best_bid > best_ask` marks the book `UNSYNCED` and generates no order, including
 from the arbitrage path, if one exists.

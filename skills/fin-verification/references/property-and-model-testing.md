@@ -3,13 +3,13 @@
 Which properties are worth asserting on money code, how to build a generator that reaches the values that break
 them, and how to drive an implementation and a naive reference model from one command sequence. Covers the four
 framework families a money codebase uses, differential testing against a second implementation, the narrow band
-where an interleaving explorer applies, and — per technique — what each one structurally cannot find. Two claims
+where an interleaving explorer applies, and (per technique) what each one structurally cannot find. Two claims
 organise it: only a handful of properties are load-bearing for money, and a generator you have not measured does
 not produce the cases you believe it does.
 
 ## Contents
 
-- [The property catalogue](#the-property-catalogue) — one concrete assertion per property
+- [The property catalogue](#the-property-catalogue): one concrete assertion per property
 - [Assert after every step, not at the end](#assert-after-every-step-not-at-the-end)
 - [Generator design: the boundary families that find real bugs](#generator-design-the-boundary-families-that-find-real-bugs)
 - [Round-trip through the real wire format and the real driver](#round-trip-through-the-real-wire-format-and-the-real-driver)
@@ -32,22 +32,22 @@ given: a property stated in prose becomes a comment, which is the failure `fin-v
 | Property | Assertion, literally | Applies when | Primary evidence |
 |---|---|---|---|
 | **Conservation** | `sum(entry.amount for entry in txn) == 0` per transaction **and** `sum(all account balances) == 0` globally, with an out-of-system `world` account originating funds | always, for any double-entry store | Square Books: "all transactions… must balance to 0, so each cent lost is matched with a cent gained"; Uber Money: "The sum of all the entries is zero"; Beancount: "the sum of all the postings of a transaction must equal zero" |
-| **Idempotence** | `apply(ev); s1 = snapshot(); apply(ev); assert snapshot() == s1` for every operation carrying an identity — event id, `tradeId`, `pspReference`, idempotency key | every retryable or at-least-once path | Stripe mints the key once per logical request and re-uses it across retries |
-| **Reordering invariance** | apply a permutation of the event list, assert byte-identical terminal state — **only for operation sets the design claims are order-independent** | claimed-commutative sets only | nautilus `test_avg_px_invariant_to_fill_arrival_order` (`crates/model/src/orders/mod.rs:1769`) asserts ascending and descending fill order give byte-identical `avg_px` |
+| **Idempotence** | `apply(ev); s1 = snapshot(); apply(ev); assert snapshot() == s1` for every operation carrying an identity: event id, `tradeId`, `pspReference`, idempotency key | every retryable or at-least-once path | Stripe mints the key once per logical request and re-uses it across retries |
+| **Reordering invariance** | apply a permutation of the event list, assert byte-identical terminal state (**only for operation sets the design claims are order-independent**) | claimed-commutative sets only | nautilus `test_avg_px_invariant_to_fill_arrival_order` (`crates/model/src/orders/mod.rs:1769`) asserts ascending and descending fill order give byte-identical `avg_px` |
 | **Allocation totality** | `sum(allocate(total, weights)) == total` **exactly**, in minor units, over generated totals and degenerate weight vectors (all-zero, single-nonzero, `1/3,1/3,1/3`, one weight `0`, N=1, N=1000) | any split, pro-rata, fee share, tax line | Numscript "allocates remainders from the top of the list down… no invisible fractions or mystery money"; Fowler's Money pattern names "it's easy to lose pennies" |
-| **Reservation-implies-postable** | for every reachable state, every committed reservation can still be posted: `credits_posted - debits_posted - debits_pending >= 0` on a `debits_must_not_exceed_credits` account | holds, auths, margin, escrow | TigerBeetle rejects a pending transfer at **reserve** time if posting it could later break the account's balance invariant — "It will not wait to get to posted status to fail" |
+| **Reservation-implies-postable** | for every reachable state, every committed reservation can still be posted: `credits_posted - debits_posted - debits_pending >= 0` on a `debits_must_not_exceed_credits` account | holds, auths, margin, escrow | TigerBeetle rejects a pending transfer at **reserve** time if posting it could later break the account's balance invariant: "It will not wait to get to posted status to fail" |
 | **Non-negativity where configured** | `balance >= 0` only on accounts that declare the constraint; assert the *flag*, never a blanket rule | per-account, from the schema | TigerBeetle `debits_must_not_exceed_credits` / `credits_must_not_exceed_debits`; `debits_exceed_credits` counts `debits_pending` (`src/tigerbeetle.zig:34-37`) |
 | **Monotonicity** | the quantity the design declares never decreases actually never decreases: `filled_qty`, a per-user accrual index, a sequence number, a watermark. `assert new >= old` at the write, over generated sequences including duplicates and out-of-order arrivals | declared-monotonic fields | Compound's 2021 COMP over-distribution violated per-user accrual-index monotonicity plus reward-pool conservation |
 | **Round-trip serialization** | `parse(serialize(x)) == x` through the **actual** wire codec and the **actual** DB driver, not an in-memory copy | every storage/wire boundary | freqtrade declares every money field `Float()` (`freqtrade/persistence/trade_model.py:1106-1115`) while doing the aggregation in `Decimal` |
 
 **Overfill makes conservation an inequality on the order aggregate.** nautilus writes its invariant as
-`filled_qty + voided_qty + leaves_qty >= quantity` (`crates/model/src/orders/mod.rs:1341-1352`) — deliberately
+`filled_qty + voided_qty + leaves_qty >= quantity` (`crates/model/src/orders/mod.rs:1341-1352`), deliberately
 `>=`, so a venue overfill does not trip it. Assert the inequality on the order and the *equality* on the ledger.
 
 ## Assert after every step, not at the end
 
 An end-of-sequence assertion is a much weaker test: it passes on a system that transiently creates money and
-destroys it again two steps later — exactly what a concurrent reader, a crash, or a reconciliation snapshot
+destroys it again two steps later: exactly what a concurrent reader, a crash, or a reconciliation snapshot
 observes. In Hypothesis, `@invariant()` runs after **every** rule; in `proptest-state-machine`,
 `StateMachineTest::check_invariants` runs after every transition; in jqwik an `Action`'s `check()` runs after
 each action. Use those hooks; do not accumulate and assert once.
@@ -66,14 +66,14 @@ compose them with `st.one_of` / `fc.oneof` / `Arbitraries.oneOf`, weighted towar
 | **Threshold triple** | `t-1`, `t`, `t+1` in minor units for **every** configured limit: `minNotional`, `minQty`, `maxQty`, `max_position`, `max_notional`, `MAX_NUM_ORDERS`, the aged-break escalation threshold | `>` written where `>=` was meant, at the one value where it costs money |
 | **Sub-tick precision** | a price with `tickSize` decimals **+1**, a qty with `stepSize` decimals **+1**, and the same for `MARKET_LOT_SIZE`'s different `stepSize` | rounding into invalidity; rounding *down* to `qty == 0` that the caller treats as a no-op success and marks the intent complete |
 | **Filter interaction** | a `(price, qty)` that satisfies `PRICE_FILTER` and *therefore* violates `NOTIONAL` after normalisation | one-way validation: satisfying one filter breaks another, and only the venue tells you |
-| **Integer width** | `2**63-1`, `2**63`, `2**64-1`, and — for a `u128` minor-unit ledger — values whose **sum** overflows, not just whose value does | a `saturating_add` accumulator that absorbs the overflow silently. TigerBeetle checks before mutating (`sum_overflows`, `src/state_machine.zig:5144-5149`) and returns `overflows_debits_posted` / `overflows_credits_posted` / `overflows_timeout` (`src/tigerbeetle.zig:307-313`); nautilus saturates (`orders/mod.rs:1270`, `:1366`) |
-| **Zero and negative** | amount `0`; qty `0` after normalisation; a negative delta wherever the domain permits one — reversal, refund, clawback, short position, `leaves_qty` after an overfill | `0` treated as "no-op success"; a quantity that goes negative and is then clamped |
+| **Integer width** | `2**63-1`, `2**63`, `2**64-1`, and (for a `u128` minor-unit ledger) values whose **sum** overflows, not just whose value does | a `saturating_add` accumulator that absorbs the overflow silently. TigerBeetle checks before mutating (`sum_overflows`, `src/state_machine.zig:5144-5149`) and returns `overflows_debits_posted` / `overflows_credits_posted` / `overflows_timeout` (`src/tigerbeetle.zig:307-313`); nautilus saturates (`orders/mod.rs:1270`, `:1366`) |
+| **Zero and negative** | amount `0`; qty `0` after normalisation; a negative delta wherever the domain permits one: reversal, refund, clawback, short position, `leaves_qty` after an overfill | `0` treated as "no-op success"; a quantity that goes negative and is then clamped |
 | **Currency exponent** | exponent 0 (JPY, KRW, VND, CLP, ISK, XOF), 2, 3 (KWD, BHD, JOD, OMR, TND), 4 (CLF); MGA and MRU are subdivided by **5**, not a power of ten | any `amount_cents = round(amount * 100)` |
-| **Float-hostile decimals** | values exact in `Decimal` and not in `float`: `Decimal("1.6666666666666666666666666667")` — nautilus asserts precisely this is **not** equal to `Decimal::from_f64_retain(5.0/3.0)` (`orders/mod.rs:1728`) | a `Float` column, a JSON round-trip, `math.isclose` on money |
+| **Float-hostile decimals** | values exact in `Decimal` and not in `float`: `Decimal("1.6666666666666666666666666667")`; nautilus asserts precisely this is **not** equal to `Decimal::from_f64_retain(5.0/3.0)` (`orders/mod.rs:1728`) | a `Float` column, a JSON round-trip, `math.isclose` on money |
 | **Stream shape** | the same event id twice; a fill arriving *after* the terminal event; a restart injected mid-sequence; a partial-fill sequence that over-runs the order quantity | in-memory dedupe; the residual/overfill branch that a "fills sum exactly" generator never reaches |
 
 Drive the filter values from a **production** `exchangeInfo` fixture. A testnet fixture gives you the wrong
-`tickSize` and the whole property test then proves nothing — Binance SPOT testnet shipped the
+`tickSize` and the whole property test then proves nothing: Binance SPOT testnet shipped the
 `MIN_NOTIONAL` → `NOTIONAL` rename *before* production (ccxt issue #17545).
 
 ## Round-trip through the real wire format and the real driver
@@ -93,7 +93,7 @@ def test_amount_survives_the_database(pg_session, amt, ccy):
 ```
 
 Cover, at minimum: the SQL column type (`NUMERIC(38,0)` or `BIGINT`, never `Float`/`DOUBLE PRECISION`), the ORM
-field type, `json.dumps`/`JSON.parse` (JavaScript numbers are IEEE-754 doubles — a minor-unit amount above
+field type, `json.dumps`/`JSON.parse` (JavaScript numbers are IEEE-754 doubles; a minor-unit amount above
 `2**53` loses precision silently), protobuf (`double` vs `sint64` vs a decimal message), and CSV/Excel export.
 freqtrade is the citable case: `Mapped[float] = mapped_column(Float())` for `amount`, `price`, `average`,
 `filled`, `remaining`, `cost`, `funding_fee`, `ft_fee_base`, while `recalc_trade_from_orders`
@@ -102,7 +102,7 @@ not "is a float used" but **"can the stored value be re-derived exactly from som
 
 ## Hypothesis `RuleBasedStateMachine`: a complete ledger model
 
-The class of bug `@given` cannot reach needs an interleaved sequence — MacIver's canonical example took 13 steps
+The class of bug `@given` cannot reach needs an interleaved sequence; MacIver's canonical example took 13 steps
 to unbalance a heap. Ledger and order-lifecycle bugs have that shape: open → fund → reserve → post → void →
 restart → replay.
 
@@ -194,10 +194,10 @@ TestLedger.settings = settings(max_examples=300, stateful_step_count=60, deadlin
 
 Three Hypothesis facts that change how this is written:
 
-- **`@precondition` and `@invariant` cannot access bundles** — which is why the model lives in `self.model` /
+- **`@precondition` and `@invariant` cannot access bundles**, which is why the model lives in `self.model` /
   `self.applied` (plain attributes) rather than in the bundles: invariants must be able to read it.
 - **Rules cannot take pytest fixtures or `@parametrize` arguments.** Build the resource in `@initialize()`.
-- **Failures shrink to a minimal operation sequence** — the reason to prefer this over a hand-written 13-step
+- **Failures shrink to a minimal operation sequence**, the reason to prefer this over a hand-written 13-step
   test: the printed counterexample is a runnable script.
 
 For an order book, the same shape with `Bundle("orders")`: rules `submit`, `partial_fill`, `amend`, `cancel`,
@@ -211,7 +211,7 @@ a false positive on correct code.
 
 | Framework | Command shape | Runner | Notes that matter |
 |---|---|---|---|
-| **fast-check** (TS/JS) | `ICommand<Model, Real>` with `check(model)`, `run(model, real)`, `toString()` | `fc.modelRun`, `fc.asyncModelRun`, **`fc.scheduledModelRun`** | `scheduledModelRun` exists specifically to explore promise-resolution orderings — the closest thing to an interleaving explorer for async money code. `fc.commands([...], {replayPath})` replays a specific failing path |
+| **fast-check** (TS/JS) | `ICommand<Model, Real>` with `check(model)`, `run(model, real)`, `toString()` | `fc.modelRun`, `fc.asyncModelRun`, **`fc.scheduledModelRun`** | `scheduledModelRun` exists specifically to explore promise-resolution orderings, the closest thing to an interleaving explorer for async money code. `fc.commands([...], {replayPath})` replays a specific failing path |
 | **proptest-state-machine** (Rust) | `ReferenceStateMachine { State, Transition, init_state, transitions, apply, preconditions }` + `StateMachineTest { SystemUnderTest, Reference, init_test, apply, check_invariants, teardown }` | `prop_state_machine!` | The two-trait split *forces* the reference model into a separate type; `check_invariants` runs per transition |
 | **jqwik** (Java) | `Action.JustMutate` / `Action.Transformer` with `when()` preconditions and `check()` | `ActionSequenceArbitrary` | Ships the two things nobody else does: **`injectDuplicates()`** on an arbitrary (at-least-once delivery, for free) and `Statistics.coverage` for asserting the generator's own distribution |
 | **Hypothesis** (Python) | `@rule` / `@initialize` / `@precondition` / `@invariant`, `Bundle`, `consumes()` | `Machine.TestCase` | See the caveats above |
@@ -236,19 +236,19 @@ The model is worthless if it shares the implementation's misunderstanding. Three
 failure behind it:
 
 1. **Derive it from the specification or the venue's documentation, never from the implementation.** Jepsen's
-   TigerBeetle checker — a ~1,600-line single-threaded Clojure model stepping through timestamp-sorted
-   operations and verifying results **down to specific error codes** — was written by an outsider from the docs,
+   TigerBeetle checker (a ~1,600-line single-threaded Clojure model stepping through timestamp-sorted
+   operations and verifying results **down to specific error codes**) was written by an outsider from the docs,
    and it caught the query-engine safety bug that 1024 cores of the project's own simulator missed.
 2. **Keep it in a separate module, importing nothing from the implementation but its public types.** fast-check
    states the anti-pattern outright: otherwise you are "testing code against itself."
 3. **Prefer naive and obviously correct over efficient.** A `dict` of integers; an O(n²) fold over the full
    event log, recomputed from scratch every step. Not a compromise: nautilus's `avg_px` is a fold over the fill
    log (`orders/mod.rs:600-613`) and freqtrade's `recalc_trade_from_orders` walks `self.orders` from scratch on
-   every call — two projects, no shared code, same conclusion that a weighted-average cost is a fold and not a
+   every call: two projects, no shared code, same conclusion that a weighted-average cost is a fold and not a
    running accumulator. The naive model *is* the correct algorithm.
 
 **Assert error codes and identity fields, not just amounts.** TigerBeetle's Java client returned duplicate
-execution timestamps because a mutable singleton (`Batch.EMPTY`) was reused across responses — a model checking
+execution timestamps because a mutable singleton (`Batch.EMPTY`) was reused across responses; a model checking
 only balances passes it. Model the full result: `(ok, code, timestamp, id)`.
 
 ## Make the workload traceable, or the checker cannot attribute state
@@ -260,7 +260,7 @@ history is non-recoverable because "we can't tell which increment produced a par
 
 Consequence for money: **a generated workload that sets balances is nearly uncheckable; one that appends
 uniquely-identified transfers is fully checkable.** Generate `transfer(id, src, dst, amount)`, never
-`set_balance(account, value)` — even in the setup rules. Accounts are counters; transfers are the appendable,
+`set_balance(account, value)` (even in the setup rules). Accounts are counters; transfers are the appendable,
 traceable thing, which is why Jepsen built a bespoke semantic model for TigerBeetle rather than using an
 off-the-shelf register checker.
 
@@ -269,10 +269,10 @@ off-the-shelf register checker.
 The binding constraint on every generated-input technique is whether the generator reaches the interesting
 branch. TigerBeetle ran the VOPR on 1024 cores 24/7 and still shipped a query bug: both merge-capable fuzzers
 generated queries sharing a common prefix, so matching objects were always **consecutive in each index** and the
-zig-zag merge join's **probe** path was never taken — "a blind spot that hid a real bug."
+zig-zag merge join's **probe** path was never taken: "a blind spot that hid a real bug."
 
 The money-code analogue is precise: a generator whose fills always sum exactly to the order quantity never
-executes the over-fill or residual-dust branch — the one nautilus disables by default (`allow_overfills` is
+executes the over-fill or residual-dust branch: the one nautilus disables by default (`allow_overfills` is
 `#[serde(default)]` on a `bool`, so `false`, and the fill report is then discarded entirely,
 `crates/execution/src/reconciliation/orders.rs:785-796`).
 
@@ -302,7 +302,7 @@ Two defaults most teams have backwards:
   separate nightly job with a large `max_examples` and an explicit `derandomize=False`.
 - **The example database is a local directory** (`DirectoryBasedExampleDatabase` at `.hypothesis/examples`) that
   CI discards, so a counterexample found once is lost unless it is committed. `print_blob` is auto-`True` in CI
-  precisely so you can paste the blob: commit every shrunk failure as `@example(...)` — the durable form — or
+  precisely so you can paste the blob: commit every shrunk failure as `@example(...)` (the durable form) or
   `@reproduce_failure(version, blob)` as a temporary pin. fast-check's equivalent is
   `fc.commands([...], {replayPath: "..."})`; proptest writes `proptest-regressions/*.txt`, which **must be
   committed**.
@@ -312,8 +312,8 @@ Two defaults most teams have backwards:
 PIT's framing: line coverage "does not check that your tests are actually able to detect faults." Rounding, fee,
 allocation and PnL code is exactly where a test executes every line while asserting nothing about the boundary.
 
-Run it on those modules **only** — `pitest` (Java), `mutmut` (Python), `cargo-mutants` (Rust), `Stryker`
-(JS/TS) — and require a high score there rather than chasing repository-wide coverage. Scoping is a cost
+Run it on those modules **only**: `pitest` (Java), `mutmut` (Python), `cargo-mutants` (Rust), `Stryker`
+(JS/TS); and require a high score there rather than chasing repository-wide coverage. Scoping is a cost
 decision: a whole-repo run is hours of CPU and yields mostly equivalent mutants in glue code. The mutants that
 matter for money are the boundary and arithmetic-operator ones: `>` → `>=` at a threshold,
 `ROUND_HALF_UP` → `ROUND_HALF_EVEN`, `+` → `-` in a fee sign, a removed `abs()`, a removed remainder
@@ -327,7 +327,7 @@ behind this file; the recommendation is mechanism-derived from PIT's coverage-vs
 Two implementations of the same economic function, one generated input space, exact comparison. The cheapest
 strong oracle available, and it needs no model. **In trading the second implementation is free: the venue
 publishes the fee it charged and the executed price and quantity per fill**, so every locally computed fee,
-notional and average fill price can be compared to the venue's own number on **every fill, in production** —
+notional and average fill price can be compared to the venue's own number on **every fill, in production**,
 catching fee-tier changes, rebates and rounding-mode mismatches that no fixture encodes.
 
 ```python
@@ -346,7 +346,7 @@ Three rules for the comparison itself:
 - **Compare in minor units with `==`, never with an epsilon.** A relative float tolerance on money is itself the
   defect: hummingbot decides order terminality with `math.isclose(self.executed_amount_base, self.amount)`
   (`hummingbot/core/data_type/in_flight_order.py:177-183`), which coerces both `Decimal` operands to `float` at a
-  relative `1e-9` — an order 0.9999999995 filled is `is_done`, and on a large notional that residue is real money.
+  relative `1e-9`; an order 0.9999999995 filled is `is_done`, and on a large notional that residue is real money.
 - Where a tolerance is genuinely required (a venue's reported number vs yours), key it on the instrument's
   declared precision, not a global epsilon: nautilus pairs `DEFAULT_TOLERANCE = 0.0001` with a *single-unit*
   tolerance derived from the instrument's size precision (`reconciliation/positions.rs:40`, `:423`). A fixed
@@ -363,8 +363,8 @@ two database connections. The canonical double-spend is a transaction-isolation 
 check in application code → `UPDATE balance = computed`.
 
 PostgreSQL's documented boundary is the decisive detail. Under READ COMMITTED a single
-`UPDATE accounts SET balance = balance - :amt WHERE id = :id AND balance >= :amt` is safe — the row is re-fetched
-and the `WHERE` re-evaluated against the updated version — while the SELECT-then-compute-then-UPDATE form is not.
+`UPDATE accounts SET balance = balance - :amt WHERE id = :id AND balance >= :amt` is safe (the row is re-fetched
+and the `WHERE` re-evaluated against the updated version) while the SELECT-then-compute-then-UPDATE form is not.
 Under REPEATABLE READ / SERIALIZABLE, "applications using this level must be prepared to retry transactions due
 to serialization failures" (SQLSTATE `40001`), and an untested retry path is where a "safe" isolation level
 becomes a dropped payment.
@@ -383,7 +383,7 @@ def test_concurrent_debit_cannot_overdraw(pg_dsn):
             try:
                 results.append(debit(c, ACC, 100))                             # the code under test
                 c.commit()
-            except SerializationFailure:                                       # 40001 — a legal outcome
+            except SerializationFailure:                                       # 40001: a legal outcome
                 c.rollback(); results.append("retry")
     ts = [threading.Thread(target=attempt) for _ in range(2)]
     [t.start() for t in ts]; [t.join() for t in ts]
@@ -392,7 +392,7 @@ def test_concurrent_debit_cannot_overdraw(pg_dsn):
 ```
 
 The barrier makes it deterministic, and therefore a regression test rather than a flake. Assert the final
-balance **and** that the loser got a typed failure — a silent overwrite and a rejected second debit both leave
+balance **and** that the loser got a typed failure: a silent overwrite and a rejected second debit both leave
 exactly one transaction reporting success.
 
 **loom and jcstress apply to one thing: hand-written lock-free data structures.** loom exhaustively permutes
@@ -400,7 +400,7 @@ concurrent executions under the C11 memory model with state reduction (based on 
 (`@JCStressTest`, `@State`, `@Actor`, `@Result`, `@Outcome`) is probabilistic and "requires substantial time to
 catch all the cases." Almost no financial application code contains a lock-free structure; if your concurrency
 is a database transaction or a mutex, both report nothing, and loom will not even see the code.
-`fc.scheduledModelRun` is the closer analogue for async application code — it explores promise-resolution
+`fc.scheduledModelRun` is the closer analogue for async application code; it explores promise-resolution
 orderings, which is where a JS money path's interleaving bugs live.
 
 ## Cost and blind spot, per technique
@@ -416,5 +416,5 @@ orderings, which is where a JS money path's interleaving bugs live.
 | Differential vs the venue's reported fee/price | hours; runs in production, free | fee-tier and rebate changes no fixture encodes | anything the venue does not report |
 | Two-connection barrier test | hours; one per contended row-shape | lost update, missing `40001` retry, a `FOR UPDATE` that was never taken | interleavings you did not name; anything not on that row |
 | loom / jcstress | days, and only if the target exists | memory-model bugs in hand-written lock-free structures | database transactions, mutexes, anything not using loom's replacement types |
-| Race detector in CI (`-race`, TSan) | ~1 hour; 5–10× memory, 2–20× time | in-process data races on executed paths | **double-spend** — a cross-transaction lost update is not a data race |
+| Race detector in CI (`-race`, TSan) | ~1 hour; 5–10× memory, 2–20× time | in-process data races on executed paths | **double-spend**: a cross-transaction lost update is not a data race |
 | Line coverage | free | untested files | whether a single executed line asserts anything |

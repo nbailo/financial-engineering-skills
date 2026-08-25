@@ -1,7 +1,7 @@
 # The wallet's own state: custody, construction, and withdrawal orchestration
 
-This reference covers the third state — the wallet's own view of which outputs are mine, which are spendable,
-which nonce is next, which address index is next, which signing sessions are live — and the ways it diverges
+This reference covers the third state (the wallet's own view of which outputs are mine, which are spendable,
+which nonce is next, which address index is next, which signing sessions are live) and the ways it diverges
 from the chain and from the ledger. It carries UTXO transaction construction where a change output sent to a
 fee is a total silent loss, derivation paths and gap limits, the sweep and gas-tank architecture that makes
 `spendable` and `confirmed` different numbers on forwarder chains, memo and tag deposit routing, and
@@ -9,20 +9,20 @@ withdrawal batching with partial failure.
 
 ## Contents
 
-- **The three states, named** — chain, wallet, ledger; what a divergence looks like and why nothing throws.
-- **What "balance" means** — five Bitcoin Core buckets, `getreceivedbyaddress`, spendable vs confirmed.
-- **UTXO construction** — `min_viable_change`, the implicit fee, dust by script type, the Paxos transaction.
-- **Fee circuit breakers** — absolute caps and rate caps; Bitcoin Core's two, Fireblocks' three.
-- **Signing safely** — BIP-174 change detection; the segwit v0 amount lie and `PSBT_IN_NON_WITNESS_UTXO`.
-- **Derivation and discovery** — gap limit 20, history not balances, descriptor `range`, `purpose'`.
-- **Address reuse as an accounting hazard** — `avoid_reuse`, the `used` bucket, why `(address, amount)` dies.
-- **Sweeps and gas tanks** — forwarders, the FX-exposed sweep cost, three fee sources, the invisible fee.
-- **Memo and tag deposit routing** — `DestinationTag`, Stellar memo types, tag assignment and collisions.
-- **Chain reserves and minimums** — why "withdraw max" is wrong; the error codes; coinbase maturity.
-- **Withdrawal orchestration** — gross vs net; the two batch architectures; per-recipient idempotency.
-- **Asynchronous rejecting gates** — screening, freezes, authorisation expiry, returned VASP transfers.
-- **Uncreditable deposits** — funds you hold that belong to no customer, and the house account they need.
-- **Hot/warm/cold and multisig operations** — in-flight ledgering, quorum liveness, two-sided reconciliation.
+- **The three states, named**: chain, wallet, ledger; what a divergence looks like and why nothing throws.
+- **What "balance" means**: five Bitcoin Core buckets, `getreceivedbyaddress`, spendable vs confirmed.
+- **UTXO construction**: `min_viable_change`, the implicit fee, dust by script type, the Paxos transaction.
+- **Fee circuit breakers**: absolute caps and rate caps; Bitcoin Core's two, Fireblocks' three.
+- **Signing safely**: BIP-174 change detection; the segwit v0 amount lie and `PSBT_IN_NON_WITNESS_UTXO`.
+- **Derivation and discovery**: gap limit 20, history not balances, descriptor `range`, `purpose'`.
+- **Address reuse as an accounting hazard**: `avoid_reuse`, the `used` bucket, why `(address, amount)` dies.
+- **Sweeps and gas tanks**: forwarders, the FX-exposed sweep cost, three fee sources, the invisible fee.
+- **Memo and tag deposit routing**: `DestinationTag`, Stellar memo types, tag assignment and collisions.
+- **Chain reserves and minimums**: why "withdraw max" is wrong; the error codes; coinbase maturity.
+- **Withdrawal orchestration**: gross vs net; the two batch architectures; per-recipient idempotency.
+- **Asynchronous rejecting gates**: screening, freezes, authorisation expiry, returned VASP transfers.
+- **Uncreditable deposits**: funds you hold that belong to no customer, and the house account they need.
+- **Hot/warm/cold and multisig operations**: in-flight ledgering, quorum liveness, two-sided reconciliation.
 
 ## The three states, named
 
@@ -34,7 +34,7 @@ withdrawal batching with partial failure.
 
 None of the three raises when it diverges from another: a stale UTXO in the wallet's set produces a *valid*
 transaction, and a nonce the wallet thinks is free produces a *valid* signature. The only detector is a
-reconciliation that reads the chain independently of the library maintaining the wallet, in both directions —
+reconciliation that reads the chain independently of the library maintaining the wallet, in both directions;
 see the break table at the end of this file.
 
 ## What "balance" means
@@ -45,7 +45,7 @@ them may fund a withdrawal:
 | bucket | Core's own definition | may fund a payout |
 |---|---|---|
 | `trusted` | "outputs created by the wallet or confirmed outputs" | yes |
-| `untrusted_pending` | "outputs created by others that are in the mempool" | **no** — replaceable; since Core 28.0 `-mempoolfullrbf` defaults to 1, so `nSequence` no longer tells you whether an unconfirmed transaction can be replaced |
+| `untrusted_pending` | "outputs created by others that are in the mempool" | **no**: replaceable; since Core 28.0 `-mempoolfullrbf` defaults to 1, so `nSequence` no longer tells you whether an unconfirmed transaction can be replaced |
 | `immature` | coinbase outputs below maturity | no |
 | `nonmempool` | "sum of coins that are spent by transactions not in the mempool (usually an over-estimate…)" | no |
 | `used` | present only with `avoid_reuse`; outputs on already-used addresses | policy decision, not a default |
@@ -56,7 +56,7 @@ balance reports money you already moved.
 
 ```python
 # attribution and availability are different queries and must never share a column name
-received_lifetime = rpc.getreceivedbyaddress(addr, min_conf)   # who sent what — monotone, not a balance
+received_lifetime = rpc.getreceivedbyaddress(addr, min_conf)   # who sent what: monotone, not a balance
 spendable         = rpc.getbalances()["mine"]["trusted"]       # what a payout may draw on
 ```
 
@@ -67,7 +67,7 @@ the base address plus all the receive addresses." Authorising a withdrawal again
 money that is sitting in forwarder contracts and has not been swept.
 
 On memo-ID chains it is inverted: BitGo lists ~20 chains (XRP, Stellar, Cosmos, EOS, Hedera, TON, ICP, SEI,
-Injective, …) where "all deposited assets are immediately available in the spendable balance" — no forwarder,
+Injective, …) where "all deposited assets are immediately available in the spendable balance": no forwarder,
 no sweep, no gas tank, `spendable == confirmed`. Shipping "spendable ≠ confirmed" unconditionally is wrong on
 exactly these chains; shipping the memo-ID assumption is wrong on all the others.
 
@@ -77,9 +77,9 @@ exactly these chains; shipping the memo-ID assumption is wrong on all the others
 output construction is therefore paid to the miner, silently, in a completely valid transaction.
 
 ```cpp
-// src/wallet/coinselection.cpp — SelectionResult::GetChange(), the load-bearing line
+// src/wallet/coinselection.cpp: SelectionResult::GetChange(), the load-bearing line
 if (change < min_viable_change) { return 0; }   // caller emits NO change output; residue becomes fee
-// src/wallet/spend.cpp ~L1179-1194 — where that threshold comes from
+// src/wallet/spend.cpp ~L1179-1194: where that threshold comes from
 m_change_fee      = effective_feerate.GetFee(change_output_size);
 min_viable_change = std::max(change_spend_fee + 1, dust);
 ```
@@ -94,12 +94,12 @@ The dust floor inside that `max()` is a fee-rate function of the output's script
 | output type | dust at the default `dustRelayFee` | Core's reasoning |
 |---|---|---|
 | P2PKH | **546 sat** | "If you'd pay more in fees than the value of the output to spend something, then we consider it dust" |
-| P2WPKH | **294 sat** | "A typical spendable segwit P2WPKH txout is 31 bytes big" — witness-discounted spend cost |
+| P2WPKH | **294 sat** | "A typical spendable segwit P2WPKH txout is 31 bytes big": witness-discounted spend cost |
 | P2TR | same formula; Core's comment notes it "was kept to not further reduce the dust level" | cheaper to spend than the formula assumes |
 
 Hard-coding 546 over-rejects valid P2WPKH payouts and under-rejects when `dustRelayFee` is raised.
 
-### Worked case — Paxos, block 807,057, 2023-09-10 (verified on-chain)
+### Worked case: Paxos, block 807,057, 2023-09-10 (verified on-chain)
 
 txid `d5392d474b4c436e1c9d1f4ff4be5f5f9bb0eb2e26b61d2781751474b7e870fd`, mined by F2Pool.
 
@@ -116,8 +116,8 @@ selected input been worth ≈0.0741 BTC; the real UTXO was 268× larger. The bui
 and because the fee is a residual the entire discrepancy became fee with no error raised anywhere. Paxos:
 "Paxos overpaid the BTC network fee on Sept. 10, 2023. This only impacted Paxos' corporate operations."
 
-The pre-signing assertion that refuses it — note that every input value is **re-fetched from the chain**, not
-taken from the builder:
+The pre-signing assertion that refuses it (note that every input value is **re-fetched from the chain**, not
+taken from the builder):
 
 ```python
 prevouts = [chain.get_txout(i.txid, i.vout) for i in psbt.inputs]   # authority = chain, not builder
@@ -152,7 +152,7 @@ ceiling from your own worst-case payout size; there is no correct default here.
 that the *signer* re-derives it: take the BIP-32 path claimed in `PSBT_OUT_BIP32_DERIVATION`, derive the key
 from a **globally supplied xpub** the signer already trusts, and require the result to equal the key in the
 output script. For multi-key outputs, reconstruct the entire script policy from the inputs being signed and
-require an exact match. An `isChange` boolean from the builder protects against nothing — it is the builder
+require an exact match. An `isChange` boolean from the builder protects against nothing; it is the builder
 asserting its own correctness to the one component whose job is to doubt it.
 
 **Segwit v0's sighash lets a builder lie about other inputs' amounts, and the lie converts directly into
@@ -187,7 +187,7 @@ Two symmetric bugs, on the two sides of that rule:
 | issuance | handing out more than 20 consecutive **unused** external addresses | a restored or third-party wallet stops scanning at the gap; every deposit beyond it is invisible to discovery |
 | scanning | walking **balances** instead of transaction history | discovery truncates at the first address that received and was fully spent |
 
-The issuance-side monitor, alarming well before 20 — `used` must be derived from history, not balance:
+The issuance-side monitor, alarming well before 20 (`used` must be derived from history, not balance):
 
 ```sql
 -- consecutive unused EXTERNAL (change = 0) addresses at the tip of the issued range.
@@ -203,8 +203,8 @@ without `range` logs "Range not given, using default keypool range" and imports 
 `[0, DEFAULT_KEYPOOL_SIZE)` = **indices 0–999** (`src/wallet/rpc/backup.cpp`, `scriptpubkeyman.h`). A
 watch-only descriptor silently stops observing at index 999.
 
-`purpose'` selects an entirely different address set from the same seed — `44'` P2PKH, `49'` P2WPKH nested in
-P2SH, `84'` native P2WPKH (`bc1q…`) — over an otherwise identical
+`purpose'` selects an entirely different address set from the same seed: `44'` P2PKH, `49'` P2WPKH nested in
+P2SH, `84'` native P2WPKH (`bc1q…`), over an otherwise identical
 `m / purpose' / coin_type' / account' / change / address_index`. A restore at the wrong purpose reports a zero
 balance *correctly*, and reconciliation declares a loss that does not exist. Store the full path including
 `purpose'` with every issued address and re-derive it at issuance; the dangerous "fix" is re-issuing deposit
@@ -212,10 +212,10 @@ addresses that no longer match the ones customers already hold.
 
 ## Address reuse as an accounting hazard
 
-Core exposes `avoid_reuse` (adding the `used` balance bucket) and `-avoidpartialspends` — "Group outputs by
+Core exposes `avoid_reuse` (adding the `used` balance bucket) and `-avoidpartialspends`: "Group outputs by
 address, selecting many (possibly all) or none, instead of selecting on a per-output basis." The accounting
 consequence is independent of the privacy one: **on a reused deposit address, `(address, amount)` stops
-identifying a deposit** — two customers paying 0.02 BTC to the same address are indistinguishable without the
+identifying a deposit**; two customers paying 0.02 BTC to the same address are indistinguishable without the
 outpoint. Key deposits on `(txid, vout)`, or on EVM `(chainId, blockHash, txHash, logIndex)`; never on an
 address-plus-amount pair, and never issue one address to two customers.
 
@@ -227,7 +227,7 @@ contract whose only capability is sending to the wallet's base address. Three co
 1. **The sweep is denominated in a different asset from the deposit.** BitGo: "When you send an ERC-20 token,
    for example, the gas fee is paid in the chain's native asset (ETH for Ethereum, MATIC for Polygon, etc.).
    Your gas tank holds that native asset." Fireblocks surfaces the failure as `INSUFFICIENT_FUNDS_FOR_FEE`.
-   The cost of accepting a deposit is `gas_used × gas_price × FX(native → accounting currency)` — an
+   The cost of accepting a deposit is `gas_used × gas_price × FX(native → accounting currency)`, an
    FX-exposed number that keeps moving after you quoted the deposit as free.
 2. **A deposit can be worth less than the gas to move it.** Those balances are confirmed, are not spendable,
    and must be classified out of the asset side of the solvency invariant rather than counted at face value.
@@ -258,17 +258,17 @@ CR  onchain:gas-tank:ETH                 0.00214      # the leg a wallet-delta r
 | field | `DestinationTag` | `Memo` |
 | type | **32-bit unsigned integer** | `MEMO_TEXT` ≤ **28 bytes** · `MEMO_ID` **uint64** · `MEMO_HASH` **32 bytes** · `MEMO_RETURN` 32-byte hash of the refunded transaction |
 | enforcement | **protocol-side.** `asfRequireDest` (`lsfRequireDestTag`) makes the ledger reject an untagged Payment | **sender-side only.** SEP-29 `config.memo_required = "1"` is a `MANAGE_DATA` entry checked by the *sending* SDK; the network accepts memo-less payments regardless |
-| failure code | `tecDST_TAG_NEEDED` (143) — "The Payment transaction omitted a destination tag, but the destination account has the `lsfRequireDestTag` flag enabled" | none; the payment succeeds and is unattributable |
+| failure code | `tecDST_TAG_NEEDED` (143): "The Payment transaction omitted a destination tag, but the destination account has the `lsfRequireDestTag` flag enabled" | none; the payment succeeds and is unattributable |
 | removes the class entirely | **X-address** (tag folded into the address) | **muxed account** `M…` (CAP-27); Stellar's own docs now point at these for pooled-account differentiation |
 
 An XRPL integration can push the problem into consensus and should. A Stellar integration **must** ship an
-operational path for untagged deposits — an unattributed-deposit liability account with a named owner and an
-age, plus an identification workflow — because SEP-29 cannot prevent them.
+operational path for untagged deposits (an unattributed-deposit liability account with a named owner and an
+age, plus an identification workflow) because SEP-29 cannot prevent them.
 
 XRPL on assignment: "Assigning tags in numerical order provides less privacy to customers. Since all XRP
 Ledger transactions are public, assigning tags in this way can make it possible to guess which tags correspond
 to various users' addresses," and "To be safe, check for collisions with old tags before using a new tag."
-**A tag collision is a mis-credit — a silent transfer of value between two real customers.**
+**A tag collision is a mis-credit, a silent transfer of value between two real customers.**
 
 ```python
 TAG_LO, TAG_HI = 1_000_000, 4_294_967_295   # DestinationTag is uint32; below TAG_LO reserved for house use
@@ -292,7 +292,7 @@ configuration. Omitting it fails the withdrawal; a wrong one strands funds or re
 | rule | chains | surfaced as |
 |---|---|---|
 | destination account must be created with a minimum amount | Fireblocks: "Only the Polkadot, Kusama, and Westend (testnet) blockchains have this limitation" | `NEED_MORE_TO_CREATE_DESTINATION` |
-| a minimum must remain in the source wallet at all times | same family | `INSUFFICIENT_RESERVED_FUNDING` — "Resubmit the transaction with an amount that leaves at least one DOT" |
+| a minimum must remain in the source wallet at all times | same family | `INSUFFICIENT_RESERVED_FUNDING`: "Resubmit the transaction with an amount that leaves at least one DOT" |
 | destination does not exist and the payment is below the account reserve | XRP Ledger | `tecNO_DST_INSUF_XRP` |
 | coinbase outputs unspendable for **100 confirmations** | Bitcoin | `SPEND_COINBASE_TOO_EARLY`; Core's separate `immature` balance bucket |
 
@@ -300,7 +300,7 @@ configuration. Omitting it fails the withdrawal; a wrong one strands funds or re
 
 **Gross versus net is an explicit statement, never an inference.** Fireblocks `treatAsGrossAmount` defaults to
 `false`: the recipient receives `amount` and the sender pays the fee on top. With `true` the fee comes out of
-`amount`, and the degenerate case is `AMOUNT_TOO_SMALL` — "the transaction fee is higher than the net transfer
+`amount`, and the degenerate case is `AMOUNT_TOO_SMALL`: "the transaction fee is higher than the net transfer
 amount on a gross transaction". Inverting the flag produces a per-withdrawal shortfall or overpayment that is
 invisible per transaction and unbounded in aggregate: store the choice on the payout row and assert the
 recipient's observed delta against it in reconciliation.
@@ -309,10 +309,10 @@ The two batching architectures have opposite failure modes, and one rule survive
 
 | architecture | atomicity | the failure | what it breaks |
 |---|---|---|---|
-| **one transaction, many outputs** (UTXO batch, EVM multicall) | atomic on-chain — all recipients paid or none | one txid covers N ledger rows; an RBF replacement or a drop invalidates all N at once | if each row independently times out and re-issues, N double payouts |
+| **one transaction, many outputs** (UTXO batch, EVM multicall) | atomic on-chain: all recipients paid or none | one txid covers N ledger rows; an RBF replacement or a drop invalidates all N at once | if each row independently times out and re-issues, N double payouts |
 | **one request, many transactions** (Fireblocks aggregated) | **not** atomic. Fireblocks `PARTIALLY_FAILED`: "One or more aggregated transactions submitted as a single operation have failed… aggregated transactions are submitted to the blockchain network individually and can be partially or fully completed or fail" | some recipients paid, some not | retrying the *request* re-pays everyone who succeeded |
 
-**The idempotency key is per-recipient-payout, and the batch is a grouping over those keys — never a
+**The idempotency key is per-recipient-payout, and the batch is a grouping over those keys, never a
 replacement for them.**
 
 ```sql
@@ -344,21 +344,21 @@ that have nothing to do with the chain. Each one needs a reversal path bound to 
 |---|---|---|
 | `PENDING_AML_SCREENING` | screening runs before signing; the debit is already taken | the clearing account holds it; alert on age |
 | `REJECTED_AML_SCREENING` | terminal | reverse the customer debit |
-| `AUTO_FREEZE` / `FROZEN_MANUALLY` | "Any associated assets will not be available until an Admin-level user unfreezes them" | asset is not spendable — exclude from the withdrawable-reserve assertion |
+| `AUTO_FREEZE` / `FROZEN_MANUALLY` | "Any associated assets will not be available until an Admin-level user unfreezes them" | asset is not spendable; exclude from the withdrawable-reserve assertion |
 | `PENDING_AUTHORIZATION` | "If no action is taken for two hours, the transaction will fail" | **a withdrawal can fail for a calendar reason, not a chain reason**; expiry is a first-class outcome with its own reversal |
 | `QUEUED` behind `PENDING_SIGNATURE` | one unsigned request head-of-lines every later payout on the account | alarm on queue-head age, not on individual payout age |
-| `BLOCKED_BY_POLICY` | carries the policy rule number, matched by "the first-match principle" | log the rule id with the payout — inserting a rule silently changes the outcome of existing paths |
+| `BLOCKED_BY_POLICY` | carries the policy rule number, matched by "the first-match principle" | log the rule id with the payout; inserting a rule silently changes the outcome of existing paths |
 | `COMPLETED_BUT_3RD_PARTY_REJECTED` | "completed on the blockchain as shown on block explorers but rejected by the associated third-party platform" | you paid and were not credited: book an **open receivable**, not a settled transfer |
 
-The screening clock and the transaction clock run independently — Fireblocks: "Under certain circumstances, a
-transaction's screening status can appear as Pending even when its transaction status shows as Completed" — so
+The screening clock and the transaction clock run independently (Fireblocks: "Under certain circumstances, a
+transaction's screening status can appear as Pending even when its transaction status shows as Completed"), so
 neither may be used to infer the other.
 
 **A returned travel-rule transfer is not a deposit.** When a counterparty VASP rejects and returns funds, the
 inbound arrives at an address you control and looks exactly like a customer deposit; crediting it leaves the
 ledger holding both a debit for the original withdrawal and an unrelated credit for the same money. Match
-returned transfers against the originating payout — amount, asset, counterparty address,
-`travelRuleMessageId` — before any crediting rule runs.
+returned transfers against the originating payout (amount, asset, counterparty address,
+`travelRuleMessageId`) before any crediting rule runs.
 
 ## Uncreditable deposits
 
@@ -368,8 +368,8 @@ CoinJoin, or other obfuscation tools will not be credited and may be lost," alon
 deposits of ZCash block rewards."
 
 This is a **ledger state, not an exception handler**: an on-chain asset with no customer liability behind it.
-Give it a house/unattributed account with a named owner and an age — the same treatment untagged Stellar
-deposits get — and keep it off the asset side of any solvency assertion backing customer liabilities. The same
+Give it a house/unattributed account with a named owner and an age (the same treatment untagged Stellar
+deposits get) and keep it off the asset side of any solvency assertion backing customer liabilities. The same
 classification absorbs frozen assets, dust below the cost of sweeping, and inaccessible legacy wallets. If the
 invariant counts them as reserves, the invariant is lying.
 
@@ -381,7 +381,7 @@ request time; the broadcast writes nothing; the confirmation moves the clearing 
 ```
 t0  request accepted   DR liability:customer:42:BTC        0.50000000
                        CR clearing:withdrawals-in-flight    0.50000000
-t1  broadcast          (no posting — a broadcast is not a settlement event)
+t1  broadcast          (no posting: a broadcast is not a settlement event)
 t2  confirmed at depth DR clearing:withdrawals-in-flight    0.50000000
                        DR expense:network-fees:BTC          0.00022000
                        CR onchain:hot:BTC                   0.50022000
@@ -395,7 +395,7 @@ account at all**.
 **The signing quorum is wallet state with a liveness cost.** BitGo's on-chain wallets are uniformly 2-of-3
 (user, backup, BitGo) for both multisig and MPC/TSS, so two independent parties must be reachable for any
 spend. OKEx suspended *all* withdrawals on 2020-10-16 because a single key holder was unreachable: an
-unassemblable quorum is economically identical to lost keys for its duration. `[PARTIALLY VERIFIED — the
+unassemblable quorum is economically identical to lost keys for its duration. `[PARTIALLY VERIFIED: the
 contemporaneous report was not retrievable in the research pass; treat the duration as unverified.]`
 
 Signing sessions have their own lifetime and their own idempotency. BitGo's recovery contract turns an

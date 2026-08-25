@@ -9,21 +9,21 @@ constraints that block the fraud response they were written to protect.
 
 ## Contents
 
-1. **Four states, four names** — states not flags; the FTX and Kraken evidence for the withdrawal rule.
-2. **The available-balance formula** — the deliberate absence of `credits_pending` from the predicate.
-3. **The hold table** — schema, the resolve-once constraint, the read that authorises.
-4. **Reserve-time invariant checking** — why `INSERT … SELECT … WHERE available >= amount` fails at Read Committed.
-5. **Intrinsic expiry** — `expires_at` enforced by the reader; expiry as a scheduled state transition.
-6. **Two-phase resolution** — release in full; post ≤ reserved; void exactly; resolve-exactly-once codes.
-7. **Partial capture and the remainder** — per-processor auto-release, and a phantom `refund` in the ledger.
-8. **Upstream authorization windows** — the expiry table, and why your own request does not pick the row.
-9. **Materialised balances** — why they exist, how they drift, the checkpoint pattern, how to rebuild.
-10. **Opening balances** — the un-backfilled opening that breaks per-account reconciliation on day one.
-11. **Hot-account contention** — the four fixes, their costs, and single-writer partitioning.
-12. **Balance-read latency as a correctness property** — stand-in processing.
-13. **Overdraft modelled explicitly** — a floor column, not a flag; the FTX `borrow` counter-example.
-14. **The control that defeats the safety operation** — the floor versus clawback, `AccountNotActive` versus freeze.
-15. **Account closure** — sweep, close, and the holds that outlive the closure.
+1. **Four states, four names**: states not flags; the FTX and Kraken evidence for the withdrawal rule.
+2. **The available-balance formula**: the deliberate absence of `credits_pending` from the predicate.
+3. **The hold table**: schema, the resolve-once constraint, the read that authorises.
+4. **Reserve-time invariant checking**: why `INSERT … SELECT … WHERE available >= amount` fails at Read Committed.
+5. **Intrinsic expiry**: `expires_at` enforced by the reader; expiry as a scheduled state transition.
+6. **Two-phase resolution**: release in full; post ≤ reserved; void exactly; resolve-exactly-once codes.
+7. **Partial capture and the remainder**: per-processor auto-release, and a phantom `refund` in the ledger.
+8. **Upstream authorization windows**: the expiry table, and why your own request does not pick the row.
+9. **Materialised balances**: why they exist, how they drift, the checkpoint pattern, how to rebuild.
+10. **Opening balances**: the un-backfilled opening that breaks per-account reconciliation on day one.
+11. **Hot-account contention**: the four fixes, their costs, and single-writer partitioning.
+12. **Balance-read latency as a correctness property**: stand-in processing.
+13. **Overdraft modelled explicitly**: a floor column, not a flag; the FTX `borrow` counter-example.
+14. **The control that defeats the safety operation**: the floor versus clawback, `AccountNotActive` versus freeze.
+15. **Account closure**: sweep, close, and the holds that outlive the closure.
 
 ## 1 · Four states, four names
 
@@ -50,13 +50,13 @@ Four separately-derivable numbers, four names, four questions. Never one `balanc
   days. Patched in 47 minutes. (Kraken CSO Nick Percoco, 2024-06-19; secondary.)
 
 Same shape both times: a balance became authorising before the event that made it real. The rule is
-`credit → PENDING (unavailable) → AVAILABLE at finality`, where finality is the settlement system's own event —
+`credit → PENDING (unavailable) → AVAILABLE at finality`, where finality is the settlement system's own event,
 never a UI confirmation, an operator action, or a mempool sighting.
 
 ## 2 · The available-balance formula
 
 `available = posted_credits − posted_debits − pending_debits`. Inbound pending is absent from the right-hand
-side, deliberately — TigerBeetle, `src/tigerbeetle.zig:34-42`:
+side, deliberately (TigerBeetle, `src/tigerbeetle.zig:34-42`):
 
 ```zig
 pub fn debits_exceed_credits(self: *const Account, amount: u128) bool {
@@ -67,7 +67,7 @@ pub fn debits_exceed_credits(self: *const Account, amount: u128) bool {
 
 `credits_pending` does not appear. Modern Treasury states the same asymmetry independently: available balance
 assumes *"all outgoing transactions are debited immediately while incoming funds won't arrive."* The check also
-counts `debits_pending` — **a balance check that reads only `posted` double-spends against an unresolved
+counts `debits_pending`; **a balance check that reads only `posted` double-spends against an unresolved
 hold.** And the floor is gated on `flags.debits_must_not_exceed_credits`: an account without that flag has **no
 floor at all** and may go arbitrarily negative, correct for a revenue or equity account and catastrophic for a
 customer wallet. The constraint is opt-in per account, so a test must assert it is set on every
@@ -111,10 +111,10 @@ SELECT b.posted_minor - COALESCE((SELECT SUM(h.amount_minor) FROM holds h
 
 Check the invariant **at reserve time**, so no committed reservation can later be un-postable. The property to
 test is negative-space: *no reachable state contains a committed reservation that cannot be posted.* The naive
-form — `INSERT INTO holds (…) SELECT … WHERE (SELECT available_minor FROM v_available WHERE …) >= $4` — is
+form, `INSERT INTO holds (…) SELECT … WHERE (SELECT available_minor FROM v_available WHERE …) >= $4`, is
 wrong at Read Committed: two concurrent reserves see the same `available_minor` and both insert.
 PostgreSQL documents that Read Committed does not prevent lost updates and that each command takes a fresh
-snapshot; Modern Treasury names the identical hazard for balances — *N* concurrent debits each read a
+snapshot; Modern Treasury names the identical hazard for balances: *N* concurrent debits each read a
 sufficient balance before any writes. Four fixes exist (§11); two fit a hold placement. (a) Take
 `SELECT posted_minor FROM account_balances WHERE … FOR UPDATE` first, then recompute available and insert the
 hold in the same transaction. (b) Put the predicate inside the write, on a materialised reserved column:
@@ -129,7 +129,7 @@ RETURNING version;
 
 Zero rows returned is a **typed decline** (`InsufficientAvailable { account_id, currency, requested, available }`),
 not an exception and not a retry. If you pick Repeatable Read or Serializable instead, PostgreSQL requires a
-*generalized* `SQLSTATE 40001` retry — you cannot predict which transactions will conflict — and that retry
+*generalized* `SQLSTATE 40001` retry (you cannot predict which transactions will conflict) and that retry
 must itself be idempotent.
 
 ## 5 · Intrinsic expiry
@@ -173,20 +173,20 @@ if (t.flags.post_pending_transfer) {
 if (t.flags.void_pending_transfer) { assert(amount_actual == p.amount);
 ```
 
-Read the first two lines carefully. The reservation is decremented by **`p.amount` — the pending transfer's own
-amount — never by `t.amount`, the amount named on the resolving request** — released in full, unconditionally,
+Read the first two lines carefully. The reservation is decremented by **`p.amount` (the pending transfer's own
+amount), never by `t.amount`, the amount named on the resolving request**: released in full, unconditionally,
 before anything is posted. Everything else follows:
 
 | operation | reservation | posted | code |
 |---|---|---|---|
-| post full / partial | released in full | `+ amount_actual` (remainder simply not posted) | — |
-| post more than reserved | — | rejected | `exceeds_pending_transfer_amount` |
+| post full / partial | released in full | `+ amount_actual` (remainder simply not posted) | – |
+| post more than reserved | – | rejected | `exceeds_pending_transfer_amount` |
 | void | released in full | unchanged | must be exact: `assert(amount_actual == p.amount)` |
-| expire by timeout | released in full | unchanged | — |
-| resolve twice | — | rejected | `pending_transfer_already_posted = 33`, `pending_transfer_already_voided = 34` |
+| expire by timeout | released in full | unchanged | – |
+| resolve twice | – | rejected | `pending_transfer_already_posted = 33`, `pending_transfer_already_voided = 34` |
 
 The resolving transfer is a **new record with its own id** and a `pending_id` back-reference; it never edits the
-pending one. An over-post is rejected, never clamped — clamping turns a caller bug into a silent difference
+pending one. An over-post is rejected, never clamped; clamping turns a caller bug into a silent difference
 between what was asked for and what the books say.
 
 ## 7 · Partial capture and the remainder
@@ -199,7 +199,7 @@ remainder later**; a second capture needs a new authorization.
 | Stripe (default) | *"A partial capture automatically releases the remaining amount"*; *"If you partially capture a payment, you can't perform another capture for the difference."* | docs.stripe.com/payments/place-a-hold-on-a-payment-method |
 | Stripe multicapture | up to **50 non-final captures plus one final capture**, total ≤ authorized; requires `capture_method=manual`; `final_capture` defaults to **true** | docs.stripe.com/payments/multicapture |
 | Adyen, single partial capture | *"Any unclaimed amount that is left over after partially capturing a payment is automatically cancelled."* | docs.adyen.com/online-payments/capture |
-| Adyen, multiple partial captures | *"The unclaimed amount after an initial partial capture is not automatically cancelled"* — and this mode is **disabled by default**, enabled only by Adyen Support | same |
+| Adyen, multiple partial captures | *"The unclaimed amount after an initial partial capture is not automatically cancelled"*, and this mode is **disabled by default**, enabled only by Adyen Support | same |
 
 The trap that reaches the ledger directly: **Stripe's partial capture emits a `charge` balance transaction for
 the full authorized amount plus a `refund` balance transaction for the uncaptured portion.** Derive postings from
@@ -220,7 +220,7 @@ invented. Stripe publishes the table (docs.stripe.com/payments/place-a-hold-on-a
 
 Three mechanics that decide whether your `expires_at` can be right:
 
-- **The CIT/MIT classification is made by network signals, not by your `off_session` flag** — you cannot
+- **The CIT/MIT classification is made by network signals, not by your `off_session` flag**; you cannot
   compute which row applies from your own request. Read the field the processor returns (Stripe puts
   `capture_before` on the charge) and store *that* as `expires_at`.
 - **Incremental authorization does not extend the validity window.** `amount` on `increment_authorization` is
@@ -235,10 +235,10 @@ Three mechanics that decide whether your `expires_at` can be right:
 
 You cannot fold the whole journal on every read. Monzo defines a balance as the sum of entries over an address
 group `(legal_entity, namespace, name, currency, account_id)`; at Uber's volume (a trillion entries) that fold
-is not a read path at all. Materialisation is legitimate — the constraint is *how*. **The write** goes in the
+is not a read path at all. Materialisation is legitimate; the constraint is *how*. **The write** goes in the
 **same transaction** as the entry `INSERT`, carrying a monotonic version; Square Books caches the balance on the
 book row inside the same Cloud Spanner transaction as the journal entry, with a version counter. The drift shape
-is `INSERT INTO ledger_entries …; COMMIT;` then a separate `UPDATE account_balances …` — a crash or a partial
+is `INSERT INTO ledger_entries …; COMMIT;` then a separate `UPDATE account_balances …`. A crash or a partial
 retry between them is permanent and silent.
 
 **The verifier** is a scheduled job that recomputes order-independently and compares:
@@ -250,7 +250,7 @@ SELECT b.account_id, b.currency, b.posted_minor, COALESCE(SUM(e.amount_minor), 0
 HAVING b.posted_minor <> COALESCE(SUM(e.amount_minor), 0);
 ```
 
-Uber runs offline order-independent checksums over time windows comparing source-of-truth to derived tables — a
+Uber runs offline order-independent checksums over time windows comparing source-of-truth to derived tables; a
 single missing entry breaks the checksum. **The recompute does not fix the balance in place.** It raises a
 `break` row and posts the difference to a suspense account; an in-place repair destroys the evidence of how the
 drift arose and silently absorbs the next one.
@@ -277,7 +277,7 @@ SELECT c.running_sum_minor + COALESCE(SUM(e.amount_minor), 0)
 ```
 
 **Checkpoints are keyed on the append sequence, never on `effective_at`.** A back-dated entry arrives after a
-checkpoint whose `through_seq` already covers it in append order but not in economic order — correct for the
+checkpoint whose `through_seq` already covers it in append order but not in economic order: correct for the
 current balance, wrong for an as-of balance, which folds entries with
 `WHERE effective_at <= T AND (discarded_at IS NULL OR discarded_at >= T)` and uses no checkpoint. Uber's entity
 changelog can recreate an entity's ledger since inception; **if you cannot drop `account_balances` and rebuild
@@ -306,14 +306,14 @@ SELECT gen_uuid(), '2026-01-01T00:00:00Z', 'opening_balance',
 Two properties to test: after the migration `SUM(entries) == legacy_balance` for **every** account, and the
 opening transactions themselves net to zero per currency against the equity account. Then run the
 reconciliation in CI against a **freshly-migrated** database seeded with one known discrepancy, and assert it
-produces exactly one `break` row and one alert — so an un-backfilled opening fails the test rather than muting
+produces exactly one `break` row and one alert, so an un-backfilled opening fails the test rather than muting
 production.
 
 ## 11 · Hot-account contention
 
 Fee, tax, FX-liquidity and clearing accounts appear in a large fraction of transactions, so contention is
 structural. TigerBeetle states it directly: business transactions *"don't shard well"* and row locks on hot
-accounts *"bring the system's performance to a crawl."* Sharding by account id does not help — the hot account
+accounts *"bring the system's performance to a crawl."* Sharding by account id does not help; the hot account
 sits on one side of nearly every transfer.
 
 | fix | mechanism | cost |
@@ -327,7 +327,7 @@ sits on one side of nearly every transfer.
 **serialized batch writes** on hot ledger entities; TigerBeetle executes all transfers sequentially on one core
 under strict serializability, the only isolation level it offers. Route every posting touching a hot account
 through one writer keyed on `(account_id, currency)`, let it accumulate N postings in a short window, and apply
-**one** balance mutation per batch — the journal still receives N immutable entry rows, because the batching is
+**one** balance mutation per batch; the journal still receives N immutable entry rows, because the batching is
 on the materialised balance only. Beyond throughput, that writer is the natural home for the per-currency
 conservation check on the set, and one writer per key makes the balance row's monotonic version trivially
 correct.
@@ -336,21 +336,21 @@ correct.
 
 Monzo's stated reason for materialising: delayed balance reads force card **stand-in processing**, which risks
 *"unauthorized negative balances or missed fraud checks."* When the authoritative read misses the network's
-deadline the fallback is not "a slower answer" — it is *approve without checking*, by a component you do not
+deadline the fallback is not "a slower answer"; it is *approve without checking*, by a component you do not
 control. Latency on the authorising read is a correctness budget; the response to blowing it is a decline policy
 you chose, not a stand-in you inherited.
 
 ## 13 · Overdraft modelled explicitly
 
 If an account may go negative that is a credit product with a limit, not a flag on a code path. Give the balance
-row a floor — `ALTER TABLE account_balances ADD COLUMN floor_minor bigint NOT NULL DEFAULT 0 CHECK (floor_minor
-<= 0)` — and compare every debit against it. `floor_minor = 0` for an ordinary customer wallet; a negative value
-is an extended credit line, and the drawn amount is a receivable that must appear on the asset side — an
+row a floor (`ALTER TABLE account_balances ADD COLUMN floor_minor bigint NOT NULL DEFAULT 0 CHECK (floor_minor
+<= 0)`) and compare every debit against it. `floor_minor = 0` for an ordinary customer wallet; a negative value
+is an extended credit line, and the drawn amount is a receivable that must appear on the asset side; an
 overdraft existing only as a negative liability balance is invisible to every credit-exposure report you run.
 
 The counter-example is FTX's `borrow`, a per-customer field controlling how far negative an account could go
 before auto-liquidation: most retail 0, preferred market makers up to $150M, **Alameda alone
-$65,000,000,000** — alongside `allow_negative = true` (2019-07-31) and `can_withdraw_below_borrow`
+$65,000,000,000**; alongside `allow_negative = true` (2019-07-31) and `can_withdraw_below_borrow`
 (2019-07-23), which let a flagged account withdraw unlimited assets while net-negative and exempted it from
 auto-liquidation. Because database logs were not kept the debtors **could not determine when or by whom the
 $65bn value was set** (Ray First Interim Report, Case 22-11068-JTD Doc 1242-1). A per-account override on a
@@ -364,12 +364,12 @@ Two constraints that look obviously correct block the fraud response they exist 
 constraint is easy to add, and its interaction with clawback is easy to miss.
 
 **The floor versus the clawback.** The fraud you are responding to is money already spent, so a clawback must
-drive the balance below the floor — that is what "claw back already-spent funds" means. A blanket
+drive the balance below the floor; that is what "claw back already-spent funds" means. A blanket
 `CHECK (balance_minor >= 0)` makes it structurally impossible and the `allow_overdraft` branch unreachable.
 **Do not delete the constraint**: that is worse than either failure, because ordinary debits then overdraw
 silently. Condition the floor on the posting type. A row-level `CHECK` on `account_balances` cannot see which
 posting is writing it, so the predicate belongs in the chokepoint's conditional `UPDATE`, and a schema-level
-backstop must sit on a row that carries the posting type — the entry, with the floor denormalised onto it:
+backstop must sit on a row that carries the posting type (the entry, with the floor denormalised onto it):
 
 ```sql
 UPDATE account_balances
@@ -394,7 +394,7 @@ Gate on `(posting_type, account_status)`, not on status alone:
 | posting type | active | frozen | closed |
 |---|---|---|---|
 | customer-initiated debit (withdrawal, transfer out) | allow | **deny** | deny |
-| customer-initiated credit (deposit) | allow | allow — into the frozen balance | route to suspense |
+| customer-initiated credit (deposit) | allow | allow, into the frozen balance | route to suspense |
 | reversal / clawback / chargeback | allow | **allow** | reopen, then post (§15) |
 | fee, interest, and other system postings | allow | allow | deny |
 
@@ -411,7 +411,7 @@ Closure is a sweep plus a state change, committed as one construct. TigerBeetle'
 *pending* transfer carrying `closing_debit`/`closing_credit`; reopening is **voiding that pending transfer**,
 which is why the matrix above can say "reopen, then post" as a mechanism rather than a hope.
 
-**Closing does not resolve already-pending holds.** They remain and can still time out on their own clock —
+**Closing does not resolve already-pending holds.** They remain and can still time out on their own clock:
 correct, because a hold mirrors an upstream authorization whose window you do not control (§8). So a closed
 account can still see a reservation released after closure: the closure path must be idempotent against a later
 expiry event, and the solvency assertion must keep counting that account's outstanding holds until terminal.

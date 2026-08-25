@@ -2,7 +2,7 @@
 
 The settlement record is the only channel that is the money, and it is the one most integrations never build.
 This file covers the shape of each processor's settlement data, the join keys that are actually unique, the
-report lines that share an amount and differ only in free text, and the scheduled comparison job — its
+report lines that share an amount and differ only in free text, and the scheduled comparison job: its
 independent read path, its break classification, and its alert destination.
 
 ## Contents
@@ -62,7 +62,7 @@ canonical case is the partial capture below. A reconciler whose `CASE` statement
 before it has read a single row.
 
 **`net_minor = amount_minor − fee_minor`, and the identity is assertable.** Assert it per row. A row where it
-fails is a parser bug or a fee line you have not modelled — either way it is a break, not a rounding artefact.
+fails is a parser bug or a fee line you have not modelled; either way it is a break, not a rounding artefact.
 
 **`status` is `pending` then `available`, and `available_on` is when.** A `pending` balance transaction is real
 cash that you cannot yet pay out. Refunds draw on the available balance *"not including pending amounts"*
@@ -82,12 +82,12 @@ authorized 10000 minor units, and a second row for the uncaptured 4000 whose `ty
 distinguishes the two; `type` does not.
 
 ```python
-# WRONG — the phantom refund. Understates revenue, and a customer-facing
+# WRONG: the phantom refund. Understates revenue, and a customer-facing
 # "refunds issued" report shows refunds that never happened.
 if bt.type == "refund":
     revenue_minor -= bt.amount
 
-# RIGHT — switch on reporting_category, and correlate to a real Refund object.
+# RIGHT: switch on reporting_category, and correlate to a real Refund object.
 # An unmapped category HALTS the run; it never falls through to a default bucket.
 handler = CATEGORY_HANDLERS.get(bt.reporting_category)
 if handler is None:
@@ -132,7 +132,7 @@ def classify_adjustment(bt) -> AdjustmentKind:
 
 Two rules around that function. First, the patterns are **not shipped in this file**: `description` copy is not
 a versioned API surface, and a regex quoted from a document is a wrong error code waiting to happen. Derive
-them from your own account's rows and pin them in a fixture. Second, never sign the row by inference —
+them from your own account's rows and pin them in a fixture. Second, never sign the row by inference:
 `amount_minor` already carries the sign; a classifier that decides direction from the description will invert a
 late win into a second loss.
 
@@ -164,7 +164,7 @@ for 180 days as a receivable you are carrying whether or not your books say so.
 ## Adyen Settlement details report
 
 Adyen names the **Settlement details report** as the transaction-level reconciliation record containing *"all
-balance movements that explain the financial standing of your merchant account"* — settled payments, refunds,
+balance movements that explain the financial standing of your merchant account"*: settled payments, refunds,
 chargebacks, fees, **InvoiceDeductions** and **DepositCorrections**
 (docs.adyen.com/reporting/settlement-reconciliation/settlement-details-report). InvoiceDeductions and
 DepositCorrections have no webhook and no payment object. They exist only here.
@@ -201,7 +201,7 @@ a payment onto the same local row and silently nets them.
 
 **`merchantReference` is not unique.** Adyen describes it as *"an identifier assigned by you"* and does not
 enforce uniqueness. A retried payment attempt for one order produces two `pspReference`s under one
-`merchantReference` — and both may settle, one of them as a duplicate you now have to detect. The same holds for
+`merchantReference`, and both may settle, one of them as a duplicate you now have to detect. The same holds for
 any `metadata.order_id` you attach to a Stripe object.
 
 | join direction | key | correctness |
@@ -224,7 +224,7 @@ settlement line with no local record.
 ## Settlement lag
 
 The lag is real, scheme- and method-dependent, and Adyen documents it explicitly, including **weekend
-consolidation** — batches that would fall on non-business days are merged, so a naive "expected settlement date
+consolidation**: batches that would fall on non-business days are merged, so a naive "expected settlement date
 = capture date + N" produces a wave of false breaks every Monday. Drive the expectation from a business-day
 calendar per merchant account and per payment method, never from a constant.
 
@@ -251,7 +251,7 @@ quietly on. Absence of information is not information.
 | connected-account negative balance | **180 days** |
 
 The rule that follows: **close the period on settlement data at a stated cut-off, and book everything that
-arrives afterwards as a new entry in the current period that references the original — never as an edit to the
+arrives afterwards as a new entry in the current period that references the original, never as an edit to the
 closed period.** A refund that fails 29 days after close, a dispute that flips to `won` two years later, and a
 `payment_unreconciled` sweep at day 90 are all normal, and all three are new facts about an old transaction.
 
@@ -276,7 +276,7 @@ Every comparison produces one of these. Each has an owner, an age, and an action
 | `category_unknown` | `reporting_category` / Adyen `Type` outside the pinned enumeration | halt the mapping; do not bucket as "other" |
 | `description_unparsed` | `type = adjustment` matching no pinned pattern | halt |
 | `duplicate_settlement` | two settlement rows for one authorization | the Coinbase/Visa/Worldpay 2018 shape: a network-side reclassification re-presented settled authorizations while the reversals were still in flight, and customers were charged 2–17 times. Alert on `posted_count > 1` per authorization |
-| `unmatched_clearing` | clearing record with no matching authorization | force post — **expected**, route to review, not an error |
+| `unmatched_clearing` | clearing record with no matching authorization | force post: **expected**, route to review, not an error |
 | `aged` | any open break older than its class SLA | escalate; blocks close |
 
 **An unexplained break is a liability, not a rounding difference.** Route it to an explicit suspense account
@@ -297,7 +297,7 @@ Presentment currency ≠ settlement currency ≠ payment-method currency, and a 
 **dispute-time** FX rate, not the purchase-time rate. Storing one amount per payment makes the dispute
 impossible to reconcile.
 
-Persist all three pairs, plus the dispute pair, as separate columns — never one amount and a rate you intend to
+Persist all three pairs, plus the dispute pair, as separate columns, never one amount and a rate you intend to
 re-apply later:
 
 ```sql
@@ -324,14 +324,14 @@ charged on top.
 | `txn_2` | `refund` | −4000 | 0 | −4000 |
 | | | | **settlement net** | **+5680** |
 
-A refund ledger group that mirrors the charge group reverses 40% of the fee — 128 minor units — back into
+A refund ledger group that mirrors the charge group reverses 40% of the fee (128 minor units) back into
 revenue. Books say +5808, settlement says +5680, and the 128 is a permanent, silent, per-refund gap. It has no
 other detector: every double-entry check passes, because the transaction still balances. Reverse the principal
 leg and **leave the fee expensed**.
 
 Also currency-specific and easy to get wrong at the payout boundary: Stripe treats **HUF and TWD** as
 two-decimal for charges but **zero-decimal for payouts**, requiring payout amounts divisible by 100, and
-requires **ISK and UGX** — nominally zero-decimal — to be sent as two-decimal values ending in `00`. A `Money`
+requires **ISK and UGX** (nominally zero-decimal) to be sent as two-decimal values ending in `00`. A `Money`
 type keyed only on ISO 4217 exponent will strand an unpayable residue in a HUF balance and will be 100× wrong
 on ISK.
 
@@ -342,10 +342,10 @@ and for a different amount (tips, overcapture, incremental authorization, partia
 manufacture and back out an authorization entry to make the settlement post.
 
 ```python
-# WRONG — false unmatched records, and worse, false MATCHES across two similar transactions.
+# WRONG: false unmatched records, and worse, false MATCHES across two similar transactions.
 match = find_auth(card_fingerprint=c.card, amount=c.amount, date=c.date)
 
-# RIGHT — network identifiers first, then a scored candidate set with a human queue.
+# RIGHT: network identifiers first, then a scored candidate set with a human queue.
 # Never auto-net a scored match; a wrong match moves money between two customers.
 ```
 
@@ -353,20 +353,21 @@ Match on the network's own identifiers where the feed carries them, degrade to a
 route anything below the confidence floor to review. Design the matcher to be **1:N and N:0 tolerant**: one
 authorization can clear in several presentments, and a valid clearing can have no authorization at all.
 
-One trap specific to refunds: a refund issued shortly after the charge may be processed as a **reversal** — the
+One trap specific to refunds: a refund issued shortly after the charge may be processed as a **reversal**: the
 original charge drops off the statement, no credit line appears, and **no ARN is produced**. Support tooling
 that traces a refund by ARN reports "refund not sent" for a refund that completed correctly. Model
 reversal-shaped and credit-shaped refunds as distinct so tracing and customer messaging are right.
 
 ## The scheduled entrypoint
 
-This is G7 in payments form. The comparison ships as a scheduled entrypoint or it does not exist; SQL in a
+This is *reconciliation runs in production*, in payments form. The comparison ships as a scheduled entrypoint or it does not exist; SQL in a
 comment, a docstring, or a "worth running as a cron" note counts as absent.
 
 ```python
-# recon/settlement_recon.py — entrypoint, not a helper.
+# recon/settlement_recon.py: entrypoint, not a helper.
 
-# G7: alert destination is a config key with NO default. Raises at import if unset.
+# reconciliation runs in production: the alert destination is a config key with NO
+# default, and it raises at import when unset.
 RECON_ALERT_CHANNEL = os.environ["RECON_ALERT_CHANNEL"]
 
 def run(window_start: datetime, window_end: datetime) -> None:
@@ -378,7 +379,8 @@ def run(window_start: datetime, window_end: datetime) -> None:
     while True:
         page = stripe.BalanceTransaction.list(created=window, limit=100, starting_after=cursor)
         rows.extend(page.data)
-        # G6: a truncated page, an error, or a count at the documented cap is a HOLE,
+        # proven coverage before the cursor advances: a truncated page, an error, or a
+        # count at the documented cap is a HOLE,
         # not an empty result. The cursor advances only when the range was covered.
         if not page.has_more:
             break
@@ -402,10 +404,10 @@ Non-negotiable properties of that job:
   the writer, it validates the writer against itself.
 - **The alert destination has no default.** An unset channel must raise at import, not silently no-op in
   production. A reconciliation that cannot reach a human is a reconciliation that does not run.
-- **Reconcile on three axes, not one.** *Completeness* — are all records present, proven with order-independent
-  checksums over bounded windows rather than row-by-row diffs. *Clearing* — did every flow reach a terminal
+- **Reconcile on three axes, not one.** *Completeness*: are all records present, proven with order-independent
+  checksums over bounded windows rather than row-by-row diffs. *Clearing*: did every flow reach a terminal
   state; every clearing and suspense account returns to zero at steady state, which converts reconciliation from
-  a batch job into a continuously queryable invariant. *Timeliness* — did the data arrive inside its window.
+  a batch job into a continuously queryable invariant. *Timeliness*: did the data arrive inside its window.
   Balance equality alone hides both missing and late data that happens to be self-consistent.
 - **A break blocks.** Wire the aged-break count into the close gate, not only into a dashboard.
 - **Write the runbook next to the job.** One section per break class: the query that lists it, the decision it
@@ -414,5 +416,5 @@ Non-negotiable properties of that job:
 
 The failure this exists to catch has a name. Revolut lost ~$23M gross / ~$20M net to a flaw that refunded
 declined transactions out of its own funds, and it was detected when **a US partner bank reported holding less
-cash than expected** — by external reconciliation, not by any internal control. The settlement report is that
+cash than expected**, by external reconciliation, not by any internal control. The settlement report is that
 control, built before you need it.

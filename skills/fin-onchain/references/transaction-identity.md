@@ -10,32 +10,32 @@ anything.
 
 ## Contents
 
-- **Identity per chain model** — the four identities in one table; why a tx hash identifies a *serialization*.
-- **The broadcast-hash set** — the schema and the confirmer that reads the whole set.
-- **EVM replacement** — the ≥10% bump on both fee fields, worked; geth `PriceBump: 10` vs Fireblocks 15%;
+- **Identity per chain model**: the four identities in one table; why a tx hash identifies a *serialization*.
+- **The broadcast-hash set**: the schema and the confirmer that reads the whole set.
+- **EVM replacement**: the ≥10% bump on both fee fields, worked; geth `PriceBump: 10` vs Fireblocks 15%;
   `replacement transaction underpriced`; `already known` means success.
-- **EVM mempool eviction and stuck nonces** — `AccountSlots`/`AccountQueue`/`Lifetime`; `pendingNonce −
+- **EVM mempool eviction and stuck nonces**: `AccountSlots`/`AccountQueue`/`Lifetime`; `pendingNonce −
   latestNonce` as the observable; BitGo `GET /potentialStuckTxs` and `intentType: "fillNonce"`.
-- **Dropped, replaced, and confirmed racing each other** — Fireblocks `DROPPED_BY_BLOCKCHAIN` and its three
+- **Dropped, replaced, and confirmed racing each other**: Fireblocks `DROPPED_BY_BLOCKCHAIN` and its three
   causes; `INVALID_NONCE_TOO_LOW`, `INVALID_NONCE_FOR_RBF`, `GAS_PRICE_TOO_LOW_FOR_RBF`.
-- **UTXO replacement** — BIP-125's five rules verbatim; Core 28.0 full-RBF by default and the death of
+- **UTXO replacement**: BIP-125's five rules verbatim; Core 28.0 full-RBF by default and the death of
   `nSequence` as a signal; RBF vs CPFP; ancestor/descendant limits.
-- **Solana submission and retry** — rebroadcast identical bytes; re-sign only past `lastValidBlockHeight`;
+- **Solana submission and retry**: rebroadcast identical bytes; re-sign only past `lastValidBlockHeight`;
   `getSignatureStatuses` with `searchTransactionHistory`; durable nonces' asymmetric failure.
-- **XRPL submission** — provisional vs final by result code; the persist-before-submit record set; retry by
+- **XRPL submission**: provisional vs final by result code; the persist-before-submit record set; retry by
   varying only `Fee` and `LastLedgerSequence`; `AccountTxnID` and the two-active-senders stop condition.
-- **Request-scoped idempotency at custodians** — Fireblocks `externalTxId` vs BitGo `sequenceId`; the 24-hour
+- **Request-scoped idempotency at custodians**: Fireblocks `externalTxId` vs BitGo `sequenceId`; the 24-hour
   `Idempotency-Key` and why it is a different mechanism.
-- **EIP-712 signed orders** — the domain separator; per-protocol cancellation (Seaport counter, 0x salt floor,
+- **EIP-712 signed orders**: the domain separator; per-protocol cancellation (Seaport counter, 0x salt floor,
   Permit2 vs EIP-2612 nonce spaces); validated orders outliving their signatures; expiry as a control.
-- **Cross-chain message identity** — `(sourceChain, destChain, nonce)` consumed atomically with the effect;
+- **Cross-chain message identity**: `(sourceChain, destChain, nonce)` consumed atomically with the effect;
   duplicate relayer delivery as the default case; source/destination reorg coupling.
 
 ## Identity per chain model
 
 A transaction hash is a digest of one *serialization* of one *attempt*: change a fee field, a blockhash or an
 input and the hash changes while the intent does not. What the consensus layer makes mutually exclusive is the
-identity below — a far stronger guarantee than any application-level dedupe you can write.
+identity below, a far stronger guarantee than any application-level dedupe you can write.
 
 | Model | Identity of the intent | What the chain guarantees | What re-signing does |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Two consequences that people get backwards:
 
 Every hash you ever broadcast for one intent belongs to a set, and the confirmer reads the set, not a column.
 The measured failure: an implementation writes `replaces_tx_hash`, documents that the confirmer will *"also
-match a receipt for the superseded tx"*, and never reads the column — the original never confirms, the
+match a receipt for the superseded tx"*, and never reads the column: the original never confirms, the
 withdrawal is marked failed, and the user is re-credited on funds that already left.
 
 ```sql
@@ -82,15 +82,15 @@ CREATE TABLE broadcast_attempt (
 ```
 
 The confirmer, in order: (1) read `latestNonce = eth_getTransactionCount(from, "latest")`; (2) if
-`latestNonce <= intent.nonce`, nothing at this nonce has mined — the intent is still live, whatever the hash
+`latestNonce <= intent.nonce`, nothing at this nonce has mined: the intent is still live, whatever the hash
 lookups say; (3) otherwise the nonce is consumed, so fetch `eth_getTransactionReceipt` for **every** hash in
 `broadcast_attempt` and settle on the one that returns non-null; (4) if the nonce is consumed and no hash in
-your set has a receipt, someone else replaced your transaction — that is an unreconciled economic fact, not a
+your set has a receipt, someone else replaced your transaction: that is an unreconciled economic fact, not a
 retry condition. Stop and page.
 
 ## EVM replacement
 
-geth's `legacypool` `DefaultConfig` sets `PriceBump: 10` — *"Minimum price bump percentage to replace an
+geth's `legacypool` `DefaultConfig` sets `PriceBump: 10`, *"Minimum price bump percentage to replace an
 already existing transaction (nonce)"*. For a type-2 (EIP-1559) transaction the bump must be satisfied on
 **both** fee fields independently. Bumping only `maxFeePerGas` is the classic silent no-op.
 
@@ -111,7 +111,7 @@ signing. Bump amounts to know:
 |---|---|---|
 | go-ethereum `legacypool` `DefaultConfig.PriceBump` | **10%** | The public-mempool floor for most EVM nodes |
 | Fireblocks `GAS_PRICE_TOO_LOW_FOR_RBF` | **15%** | *"Resubmit the RBF transaction with a gas price at least 15% higher than the original."* |
-| EIP-1559 `BASE_FEE_MAX_CHANGE_DENOMINATOR = 8` | base fee moves **±12.5% per block** | A 10% bump does not keep up with one block of rising base fee — derived, and the reason bumps often need repeating |
+| EIP-1559 `BASE_FEE_MAX_CHANGE_DENOMINATOR = 8` | base fee moves **±12.5% per block** | A 10% bump does not keep up with one block of rising base fee (derived, and the reason bumps often need repeating) |
 
 **The replacement threshold is a policy of whichever mempool you are talking to, not a protocol constant.**
 Read it from configuration per chain and per custodian.
@@ -124,7 +124,7 @@ Error strings from `go-ethereum/core/txpool/errors.go` that a submitter must cla
 | `replacement transaction underpriced` | Bump failed; original still live | Recompute both thresholds and re-bump. Never re-sign at a new nonce |
 | `transaction underpriced` | Below the pool's minimum, not a replacement | Raise the fee at the same nonce |
 | `nonce too low` | The nonce is already consumed on chain | Resolve via receipt lookup over the whole hash set |
-| `account limit exceeded` | You hit `AccountQueue`/`AccountSlots` | Stop submitting. You have a nonce gap — see below |
+| `account limit exceeded` | You hit `AccountQueue`/`AccountSlots` | Stop submitting. You have a nonce gap; see below |
 | `exceeds block gas limit` | Malformed intent | Do not retry |
 
 A timeout on `eth_sendRawTransaction` is ambiguous in the dangerous direction: the node may have accepted and
@@ -142,7 +142,7 @@ sub-pool and cannot mine until the gap fills. geth `legacypool` defaults:
 | `AccountQueue` | **64** | Non-executable slots per account; beyond it, `account limit exceeded` |
 | `GlobalSlots` | 4096 + 1024 | Pool-wide executable capacity |
 | `GlobalQueue` | 1024 | Pool-wide non-executable capacity |
-| `Lifetime` | **3h** | *"Maximum amount of time an account can remain stale in the non-executable pool"* — then the queued transactions are **dropped with no notification** |
+| `Lifetime` | **3h** | *"Maximum amount of time an account can remain stale in the non-executable pool"*; then the queued transactions are **dropped with no notification** |
 
 There is no "your transaction was dropped" event on any EVM chain. The only observable is arithmetic:
 
@@ -150,12 +150,12 @@ There is no "your transaction was dropped" event on any EVM chain. The only obse
 gap = eth_getTransactionCount(from, "pending") - eth_getTransactionCount(from, "latest")
 ```
 
-If `gap > 0` for longer than a configured interval, the remediation is to **replace the lowest unmined nonce**
-— not to submit more transactions behind it. Submitting more fills `AccountQueue`, and at the 3-hour
+If `gap > 0` for longer than a configured interval, the remediation is to **replace the lowest unmined nonce**,
+not to submit more transactions behind it. Submitting more fills `AccountQueue`, and at the 3-hour
 `Lifetime` the whole backlog vanishes; when someone finally replaces nonce N, a three-hour queue of payouts
 executes at once at prices from a different market.
 
-BitGo exposes this as a first-class endpoint rather than an inference (BitGo *Withdraw — nonce holes*):
+BitGo exposes this as a first-class endpoint rather than an inference (BitGo *Withdraw: nonce holes*):
 `GET /potentialStuckTxs` returns `"cause": "nonceHole"`, a `stuckTx` webhook fires, and the remediation is a
 deliberate no-op payment with `intentType: "fillNonce"` at the exact stuck nonce. Named causes: *"Dropped
 Messages… Asynchronous Execution… Crashes and Restarts — A participant may lose track of the last used nonce
@@ -177,16 +177,16 @@ transaction was rejected by the node before it could be included in a block."*
 
 The three sub-statuses that classify a cancel/bump race:
 
-- `INVALID_NONCE_TOO_LOW` — *"The nonce chosen for this transaction already belongs to a transaction that was
+- `INVALID_NONCE_TOO_LOW`: *"The nonce chosen for this transaction already belongs to a transaction that was
   previously confirmed on this account. This may occur when an RBF or drop transaction is used to replace a
   pending transaction that was completed before being replaced."* **You tried to cancel a payout and the
   original landed anyway.** This is an accounting event: the money left. Do not re-issue.
-- `INVALID_NONCE_FOR_RBF` — *"Fireblocks did not find a matching pending transaction… RBF transactions can
+- `INVALID_NONCE_FOR_RBF`: *"Fireblocks did not find a matching pending transaction… RBF transactions can
   only be used with transactions that are not Failed or Confirmed."*
-- `GAS_PRICE_TOO_LOW_FOR_RBF` — the 15% bump above.
+- `GAS_PRICE_TOO_LOW_FOR_RBF`: the 15% bump above.
 
-Fireblocks also documents that *"you may receive multiple updates to the Completed status"* — on appearance
-and again on further confirmations — so the `COMPLETED` handler must be idempotent on the intent id.
+Fireblocks also documents that *"you may receive multiple updates to the Completed status"* (on appearance
+and again on further confirmations), so the `COMPLETED` handler must be idempotent on the intent id.
 
 ## UTXO replacement
 
@@ -197,7 +197,7 @@ BIP-125's five replacement rules, verbatim from `bitcoin/bips/bip-0125.mediawiki
 2. *"The replacement transaction may only include an unconfirmed input if that input was included in one of
    the original transactions."*
 3. *"The replacement transaction pays an absolute fee of at least the sum paid by the original transactions."*
-4. It pays for its own bandwidth at the node's minimum relay fee — *"if the minimum relay fee is 1
+4. It pays for its own bandwidth at the node's minimum relay fee: *"if the minimum relay fee is 1
    satoshi/byte and the replacement transaction is 500 bytes total, then the replacement must pay a fee at
    least 500 satoshis higher than the sum of the originals."*
 5. At most **100** transactions may be evicted by the replacement.
@@ -217,14 +217,14 @@ CPFP is that it doesn't require the presence of a change output in the original 
 
 | | RBF | CPFP |
 |---|---|---|
-| Parent txid | **Invalidated** — a new txid confirms | **Preserved** |
+| Parent txid | **Invalidated**: a new txid confirms | **Preserved** |
 | Precondition | Sender-only; replacement must satisfy BIP-125 rules 2–5 | Requires a spendable output of the parent (usually the change output) |
 | Cost | One transaction's fee, raised | Two transactions' fees |
 | Ledger impact for a batched payout (one tx, N recipients) | All N ledger rows keyed on the parent txid are invalidated at once | All N rows keep their key |
 
 **Prefer CPFP for a batch payout whose ledger rows reference the txid; use RBF only where the ledger is keyed
 on intent.** And whichever you use, the batch's idempotency key must be per-recipient-payout, with the batch
-as a grouping over those keys — never a replacement for them.
+as a grouping over those keys, never a replacement for them.
 
 Mempool topology caps how much a replacement or a sweep chain can do:
 `DEFAULT_ANCESTOR_LIMIT{25}` / `DEFAULT_DESCENDANT_LIMIT{25}` (`src/policy/policy.h`; Fireblocks surfaces the
@@ -245,7 +245,7 @@ while True:
     st = client.get_signature_statuses([sig], search_transaction_history=True).value[0]
     if st is not None:
         if st.err is not None:
-            raise LandedAndFailed(sig, st.err)   # fee paid, slot consumed — NOT retryable
+            raise LandedAndFailed(sig, st.err)   # fee paid, slot consumed; NOT retryable
         if st.confirmation_status in ("confirmed", "finalized"):
             return sig
     # not found, or found but not yet confirmed
@@ -261,14 +261,14 @@ Four things this encodes:
 - **Rebroadcast the identical signed bytes.** The runtime dedupes identical signatures inside the validity
   window, so rebroadcast is idempotent; re-signing is not. Solana's retry guide is explicit: *"Before
   re-signing any transaction, it is very important to ensure that the initial transaction's blockhash has
-  expired"* — otherwise both versions can land and the user *"unintentionally sent the same transaction
+  expired"*; otherwise both versions can land and the user *"unintentionally sent the same transaction
   twice."*
 - **`searchTransactionHistory: true`.** Without it, `getSignatureStatuses` searches only the recent status
   cache (active slots plus `MAX_RECENT_BLOCKHASHES` rooted slots). Treating a cache miss as "not executed, safe
   to retry" is a double-spend.
 - **`err != null` is landed-and-failed.** The fee was paid and the blockhash/nonce consumed. It is an
   accounting outcome, not a retry condition. And `confirmations: null` on a status means *"the transaction is
-  rooted and finalized by a supermajority of stake"* — null is the strongest state, not the weakest.
+  rooted and finalized by a supermajority of stake"*; null is the strongest state, not the weakest.
 - **The RPC will stop rebroadcasting for you.** RPC nodes rebroadcast every ~2 s until finality or blockhash
   expiry, but *"if the outstanding rebroadcast queue size is greater than 10,000 transactions, newly submitted
   transactions are dropped"*, and *"if an RPC node can't determine when your transaction expires, it will only
@@ -279,7 +279,7 @@ asymmetric (solana.com durable-nonces doc). `AdvanceNonceAccount` must be **inst
 transaction is treated as an ordinary blockhash transaction and fails on staleness. A **validation** failure
 (nonce already used, account missing, authority unsigned) means *"the entire transaction is dropped. No fees
 collected, no state changes."* An **execution** failure after validation still advances the nonce and collects
-fees — *"This prevents the transaction from being replayed."* So a durable-nonce transaction that "failed" may
+fees: *"This prevents the transaction from being replayed."* So a durable-nonce transaction that "failed" may
 have consumed the nonce, and the next transaction built on the old value is dropped, not retried. The docs
 warn durable nonces *"may be deprecated in a future release"*.
 
@@ -298,7 +298,7 @@ that failed initially could still succeed."* Finality is per result code (XRPL, 
 | Result | Final when |
 |---|---|
 | `tesSUCCESS` | Included in a **validated** ledger |
-| any `tec` | Included in a validated ledger — a *failed* transaction is also final, and it **did** destroy the transaction cost |
+| any `tec` | Included in a validated ledger: a *failed* transaction is also final, and it **did** destroy the transaction cost |
 | any `tem` | Final unless the protocol changes |
 | `tefPAST_SEQ` | Another transaction with the same `Sequence` is validated |
 | `tefMAX_LEDGER` | A validated ledger exceeds `LastLedgerSequence` **and** the transaction is in none of them |
@@ -323,7 +323,7 @@ configuration, it's possible that the passive system mistakenly believes the act
 Any different transactions with the same Sequence numbers have failed permanently… you are in an unexpected
 state and should stop processing until you have determined why that has happened; otherwise, your system might
 send multiple transactions trying to do the same thing."* XRPL also offers `AccountTxnID`, which chains each
-transaction to the hash of the account's previous one — a protocol-level guard that makes a split-brain fail
+transaction to the hash of the account's previous one, a protocol-level guard that makes a split-brain fail
 closed instead of double-paying.
 
 ## Request-scoped idempotency at custodians
@@ -334,12 +334,12 @@ handles one as if it were the other has defeated the mechanism.
 | | Fireblocks `externalTxId` | BitGo `sequenceId` | Fireblocks `Idempotency-Key` (HTTP header) |
 |---|---|---|---|
 | Scope | One transaction, forever | One transaction request | One HTTP request |
-| On reuse | *"Fireblocks will automatically reject all future transactions with the same ID"* — **HTTP 400** | Look it up and branch on `state` | Replays the first response, *"including error responses"* |
+| On reuse | *"Fireblocks will automatically reject all future transactions with the same ID"*: **HTTP 400** | Look it up and branch on `state` | Replays the first response, *"including error responses"* |
 | Lifetime | No documented expiry | No documented expiry | **24 hours**, then *"generate a new key"* |
 | Resolution after an ambiguous send | `GET /transactions/external_tx_id/{id}` | If not registered, *"you can safely retry the original withdrawal"*; if registered and `state` is `pendingDelivery`, rebuild, re-sign, and send the same request | N/A |
 
 **Treat a duplicate-id rejection as evidence the payout exists.** A 400 on `externalTxId` means the
-transaction was created — Fireblocks' own motivation is *"situations where, even though a submitted
+transaction was created; Fireblocks' own motivation is *"situations where, even though a submitted
 transaction responds with an error due to an internet outage, the transaction was still sent to and processed
 on the blockchain."* A client that reads the 400 as a failure and re-issues under a fresh id has converted the
 safety mechanism into a double payment.
@@ -351,7 +351,7 @@ it. Send both.
 ## EIP-712 signed orders
 
 An off-chain signed order has its own identity, layered on top of chain identity, and its own cancellation
-semantics. The domain separator is the replay boundary and `version` is part of it — EIP-712: *"Signatures
+semantics. The domain separator is the replay boundary and `version` is part of it. EIP-712: *"Signatures
 from different versions are not compatible"*; `chainId` is *"the EIP-155 chain id. The user-agent should
 refuse signing if it does not match the currently active chain"*; `verifyingContract` is *"the address of the
 contract that will verify the signature."* Omitting `chainId` makes a signature valid on **every** EVM chain
@@ -364,8 +364,8 @@ cancelled is still fillable.
 
 | Protocol | Identity / nonce space | Cancel mechanism | The trap |
 |---|---|---|---|
-| **Seaport** | Per-offerer `counter` inside the signed struct | `incrementCounter` cancels **all** the offerer's open orders | Since v1.2 the counter advances *"by a quasi-random value derived from the last block hash"* — you **cannot** compute `old + 1`; read `getCounter(offerer)` after the transaction. Bulk-signed orders must be cancelled individually or nuked wholesale. Cancelling a private order **publishes its parameters** |
-| **0x v4** | `salt`, per `(maker, makerToken, takerToken)` | `cancelPairLimitOrders(makerToken, takerToken, minValidSalt)` — a monotonic floor; *"the new salt [must] be >= the old salt"* | Random salts make bulk cancel unusable. Salts must encode time monotonically **at issuance**, not at cancel time |
+| **Seaport** | Per-offerer `counter` inside the signed struct | `incrementCounter` cancels **all** the offerer's open orders | Since v1.2 the counter advances *"by a quasi-random value derived from the last block hash"*; you **cannot** compute `old + 1`; read `getCounter(offerer)` after the transaction. Bulk-signed orders must be cancelled individually or nuked wholesale. Cancelling a private order **publishes its parameters** |
+| **0x v4** | `salt`, per `(maker, makerToken, takerToken)` | `cancelPairLimitOrders(makerToken, takerToken, minValidSalt)`: a monotonic floor; *"the new salt [must] be >= the old salt"* | Random salts make bulk cancel unusable. Salts must encode time monotonically **at issuance**, not at cancel time |
 | **Permit2 (AllowanceTransfer)** | `uint48 nonce` per `(owner, token, spender)`; must equal current, increments by 1 | `invalidateNonces`, requires `newNonce > oldNonce`, rejects a jump `> type(uint16).max` (`ExcessiveInvalidation`) | Two concurrently issued permits for the same triple **cannot both be valid**. Two clocks: `expiration` bounds the allowance, `sigDeadline` bounds the signature (`AllowanceExpired`) |
 | **EIP-2612** | One sequential nonce per owner, **across all permits for that token** | Consume the nonce | A service issuing permits concurrently for the same user races itself |
 
@@ -385,20 +385,20 @@ Two failures that survive a correct cancel design:
 **Scope replay protection to `(sourceChainId, destChainId, messageNonce)` and consume it in the same atomic
 step as the effect.** Never let a default or zero value satisfy the validity check: Nomad initialised
 `_committedRoot` to `bytes32(0)`, which set `confirmAt[bytes32(0)] = 1`, so `acceptableRoot(0)` returned true
-for any unproven message — >$190M, and then **hundreds of copycats who simply copied the calldata and
+for any unproven message: >$190M, and then **hundreds of copycats who simply copied the calldata and
 substituted their own recipient address**. The post-exploit failure mode was *replay*, and replay was trivially
 available because no per-message consumption gate worked.
 
 **Duplicate relayer delivery is the default case, not the exception.** Multiple relayers competing to deliver
 the same message is normal operation. The destination contract must be idempotent on the message id, and the
-off-chain accounting must be idempotent on the **same key** — never on the delivery transaction hash, which
+off-chain accounting must be idempotent on the **same key**, never on the delivery transaction hash, which
 differs per relayer.
 
 **Derive the credit from an observed value delta, not from an event the caller shaped.** Qubit's QBridge
 `deposit` on the Ethereum side accepted a call with **no ETH attached**, still emitted the deposit event, and
-the BSC side minted qXETH against it — ~$80M. And verifying that a check ran is not verifying it ran on your
+the BSC side minted qXETH against it: ~$80M. And verifying that a check ran is not verifying it ran on your
 data: Wormhole's `load_instruction_at` confirmed a secp256k1 verification instruction existed but not that it
-came from the real Instructions sysvar, so a forged account satisfied the check in a different context —
+came from the real Instructions sysvar, so a forged account satisfied the check in a different context:
 120,000 wETH.
 
 **Source and destination reorgs are coupled, and the coupling is a design parameter.** Minting on the
@@ -408,8 +408,8 @@ transfers wait for hard finality (~65 Ethereum blocks, 15–19 min, on Ethereum/
 Chain/X Layer), while fast transfers credit at 1–2 confirmations and are *"subject to a global allowance to
 mitigate reorganization risks"*. That is the generalizable shape: `credit_immediately_up_to(X) &&
 wait_for_finality_above(X)`, where X is a number you have decided you are willing to lose. The OP Stack
-interop model states the coupling as an invariant — *"should a reorg happen, either both the source and
-destination transactions remain or both of them revert"* — which is a property of **that** protocol, not one
+interop model states the coupling as an invariant (*"should a reorg happen, either both the source and
+destination transactions remain or both of them revert"*), which is a property of **that** protocol, not one
 to assume of a bridge you did not verify.
 
 One address-level corollary: **the same address is not the same owner on another chain.** Wintermute sent 20M

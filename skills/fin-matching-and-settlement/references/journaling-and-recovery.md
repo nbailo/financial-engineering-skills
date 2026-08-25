@@ -4,23 +4,23 @@ The mechanics behind the claim "deterministic and replayable": what exactly gets
 relative to the book mutation and the outbound publish; how a replay harness proves the claim by byte-comparing
 an emitted event sequence rather than asserting it in a comment; and how a single-writer engine recovers,
 snapshots and fails over without emitting two different histories. This is the file for the durability half of
-the venue contract — the half that is routinely sequenced correctly in memory and then never persisted, so a
+the venue contract: the half that is routinely sequenced correctly in memory and then never persisted, so a
 restart invents a second history.
 
 ## Contents
 
-1. **What is an input** — the inbound command stream versus derived outputs; why journaling outputs does not give replay.
-2. **Ordering and flush** — journal-and-flush before the book is touched; mutation and executions in one commit; publish from committed state.
-3. **The publish check** — binding the send result, the transactional outbox, at-least-once with a consumer-visible dedupe key.
-4. **The deterministic core** — the banned-construct table and the injection point that replaces each one.
-5. **Identity assignment inside the core** — sequence numbers, ExecID and match numbers as input-derived outputs.
-6. **The replay harness** — seeded replay, byte-comparison, first-divergence report, and the CI test that licenses the word "replayable".
-7. **Snapshots and truncation** — snapshot content, its journal position, verify-by-replay, and what may be deleted.
-8. **Crash points** — the enumerated kill boundaries and the expected post-recovery state at each.
-9. **Failover and single-writer authority** — epochs, fencing at the storage layer, and the two-writers-briefly history fork.
-10. **Deterministic simulation testing** — what it costs, what it buys at T3, and what it still misses.
-11. **Assertion policy** — live-in-release versus saturate-and-emit versus compiled-out, decided per path.
-12. **Recovery runbook artefacts** — what an operator needs to reproduce a production incident from the journal alone.
+1. **What is an input**: the inbound command stream versus derived outputs; why journaling outputs does not give replay.
+2. **Ordering and flush**: journal-and-flush before the book is touched; mutation and executions in one commit; publish from committed state.
+3. **The publish check**: binding the send result, the transactional outbox, at-least-once with a consumer-visible dedupe key.
+4. **The deterministic core**: the banned-construct table and the injection point that replaces each one.
+5. **Identity assignment inside the core**: sequence numbers, ExecID and match numbers as input-derived outputs.
+6. **The replay harness**: seeded replay, byte-comparison, first-divergence report, and the CI test that licenses the word "replayable".
+7. **Snapshots and truncation**: snapshot content, its journal position, verify-by-replay, and what may be deleted.
+8. **Crash points**: the enumerated kill boundaries and the expected post-recovery state at each.
+9. **Failover and single-writer authority**: epochs, fencing at the storage layer, and the two-writers-briefly history fork.
+10. **Deterministic simulation testing**: what it costs, what it buys at T3, and what it still misses.
+11. **Assertion policy**: live-in-release versus saturate-and-emit versus compiled-out, decided per path.
+12. **Recovery runbook artefacts**: what an operator needs to reproduce a production incident from the journal alone.
 
 ---
 
@@ -42,7 +42,7 @@ LMAX (Fowler, *The LMAX Architecture*, 2011): *"the current state of the Busines
 derivable by processing the input events"*; the journaler stores all input events durably; recovery is
 replay-from-snapshot; a production bug is diagnosed by copying the event sequence to a development machine and
 replaying it there. The Business Logic Processor is single-threaded and in-memory, with **no automated rollback
-facility** — which is the reason validation must complete *before* state mutation, not after.
+facility**, which is the reason validation must complete *before* state mutation, not after.
 
 **Journaling outputs is the failure mode with the longest half-life.** It looks like event sourcing, passes a
 "we have a durable log" review, and then cannot rebuild state after a matching-logic fix, cannot answer "what
@@ -84,7 +84,7 @@ Load-bearing details:
 ## 3. The publish check and the outbox
 
 `let _ = tx.send(ev);` discards exactly the failure you need. In Rust, `tokio::sync::mpsc::Sender::send`
-returns `Result<(), SendError<T>>` — the error case is *receiver dropped*, i.e. the market-data publisher
+returns `Result<(), SendError<T>>`; the error case is *receiver dropped*, i.e. the market-data publisher
 thread died and every subsequent execution is being silently swallowed. `try_send` additionally returns
 `TrySendError::Full(T)`, i.e. the consumer is slower than the engine and you are about to drop depth updates
 under exactly the load where they matter. Go's `ch <- ev` has the mirror shape: a send on a closed channel
@@ -107,14 +107,14 @@ CREATE INDEX ON feed_outbox (seq) WHERE published_at IS NULL;
 ```
 
 - **`seq` is assigned by the core, not by the database.** A `BIGSERIAL`/`SEQUENCE` is not transactional, is not
-  derived from the journal, and will not reproduce under replay — so a sequence-generated feed number makes the
+  derived from the journal, and will not reproduce under replay, so a sequence-generated feed number makes the
   replay byte-comparison fail for a reason that has nothing to do with matching.
 - **`payload` is the encoded bytes, not a struct to be re-encoded at send time.** Re-encoding at send time
   re-introduces every determinism hazard in §4 on the publish path and makes "byte for byte" unverifiable.
 - **The relay is at-least-once and that is the correct design.** The outbox moves the atomicity boundary into
   one transaction; it does not remove duplicates (microservices.io, *Transactional outbox*). A crash between
   `send()` and `UPDATE published_at` republishes. So the dedupe key must be **consumer-visible**: the feed
-  sequence number itself. Consumers discard an already-processed sequence — the same rule A/B feed arbitration
+  sequence number itself. Consumers discard an already-processed sequence, the same rule A/B feed arbitration
   already forces on them.
 - **Never renumber on recovery.** A republished execution carries its original `seq`, `ExecID` and match
   number. Corrections travel as a Trade Cancel referencing the original match number, never as a re-issue.
@@ -134,7 +134,7 @@ appended to the outbox". Replay is a property of that region only.
 | Uninitialised memory | padding bytes inside a `#[repr(C)]` event struct that is `memcpy`'d to the wire or checksummed | The payload and its CRC differ run to run even though every field is equal; the byte-comparison fails on bytes no field owns | Zero the buffer explicitly, or serialise field by field into a length-known encoding |
 | Address-dependent ordering | sorting by pointer, Java's identity `hashCode`, Python `id()`, iterating a set of object references | ASLR reorders equal-priority orders between runs | Sort by an explicit `(price, seq)` key that came from the journal |
 | Thread scheduling | matching on a pool; a `select!` over two channels | The interleaving is the input, and it is not journaled | Single writer; if you shard, one writer per shard and no cross-shard match |
-| I/O in the core | a credit-check RPC, a Redis lookup, a file read | The response is an input that was never journaled | Output event now, input event later — LMAX's split |
+| I/O in the core | a credit-check RPC, a Redis lookup, a file read | The response is an input that was never journaled | Output event now, input event later (LMAX's split) |
 | Locale / timezone | `strftime`, `%s` formatting, a date rendered with the host TZ | Emitted text differs by host | Format outside the core; store instants as integers |
 
 LMAX's stated bans are the same list narrowed to the two that bite first: **external service calls and clock
@@ -148,7 +148,7 @@ same seed twice and byte-compare the TRACE logs.** Seventeen issues, including A
 
 ## 5. Identity assignment inside the core
 
-Every identifier other systems consume because you assigned it — feed `seq`, `ExecID`, match number, trade id —
+Every identifier other systems consume because you assigned it (feed `seq`, `ExecID`, match number, trade id)
 is an **input-derived output**. It must be generated inside the deterministic region, from journaled state
 only, so that replay reproduces it.
 
@@ -207,7 +207,7 @@ def test_replay_is_byte_identical(tmp_path):
 ```
 
 - **Byte-compare the wire encoding, not a decoded struct.** Comparing decoded structs hides padding, encoding
-  and field-order divergence — the class §4 row "uninitialised memory" produces.
+  and field-order divergence: the class §4 row "uninitialised memory" produces.
 - **Report the first divergence with context**, not a boolean: sequence index, the two payloads in hex, and the
   first differing field name. A replay test that fails with `False != True` will be disabled within a week.
 - **Run it from a snapshot boundary too**, not only from journal position 0. The bug lives at the seam.
@@ -215,8 +215,8 @@ def test_replay_is_byte_identical(tmp_path):
   core-purity bug; a live-vs-replay divergence is either that or a logic change since capture. They have
   different owners and the harness should not conflate them.
 - **Seeds are permanent regression tests.** A seed that ever produced a divergence is checked in by name.
-  Hypothesis makes this automatic — its example database defaults to `.hypothesis/examples`, and `derandomize`
-  and `print_blob` become `True` automatically in CI so a failure comes back with a `reproduce_failure` blob —
+  Hypothesis makes this automatic (its example database defaults to `.hypothesis/examples`, and `derandomize`
+  and `print_blob` become `True` automatically in CI so a failure comes back with a `reproduce_failure` blob),
   but the blob is worthless unless the directory is persisted between CI runs.
 
 ## 7. Snapshots and truncation
@@ -238,8 +238,8 @@ snapshot_manifest {
   intermediate state to capture in a single-threaded core, which is precisely what makes the boundary cheap.
 - **Recovery is snapshot + tail:** load the latest snapshot whose CRC validates, then replay
   `journal_seq_applied + 1 .. end`. Re-applying a record that the snapshot already includes must be impossible
-  by construction (the position tells you), and re-applying the *tail* twice — because you crashed during
-  recovery — must produce identical state. Test recovery from an arbitrary snapshot boundary, not only from a
+  by construction (the position tells you), and re-applying the *tail* twice (because you crashed during
+  recovery) must produce identical state. Test recovery from an arbitrary snapshot boundary, not only from a
   clean shutdown.
 - **Verify a snapshot before you trust it**: replay from the *previous* snapshot forward to this one's position
   and assert `book_digest` equality. That equality is the cheapest continuous proof that the core is still
@@ -257,18 +257,18 @@ snapshot_manifest {
 
 Inject a real `kill -9` at each boundary and assert the post-recovery state. This has to be a test and not a
 design note, because the failure mode is silent: journaling a write-ahead field before an external call is the
-easy half, and reading it back on resume is the half that gets skipped — the persisted value exists and goes
+easy half, and reading it back on resume is the half that gets skipped; the persisted value exists and goes
 unused on the exact crash it exists for.
 
 | # | Kill point | Journal | Book | Outbox | Wire | Recovery must do |
 |---|---|---|---|---|---|---|
-| 1 | Command received, before append | absent | untouched | — | — | Nothing. The command is lost; the sender's timeout is indeterminate and resolves by its own client-order-id query, not by your guessing |
-| 2 | After append, before flush returns | torn or absent tail | untouched | — | — | Truncate at the last valid CRC. Same outcome as 1 |
-| 3 | After flush, before mutation | present | untouched | — | — | **Replay applies it.** This is the case the flush exists for |
-| 4 | Mid-match, before commit | present | in-memory only, gone | none | — | Replay re-matches from the pre-command book; result must equal what the pre-crash process would have produced |
+| 1 | Command received, before append | absent | untouched | n/a | n/a | Nothing. The command is lost; the sender's timeout is indeterminate and resolves by its own client-order-id query, not by your guessing |
+| 2 | After append, before flush returns | torn or absent tail | untouched | n/a | n/a | Truncate at the last valid CRC. Same outcome as 1 |
+| 3 | After flush, before mutation | present | untouched | n/a | n/a | **Replay applies it.** This is the case the flush exists for |
+| 4 | Mid-match, before commit | present | in-memory only, gone | none | n/a | Replay re-matches from the pre-command book; result must equal what the pre-crash process would have produced |
 | 5 | After commit, before publish | present | durable | rows unpublished | nothing sent | Relay resumes from the lowest unpublished `seq`; consumers see a delayed, gap-free stream |
 | 6 | Mid-publish: sent, `published_at` not updated | present | durable | row unpublished | sent once | Relay resends; **consumer dedupes on `seq`**. This is why the dedupe key must be consumer-visible |
-| 7 | During recovery replay | present | partially rebuilt | — | — | Restart recovery from the snapshot; replay is idempotent, so a partial replay leaves nothing to undo |
+| 7 | During recovery replay | present | partially rebuilt | n/a | n/a | Restart recovery from the snapshot; replay is idempotent, so a partial replay leaves nothing to undo |
 
 Case 4 is the one an engine without input journaling gets wrong invisibly: it has the executions (it committed
 them) or it does not (it did not), but it cannot answer *what the command was*, so it cannot tell a lost
@@ -277,7 +277,7 @@ command from a rejected one, and the participant's order state is unknowable rat
 ## 9. Failover and single-writer authority
 
 The single-writer principle is a correctness property here, not a throughput trick. Two engines matching the
-same book for even 200 ms produce **two different histories of a record that nothing external can adjudicate** —
+same book for even 200 ms produce **two different histories of a record that nothing external can adjudicate**:
 you are the oracle, so there is no reconciliation that resolves the fork.
 
 - **Epoch every acquisition, not every failover.** A coarse epoch lets a delayed control message land on the
@@ -291,12 +291,12 @@ you are the oracle, so there is no reconciliation that resolves the fork.
   epoch. A monotonic token the resource does not check is decoration. A lease with a TTL is not a fence: a GC
   pause, a packet delay or a clock jump outlives it.
 - **Do not ask the stale writer to stop.** By the time you can ask it, it is paused; by the time it wakes, it
-  has already appended. Kafka's `InitPidRequest` is the shape to copy — it *"Bumps up the epoch of the PID, so
+  has already appended. Kafka's `InitPidRequest` is the shape to copy: it *"Bumps up the epoch of the PID, so
   that any previous zombie instance of the producer is fenced off"*, with the invariant *"Exactly one active
   producer with a given TransactionalId."*
 - **Replicate the input stream, not the state.** LMAX multicasts the journaled input stream to followers, which
   derive identical state by applying it. A follower promoted after a fence replays its tail and continues the
-  same sequence space — no renumbering, because renumbering re-issues identifiers consumers already booked.
+  same sequence space: no renumbering, because renumbering re-issues identifiers consumers already booked.
 - **Do not order failover by wall clock.** Ordering financial events by timestamps taken on different hosts is
   a data-loss mechanism; the systems that do order by time buy it explicitly (Spanner's clock; TigerBeetle
   refuses node clocks and uses *"leader-based timestamping"*).
@@ -307,7 +307,7 @@ At T3 no external oracle exists, so the proof burden moves before deployment. DS
 instrument and it is not free.
 
 **What it costs.** FoundationDB runs *"a deterministic simulation of an entire FoundationDB cluster within a
-single-threaded process"* — all code deterministic, multithreading avoided, one node per core — and states the
+single-threaded process"* (all code deterministic, multithreading avoided, one node per core) and states the
 limits plainly: *"Simulation is not able to reliably detect performance issues… It is also unable to test
 third-party libraries or dependencies, or even first-party code not implemented in Flow. As a consequence, we
 have largely avoided taking dependencies on external systems."* The retrofit price, as measured by S2, is
@@ -315,21 +315,21 @@ libc-level shims plus hunting the leaks in §4.
 
 **What it buys.** Perfect repeatability (*"Determinism is crucial in that it allows perfect repeatability of a
 simulated run"*), and time compression: FDB reports roughly 10:1 real-to-simulated; TigerBeetle reports
-*"3.3 seconds of VOPR simulation gives you 39 minutes of real-world testing time"*, at named fault levels —
+*"3.3 seconds of VOPR simulation gives you 39 minutes of real-world testing time"*, at named fault levels:
 *City Breeze* (no faults), *Red Desert* (crashes, flaky network, high latency, no corruption), *Radioactive*
-(up to 8% read-path and 9% write-path storage corruption per replica) — running on 1024 cores 24/7.
+(up to 8% read-path and 9% write-path storage corruption per replica), all running on 1024 cores 24/7.
 
 **The two things people skip, which are the two that matter.**
 
 - **`buggify`-style injection points inside production code**: at named points, return an unusual-but-legal
-  error, add a delay, or pick an unusual tuning parameter — deliberately making rare-but-legal behaviour
+  error, add a delay, or pick an unusual tuning parameter, deliberately making rare-but-legal behaviour
   common. Randomise tuning parameters too, so no tuning value becomes load-bearing for correctness. FDB's
   *swizzle-clogging* (clog nodes sequentially, unclog in random order) is described as *"particularly good at
   finding deep issues that only happen in the rarest real-world cases."*
 - **Coverage counters on the generator, not the code.** FDB's `TEST(cond)` macros report whether a scenario is
   generated at all. This is the binding constraint: TigerBeetle's own fuzzer gave every query *"a common prefix
   for each query's target fields"*, so matching objects were always consecutive in each index, the zig-zag merge
-  join's probe path never ran, and a real query bug shipped — *"The VOPR's seemingly sophisticated approach to
+  join's probe path never ran, and a real query bug shipped: *"The VOPR's seemingly sophisticated approach to
   query generation created a blind spot that hid a real bug."* The venue analogue: a generator whose fills
   always sum exactly to the order quantity never exercises the residual, the over-allocation or the
   cancel-during-recompute path.
@@ -346,12 +346,12 @@ Both answers ship today in the same problem domain. The decision is per path, an
 
 | | TigerBeetle | nautilus_trader |
 |---|---|---|
-| Build | `build.zig:110` → `.preferred_optimize_mode = .ReleaseSafe`; Zig `ReleaseSafe` keeps `assert()` live | `Cargo.toml` `[profile.release]` `debug-assertions = false` (:499), `overflow-checks = false` (:500), `panic = "abort"` (:503) — and the same in `[profile.dev]` (:439/:440) |
-| Density on the money path | 487 `assert(` in 5,166 lines of `src/state_machine.zig` — ~1 per 10.6 lines, all live in production | 3 `debug_assert!` in the whole production order model (`crates/model/src/orders/mod.rs:1320`, `:1333`, `:1341`), 0 always-on `assert!` |
+| Build | `build.zig:110` → `.preferred_optimize_mode = .ReleaseSafe`; Zig `ReleaseSafe` keeps `assert()` live | `Cargo.toml` `[profile.release]` `debug-assertions = false` (:499), `overflow-checks = false` (:500), `panic = "abort"` (:503), and the same in `[profile.dev]` (:439/:440) |
+| Density on the money path | 487 `assert(` in 5,166 lines of `src/state_machine.zig`: ~1 per 10.6 lines, all live in production | 3 `debug_assert!` in the whole production order model (`crates/model/src/orders/mod.rs:1320`, `:1333`, `:1341`), 0 always-on `assert!` |
 | Accumulators | `sum_overflows` (`state_machine.zig:5144-5149`) checked **before** the account is mutated; dedicated codes `overflows_debits_posted`, `overflows_credits_pending`, … | `saturating_add` / `saturating_sub` on quantities (`orders/mod.rs:1270`, `:1366`) |
 | On breach | crash | nothing in production (the `debug_assert!` is not in the binary) |
 | On bad *input* | typed result code, always on | `Result<_, OrderError>`, always on |
-| Holds unmanaged exposure if it dies? | No — declining a transfer is free | Yes — a halt leaves positions unhedged |
+| Holds unmanaged exposure if it dies? | No: declining a transfer is free | Yes: a halt leaves positions unhedged |
 
 TigerBeetle's rationale (`docs/TIGER_STYLE.md:104-113`): *"Assertions detect programmer errors. Unlike
 operating errors, which are expected and which must be handled, assertion failures are unexpected. The only
@@ -362,13 +362,13 @@ expect."*
 
 **The rule this yields.** Validation of inputs you can decline is always-on and returns a typed rejection.
 Assertion of derived internal state may be compiled out **only in a process that would still be holding
-unmanaged obligations if it crashed** — and in that process the arithmetic saturates and **emits the
+unmanaged obligations if it crashed**, and in that process the arithmetic saturates and **emits the
 saturation as an event**, because a saturated aggregate with no exception attached is a lie. A `debug_assert`
 on a published aggregate is neither of the two: `level.total_qty -= qty` on a `u64` wraps to ~1.8e19 in a
 release build where the assertion no longer exists, and that number is published as depth.
 
 Note the counter-pressure, from Jepsen's TigerBeetle report: an assertion placed on state the *recovery path is
-designed to tolerate* converts a repairable fault into an outage — the padding-byte crash is exactly that.
+designed to tolerate* converts a repairable fault into an outage; the padding-byte crash is exactly that.
 Assert impossible-state; repair recoverable-state; and keep fail-fast (kill the process) distinct from
 fail-closed (stop taking new risk, keep cancels and drop-copy serving).
 
@@ -381,13 +381,13 @@ here turns a deterministic engine into an undebuggable one at the worst possible
 |---|---|---|
 | Journal segments | Length-prefixed, CRC'd input records, with the epoch in each segment header | The inputs. Without the CRC you cannot tell where a torn tail ends |
 | Snapshot + manifest | State, `journal_seq_applied`, `ids`, `book_digest` | The starting point; the position is what makes replay reproducible |
-| Build identity | git sha, compiler version, optimisation level, lockfile digest — recorded **in the snapshot manifest**, not inferred | "Same journal, same build, same state" has three terms; the second is the one nobody records |
+| Build identity | git sha, compiler version, optimisation level, lockfile digest. Recorded **in the snapshot manifest**, not inferred | "Same journal, same build, same state" has three terms; the second is the one nobody records |
 | Config as journaled events | Every band, tick, limit and instrument definition entered the core as an input event | A config file re-read at replay time is a different config, and the divergence looks like a matching bug |
 | Injected time and seeds | The `TimeTick` values and the RNG seed, in-band in the journal | Replay must feed the same time; a laptop's clock is not the pre-crash clock |
 | Emitted event capture | The wire bytes the engine actually sent, with their sequence numbers | The right-hand side of the byte-comparison. Capturing decoded events instead makes divergences invisible |
 | The replay tool itself | Shipped with the engine, same version, runs offline, prints a first-divergence diff | LMAX's stated debugging procedure is exactly this: copy the event sequence to a dev machine and replay it |
 
-The completeness test for this list is one sentence and it is the same question the VENUE CONTRACT block asks:
+The completeness test for this list is one sentence and it is the same question the ENGINE CONTRACT block asks:
 **hand an engineer these files and nothing else, and they reproduce the emitted event sequence byte for byte.**
-If they need a database dump, a log grep or a config file from a host, the journal is not the authority — it is
+If they need a database dump, a log grep or a config file from a host, the journal is not the authority; it is
 a supplementary log, and the engine is not replayable regardless of what the design note says.

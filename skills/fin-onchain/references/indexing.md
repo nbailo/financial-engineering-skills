@@ -8,23 +8,23 @@ value movement that emit no log at all and are therefore invisible to a log-only
 
 ## Contents
 
-- **Provider caps are conditional** — Alchemy's per-chain, per-tier `eth_getLogs` table; go-ethereum's own
+- **Provider caps are conditional**: Alchemy's per-chain, per-tier `eth_getLogs` table; go-ethereum's own
   structural limits; reading the cap from configuration keyed on `(provider, tier, chainId)`.
-- **Completeness checking** — the classification table for what a response means; adaptive halving and the
+- **Completeness checking**: the classification table for what a response means; adaptive halving and the
   terminating case; why an empty array and a hole are indistinguishable without the cap.
-- **Provider failover** — `fallback([http(a), http(b)])` in viem, `FallbackProvider` in ethers; why a single
+- **Provider failover**: `fallback([http(a), http(b)])` in viem, `FallbackProvider` in ethers; why a single
   transport turns one provider's outage into a permanent gap; disagreement at the head.
-- **Cursor discipline** — the guard is the write; the empty-address-set sprint; the stale-address-map sprint;
+- **Cursor discipline**: the guard is the write; the empty-address-set sprint; the stale-address-map sprint;
   the compare-and-set advance; backfill overlap as the cheap margin; one iteration in order.
-- **Dedupe identity** — the four-column unique constraint, the DDL, why `(txHash, logIndex)` is wrong in two
+- **Dedupe identity**: the four-column unique constraint, the DDL, why `(txHash, logIndex)` is wrong in two
   directions, the unreversed-twin assertion, and `(txHash, traceId)` for internal transfers.
-- **Value that emits no log** — contract-initiated native transfers; the trace methods and their
+- **Value that emits no log**: contract-initiated native transfers; the trace methods and their
   availability; Etherscan's separate `txlistinternal` endpoint; the balance-diff fallback and its confound.
-- **Self-transfers and internal flows** — the `from_address` assertion, the gas-top-up that credits a
+- **Self-transfers and internal flows**: the `from_address` assertion, the gas-top-up that credits a
   customer, and why the address set must be queried rather than snapshotted.
-- **Reorg-aware storage layout** — the block table, the columns the credit table needs, and what becomes
+- **Reorg-aware storage layout**: the block table, the columns the credit table needs, and what becomes
   impossible when each one is missing.
-- **Head handling** — indexing lag versus credit-policy depth; the monotonic-head guard; EIP-1898 pinned
+- **Head handling**: indexing lag versus credit-policy depth; the monotonic-head guard; EIP-1898 pinned
   reads and the two error codes.
 - **Grep list**
 
@@ -38,13 +38,13 @@ publishes cells in that table that differ by two orders of magnitude.
 | Alchemy, free tier | **10 blocks**, every chain | block range |
 | Alchemy, PAYG | **unlimited** on major chains; **1,000** on some; **10,000** on others | block range, per chain |
 | Alchemy, any tier | **150 MB** | response size |
-| go-ethereum `eth/filters/api.go` | `errBlockHashWithRange` — `blockHash` may not be combined with `fromBlock`/`toBlock` | structural |
+| go-ethereum `eth/filters/api.go` | `errBlockHashWithRange`: `blockHash` may not be combined with `fromBlock`/`toBlock` | structural |
 | go-ethereum `eth/filters/api.go` | `maxTopics`, `logQueryLimit` on topic and address list sizes | structural |
 
 Two consequences the code has to carry. **(1)** A self-hosted node publishes no per-tier range table at all;
 the limits you meet there are the structural ones above plus your own RPC timeout, so "it worked in staging
 against our own geth" proves nothing about the managed endpoint in production. **(2)** `unlimited` is not the
-absence of a limit — it moves the binding constraint to the 150 MB response cap, which is a function of how
+absence of a limit; it moves the binding constraint to the 150 MB response cap, which is a function of how
 busy the range was, not of how wide it was. A range that returned 8,000 logs yesterday can fail today.
 
 ```python
@@ -85,7 +85,7 @@ lose by classifying it wrong is a customer's deposit.
 
 ```python
 def fetch_range(client, addresses, from_block: int, to_block: int, cap: int | None) -> list[Log]:
-    """Returns logs ONLY for a range provably covered. Raises otherwise — never returns []
+    """Returns logs ONLY for a range provably covered. Raises otherwise; never returns []
     to mean 'could not read'."""
     width = to_block - from_block + 1
     if cap is not None and width > cap:
@@ -104,8 +104,8 @@ def fetch_range(client, addresses, from_block: int, to_block: int, cap: int | No
 ```
 
 The termination case matters more than the halving. At width 1 there is nothing left to halve, so a
-single-block failure must **escalate** — split the address list, split the topic filter, or stop the indexer
-and page — and must never fall through to a `return []`. A recursion whose base case returns an empty list is
+single-block failure must **escalate** (split the address list, split the topic filter, or stop the indexer
+and page) and must never fall through to a `return []`. A recursion whose base case returns an empty list is
 the same bug as the unconditional cursor advance, one level down.
 
 ## Provider failover
@@ -135,18 +135,18 @@ Failover buys availability and costs consistency, and the cost lands exactly whe
 Providers sit at different heights; a fallback that moves a request from provider A to provider B mid-loop can
 return a head **lower** than the head you already observed, and a naive indexer reads that as a rollback (see
 *Head handling*). Two independent providers disagreeing about the log set of a range **below the finalized
-head** is not a retryable condition — it is a break: alarm, and do not credit from either answer until it is
-resolved by a third read. Sampling this deliberately — re-read 1-in-N finalized ranges through the secondary
-and compare the four-part identity set — is the cheapest reconciliation an indexer can run, and it is the only
+head** is not a retryable condition; it is a break: alarm, and do not credit from either answer until it is
+resolved by a third read. Sampling this deliberately (re-read 1-in-N finalized ranges through the secondary
+and compare the four-part identity set) is the cheapest reconciliation an indexer can run, and it is the only
 thing that detects a provider quietly serving a pruned or partial log index.
 
 ## Cursor discipline
 
-The rule is `G6`: **a watermark advances only inside the same conditional and the same transaction that
+The rule is *proven coverage before the cursor advances*: **a watermark moves only inside the same conditional and the same transaction that
 verifiably covered the range.** Two failure shapes, both found in real generated indexers, both silent.
 
 ```ts
-// WRONG — the guard wraps the query, the advance runs unconditionally.
+// WRONG: the guard wraps the query, the advance runs unconditionally.
 if (addresses.size > 0) {
   const logs = await client.getLogs({ address: [...addresses], fromBlock, toBlock })
   await creditAll(tx, logs)
@@ -154,7 +154,7 @@ if (addresses.size > 0) {
 await saveCursor(tx, { lastBlock: toBlock })
 ```
 
-On a fresh deploy `deposit_addresses` is empty, so the query never runs — and the cursor sprints to the safe
+On a fresh deploy `deposit_addresses` is empty, so the query never runs, and the cursor sprints to the safe
 head anyway. Every address registered afterwards can never see a deposit in a passed block, and with no
 backfill job that is permanent. Nothing raises. The second shape is the same asymmetry in time:
 `loadDepositAddresses()` snapshotted once per outer loop while an inner drain runs for hours, so addresses
@@ -188,7 +188,7 @@ One iteration, in order:
 3. Re-read the address set (cadence: every iteration).
 4. Fetch the block headers for `from_block … to_block`; assert `header[n].parent_hash == stored_hash[n-1]`,
    starting from `last_hash`. A mismatch exits to the unwind path, not to the credit path.
-5. `fetch_range(...)` — raises rather than returning `[]` on any hole.
+5. `fetch_range(...)`: raises rather than returning `[]` on any hole.
 6. **One transaction:** insert block rows, insert log rows with `ON CONFLICT DO NOTHING RETURNING id`, post
    credits for the rows that actually inserted, compare-and-set the cursor. Commit.
 
@@ -222,7 +222,7 @@ directions**:
 | Over-credit | The transaction is re-included in a different block at a **different** `logIndex` | The constraint passes, and the deposit is credited **twice** |
 
 The four-part key fixes the first and fixes the second **only if the unwind has already landed**. A reorg
-detected late — the credit written, the parent-hash check not yet run — produces a fresh row that satisfies
+detected late (the credit written, the parent-hash check not yet run) produces a fresh row that satisfies
 the constraint and credits again. So the credit path carries a second, explicit assertion: no *unreversed*
 twin exists for the transaction-level identity.
 
@@ -238,7 +238,7 @@ SELECT id FROM ins;
 -- Zero rows returned means the exact log identity was already stored: stop, credit nothing.
 ```
 
-`ON CONFLICT DO NOTHING` returning zero rows is the *only* reliable signal that the insert was a duplicate —
+`ON CONFLICT DO NOTHING` returning zero rows is the *only* reliable signal that the insert was a duplicate;
 `rowcount` from a plain `INSERT … DO NOTHING` is 0 in both the "conflicted" and the "nothing to do" case, and
 a separate `SELECT` before the insert is a TOCTOU that two concurrent workers both pass. Then, before
 crediting:
@@ -250,7 +250,7 @@ SELECT 1 FROM deposit_log
  LIMIT 1;   -- any row => a live credit for this log already exists; this is a re-include, not a new deposit
 ```
 
-**Internal transfers do not have a `logIndex`** — they are not logs. Their identity is `(chainId, tx_hash,
+**Internal transfers do not have a `logIndex`**; they are not logs. Their identity is `(chainId, tx_hash,
 trace_id)`: a single transaction routinely contains several internal transfers to your addresses, so the
 parent hash alone credits four transfers once, or credits the same one twice when it arrives from two
 endpoints (`docs.etherscan.io/api-reference/endpoint/txlistinternal`). Give them their own table with their
@@ -272,15 +272,15 @@ transaction's `to` is the router, not you. An indexer built from `Transfer` logs
 
 Three detection paths, in the order you should prefer them:
 
-1. **Traces** — `debug_traceBlockByNumber` with `{"tracer": "callTracer"}`, or `trace_block` on clients that
+1. **Traces**: `debug_traceBlockByNumber` with `{"tracer": "callTracer"}`, or `trace_block` on clients that
    expose the OpenEthereum trace namespace. Both are debug namespaces: they are not enabled on every node,
    not offered on every provider tier, and are the most expensive call in the indexer. Confirm availability
    against the endpoint you will actually run on **before** designing the credit path around them.
-2. **A block explorer's internal-transaction endpoint** — Etherscan exposes these through
+2. **A block explorer's internal-transaction endpoint**: Etherscan exposes these through
    `action=txlistinternal`, a **separate** endpoint from `action=txlist`. Records carry `hash`, `traceId` and
    their own `isError`. Two things follow: `hash` is not a unique key, and a successful parent transaction can
-   contain a failed internal call — so `receipt.status == 0x1` does not mean this internal value moved.
-3. **Balance diffing** — `eth_getBalance(addr, n) − eth_getBalance(addr, n-1)`, pinned by block hash. Usable
+   contain a failed internal call, so `receipt.status == 0x1` does not mean this internal value moved.
+3. **Balance diffing**: `eth_getBalance(addr, n) − eth_getBalance(addr, n-1)`, pinned by block hash. Usable
    only for addresses you never *send* from, because gas spent by the address itself confounds the delta; on
    a pure deposit address (the forwarder case, where sweeps are initiated by a different signer) it is exact
    and cheap. It gives you an amount, not a counterparty, so it cannot feed the self-transfer check below on
@@ -328,21 +328,21 @@ CREATE TABLE indexed_block (
 -- before processing block n:  assert header(n).parent_hash == indexed_block(chain_id, n-1).hash
 ```
 
-`eth_getLogs` **never** sets `removed: true` — in go-ethereum `Removed` is set only inside the reorg path
+`eth_getLogs` **never** sets `removed: true`; in go-ethereum `Removed` is set only inside the reorg path
 feeding `core.RemovedLogsEvent`, which serves subscriptions and `eth_getFilterChanges`; `FilterAPI.GetLogs`
 never sets it. A polling indexer gets no reorg signal at all, so the parent-hash chain above is not a
-belt-and-braces addition — it is the entire detector.
+belt-and-braces addition; it is the entire detector.
 
 | Missing column | What becomes impossible |
 |---|---|
 | `indexed_block.hash` | Detecting any reorg deeper than the confirmation lag. Ever. There is no recovery path that does not involve a rebuild |
 | `indexed_block.parent_hash` | Detecting a reorg without an extra header fetch per block; and detecting one at the *first* block after a restart |
-| `deposit_log.chain_id` | Distinguishing the same `tx_hash` on two chains — deterministic deployments and replayed transactions make this a live collision, not a theoretical one |
+| `deposit_log.chain_id` | Distinguishing the same `tx_hash` on two chains; deterministic deployments and replayed transactions make this a live collision, not a theoretical one |
 | `deposit_log.reversed_by` | Distinguishing "never credited" from "credited then reversed". This is the column the unreversed-twin assertion reads; without it, re-crediting after a reorg is a coin flip between double-credit and no credit |
 | depth + policy recorded with the credit | Answering "which credits were below finality when this reorg landed" without re-deriving the whole history |
 
 Retain `indexed_block` rows to at least your rollback floor. graph-node's `ETHEREUM_REORG_THRESHOLD` defaults
-to **250** blocks, with the comment *"Blocks cannot be reverted below the reorg threshold"* — history below
+to **250** blocks, with the comment *"Blocks cannot be reverted below the reorg threshold"*; history below
 the threshold is pruned, so a deeper reorg is an **unrecoverable-state halt** requiring a rebuild from a
 snapshot, not a rollback. Prune your block table to a shallower depth than your rollback window and you have
 imported that halt without configuring it.
@@ -354,19 +354,19 @@ and unsafe:
 
 | Number | Protects | Set from |
 |---|---|---|
-| `INDEX_LAG` — how far behind `head` you index | The indexer's own rollback work | The reorg depth you are willing to unwind cheaply |
+| `INDEX_LAG`: how far behind `head` you index | The indexer's own rollback work | The reorg depth you are willing to unwind cheaply |
 | Credit-policy depth | Customer money | A stated reorg-loss budget, per chain and per amount |
-| `OVERLAP` — how far back each iteration re-reads | Crash-window coverage | One iteration's worth of blocks, plus margin |
+| `OVERLAP`: how far back each iteration re-reads | Crash-window coverage | One iteration's worth of blocks, plus margin |
 
 Index shallow and credit deep. Setting `INDEX_LAG` to the credit depth delays every downstream view for no
 safety gain, because the credit gate is a separate predicate on the row you already stored.
 
 **Monotonic-head guard.** Across a load-balanced pool or a fallback transport, consecutive requests hit nodes
-at different heights. If `eth_blockNumber` returns a head below the last observed head, discard the response —
+at different heights. If `eth_blockNumber` returns a head below the last observed head, discard the response;
 do not treat it as a rollback and do not unwind anything. Only a parent-hash mismatch is a reorg.
 
 **Pin state reads to the log's block.** If you process a log from block N and then `eth_call` at `latest`, you
-may read state from a different fork — EIP-1898's stated motivation is exactly this: *"if there is a re-org in
+may read state from a different fork; EIP-1898's stated motivation is exactly this: *"if there is a re-org in
 between when the balance of the sender is queried via `eth_getBalance` and when the balance of the recipient
 is queried, the balances may not reconcile."* Pass the block-hash parameter instead:
 
@@ -376,8 +376,8 @@ is queried, the balances may not reconcile."* Pass the block-hash parameter inst
             {"blockHash": "0x…", "requireCanonical": true}]}
 ```
 
-Two error codes are specified and both are information you want: **`-32000`** — the block is not canonical and
-you asked for canonical, i.e. the fork you indexed is gone; **`-32001`** — block not found, i.e. this node has
+Two error codes are specified and both are information you want: **`-32000`**, the block is not canonical and
+you asked for canonical, i.e. the fork you indexed is gone; **`-32001`**, block not found, i.e. this node has
 not seen that block yet (usually height skew, not a reorg). A `-32000` here is the reorg notification
 `eth_getLogs` refused to give you. Not every provider implements EIP-1898; where it is missing, re-fetch the
 block by hash and compare it against `indexed_block` before trusting a `latest` read.

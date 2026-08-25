@@ -4,7 +4,7 @@ The full `(state, event)` transition table with a deny-by-default arm, and the i
 underneath it. Terminal states are not absorbing: a cancel acknowledgement and a fill cross on the wire
 constantly, so `(Canceled, Filled)` is legal and the fill is real money, while `(Canceled, Accepted)` is not
 and must raise. What a terminal state accepts is exactly the events by which the venue corrects a fact you
-already booked — a late fill, a fill void — and nothing else. This file also carries the fill-dedupe and
+already booked (a late fill, a fill void) and nothing else. This file also carries the fill-dedupe and
 overfill mechanics the table depends on.
 
 ## Contents
@@ -27,10 +27,10 @@ overfill mechanics the table depends on.
 
 Two variables, not one. **`OrdStatus`-shaped values are the state; execution reports are the events.** Model
 them separately or you will end up assigning the venue's status string straight onto your object, which is
-exactly hummingbot's `self.current_state = order_update.new_state` (`in_flight_order.py:342`) — unconditional,
+exactly hummingbot's `self.current_state = order_update.new_state` (`in_flight_order.py:342`): unconditional,
 no legality table, no version guard, and a late REST `OPEN` overwrites a websocket `FILLED`.
 
-The reference implementation is `nautilus_trader`, `crates/model/src/orders/mod.rs:214-296` — an exhaustive
+The reference implementation is `nautilus_trader`, `crates/model/src/orders/mod.rs:214-296`, an exhaustive
 match over `(state, event)` ending in a deny arm at `:295`:
 
 ```rust
@@ -53,14 +53,14 @@ pub fn transition(&mut self, event: &OrderEventAny) -> Result<Self, OrderError> 
 
 The table below is the enumeration to write. Rows marked ✔ are verbatim from that source; the rest are the
 recommended enumeration for a venue client and you should trim them to the events your venue actually emits.
-**A row you do not list is a row that raises — that is the whole mechanism.**
+**A row you do not list is a row that raises; that is the whole mechanism.**
 
 | State | Event | → | Notes |
 |---|---|---|---|
 | `Initialized` | `Submitted` | `SENT_UNCONFIRMED` | intent row already committed (client ID, payload, `sent_at`) |
 | `Initialized` | `Denied` | `Denied` | local pre-trade block; never reached the venue |
 | `SENT_UNCONFIRMED` | `Accepted` | `Accepted` | venue ack; venue order id now known |
-| `SENT_UNCONFIRMED` | `Rejected` | `Rejected` | business rejection — a *definite* answer, not UNKNOWN |
+| `SENT_UNCONFIRMED` | `Rejected` | `Rejected` | business rejection: a *definite* answer, not UNKNOWN |
 | `SENT_UNCONFIRMED` | `Filled` | `Filled` / `PartiallyFilled` | IOC or marketable limit filled before any ack |
 | `SENT_UNCONFIRMED` | `Timeout`/`5XX`/`429` | `INFLIGHT_UNKNOWN` | never `Rejected`, never a resubmit |
 | `Accepted` | `Filled` | `Filled` ✔ | refine to `PartiallyFilled` from venue `leaves_qty`, not from arithmetic |
@@ -69,30 +69,30 @@ recommended enumeration for a venue client and you should trim them to the event
 | `Accepted` | `Expired` / `Canceled` / `Triggered` | as named | |
 | `PartiallyFilled` | `Filled` | `Filled` / `PartiallyFilled` | decided by `leaves_qty == 0`, from the venue |
 | `PendingCancel` | `Filled` | `Filled` | the fill was already matched when you asked |
-| `PendingCancel` | `CancelRejected` | `Accepted` | `-2011`-shaped: usually means it filled — re-read state |
+| `PendingCancel` | `CancelRejected` | `Accepted` | `-2011`-shaped: usually means it filled; re-read state |
 | `PendingUpdate` | `Filled` | `Filled` | same crossing as above |
 | `PendingUpdate` | `ModifyRejected` | `Accepted` | the *old* order is still live at the old size |
-| `Canceled` | `Filled` | `Filled` ✔ | annotated `// Real world possibility` — real money |
+| `Canceled` | `Filled` | `Filled` ✔ | annotated `// Real world possibility`: real money |
 | `Canceled` | `FillVoided` | `Canceled` ✔ | |
 | `Canceled` | `Updated` | `Canceled` ✔ | a stale amend ack, absorbed without changing state |
 | `Filled` | `FillVoided` | `Voided` ✔ | `enums.rs:1452`, `Voided = 15`; transition at `mod.rs:290` |
 | `Expired` | `FillVoided` | `Expired` ✔ | |
 | `Voided` | `FillVoided` | `Voided` ✔ | idempotent under redelivery |
-| **anything else** | | `Err(InvalidStateTransition)` | `mod.rs:295` — raise, alert, do not mutate |
+| **anything else** | | `Err(InvalidStateTransition)` | `mod.rs:295`: raise, alert, do not mutate |
 
 ## What stays absorbing
 
 `(Canceled, Accepted)`, `(Filled, Accepted)`, `(Filled, Canceled)` and `(Rejected, *)` are **absent from the
 table**, not special-cased. They hit the deny arm. That is the correct expression of "terminal": the state is
 never re-opened by a *status* message, and it may be corrected by an *economic* one. Do not write "terminal
-states are absorbing" as a rule — `verified-source-code.md` §4.1 falsifies it against `mod.rs:250`, and a
+states are absorbing" as a rule; `verified-source-code.md` §4.1 falsifies it against `mod.rs:250`, and a
 system built on it discards a real fill that crossed a cancel ack.
 
 The two sentences to keep in your head while writing the default arm:
 
 1. A cancel is a **request**. The venue may have matched the order microseconds before it processed your
    cancel, and the execution report for that match can be delivered after the cancel ack. Nasdaq OUCH is
-   explicit that there is **no "too late to cancel" message** — you find out by getting the execution.
+   explicit that there is **no "too late to cancel" message**; you find out by getting the execution.
 2. A fill is a **fact you booked**, and facts get corrected. Venues bust trades. ITCH: *"A trade break is
    final; once a trade is broken, it cannot be reinstated"*; OUCH: *"You will always get an Executed Order
    Message prior to getting a Broken Trade Message for a given execution"*, with reasons E/C/S/X (erroneous,
@@ -112,7 +112,7 @@ The staleness guard below is the one nearly everyone writes, and it resurrects a
 defects that compose:
 
 ```python
-# WRONG — both halves
+# WRONG: both halves
 existing = self.live.get(event.client_order_id)          # the live object, deleted on terminal
 if existing is not None and event.update_time < existing.update_time:
     return                                               # guard skipped when existing is None
@@ -143,7 +143,7 @@ except KeyError:
 ```
 
 `if seen_version(cid) >= v: return` followed by a separate write is a TOCTOU that two concurrent redeliveries
-both pass. `>=` is correct only where the version is a total order — where the venue publishes no version,
+both pass. `>=` is correct only where the version is a total order. Where the venue publishes no version,
 derive one from its own sequence; where the only clock is coarse, the watermark is `(ts, applied_event_ids)`.
 Give **balance events the same guard**, not only orders.
 
@@ -163,7 +163,7 @@ stays in flight, pending reconciliation**.
 Anything that sizes, hedges or flattens reads position including in-flight notional; an order in this state
 that risk cannot see is exactly the naked residual the client-order-ID rule exists to prevent. The state
 carries a **wall-clock budget declared as a config value**; past it the system takes the risk-*reducing*
-action automatically — cancel-by-client-ID, then flatten the instrument — rather than waiting for a human.
+action automatically (cancel-by-client-ID, then flatten the instrument) rather than waiting for a human.
 
 Timeouts resolve asymmetrically. Unconfirmed-submit past its retries can be settled as rejected only after a
 **single targeted order query** returns a definite answer; `PendingCancel`/`PendingUpdate` past their retries
@@ -187,7 +187,7 @@ notional the residue is real money at the exact point the bot stops managing the
 ## Fill dedupe, and the fold
 
 Dedupe on the venue's `trade_id`, **before** the state transition, and **reject** the duplicate rather than
-ignoring it — nautilus runs three ordered checks (identity → duplicate → transition), with the duplicate check
+ignoring it: nautilus runs three ordered checks (identity → duplicate → transition), with the duplicate check
 at `mod.rs:845-852` returning `OrderError::DuplicateFill(fill.trade_id)`, and the same guard independently in
 the reconciliation path at `reconciliation/orders.rs:776`.
 
@@ -196,7 +196,7 @@ Then add the field comparison, which is the half that is usually missing. Compar
 
 | Same `trade_id`, fields… | Meaning | Action |
 |---|---|---|
-| identical | benign redelivery — the stream and the poll both carried it | skip, silently, it is expected |
+| identical | benign redelivery: the stream and the poll both carried it | skip, silently, it is expected |
 | **different** | the venue restated a fill, or you are keying on the wrong id | **reject as a data-integrity error** |
 
 Applying the second case silently is how a restatement gets booked twice at two prices. The dedupe set is
@@ -204,9 +204,9 @@ written **in the same transaction as the position row**: an in-memory `_seen_tra
 counted fill after a restart, and that is precisely when the double-count happens.
 
 Recompute `avg_px` as a fold over the persisted fill set on every update, never as an accumulator, in
-`Decimal`. Two projects reached this independently — nautilus `avg_px_from_fills` (`mod.rs:1355-1382`) and
+`Decimal`. Two projects reached this independently: nautilus `avg_px_from_fills` (`mod.rs:1355-1382`) and
 freqtrade `recalc_trade_from_orders` (`trade_model.py:1265`), which walks the orders from scratch on each
-call — because recomputation is a pure function of a *set*, so it is correct under out-of-order delivery,
+call, because recomputation is a pure function of a *set*, so it is correct under out-of-order delivery,
 redelivery and voids, while a fold over a *sequence* is not. Ship
 `test_avg_px_invariant_to_fill_arrival_order`: ascending and descending arrival produce byte-identical output.
 
@@ -218,12 +218,12 @@ be **deferred**, not dropped.
 ## Overfills
 
 A venue can report a fill larger than the order's remaining quantity. Observed on Polymarket: `last_qty` of
-`5.012345` against `quantity` `5.000000` with `filled_qty` `0.000000`. Clamping to `min(raw_qty, remaining)` —
-the obvious fix — makes the position wrong, because the extra 0.012345 units really were received.
+`5.012345` against `quantity` `5.000000` with `filled_qty` `0.000000`. Clamping to `min(raw_qty, remaining)`
+(the obvious fix) makes the position wrong, because the extra 0.012345 units really were received.
 
 **The most rigorous OSS platform ships the dangerous default here.** `execution/src/engine/config.rs:61-65`
 declares `allow_overfills: bool` with `#[serde(default)]` ⇒ **false**, and with false
-`reconciliation/orders.rs:785-796` logs a `WARN` and `return None` — **the fill report the venue sent you is
+`reconciliation/orders.rs:785-796` logs a `WARN` and `return None`: **the fill report the venue sent you is
 discarded**, leaving your model short by exactly that amount. The live path `anyhow::bail!`s
 (`engine/mod.rs:3600-3624`). The capability exists; the default withholds it.
 
@@ -241,10 +241,10 @@ successful reconciliation against the venue, never on a timer and never from the
 
 ## Synthesised events, deferred reports, orders you never sent
 
-Reconciliation will infer events the venue never sent as events — a missed fill discovered by diffing a
+Reconciliation will infer events the venue never sent as events: a missed fill discovered by diffing a
 snapshot against persisted state. **Synthesised ids must be deterministic over venue-supplied fields including
 a venue timestamp** (`reconciliation/ids.rs:103-107`), so the same inference after a restart dedupes against
-itself instead of double-booking. Where the inference cannot be made safely, return nothing and warn — never
+itself instead of double-booking. Where the inference cannot be made safely, return nothing and warn; never
 substitute a zero (`orders.rs:1058-1065`).
 
 Orders you never sent will arrive. nautilus emits "external order" events for unrecognised client order IDs,
@@ -257,10 +257,10 @@ match to the unfilled quantity of a parent order"* (SEC order, ¶23). A bucket n
 
 | Event | Venue surface | Why it is not a fill |
 |---|---|---|
-| Self-trade prevention | Binance `ExecType` `TRADE_PREVENTION`, status `EXPIRED_IN_MATCH`; prevented matches at `GET /api/v3/preventedMatches` | *"not to be confused with a trade, as no orders will match"* — quantity is consumed and the order leaves the book, but nothing traded |
+| Self-trade prevention | Binance `ExecType` `TRADE_PREVENTION`, status `EXPIRED_IN_MATCH`; prevented matches at `GET /api/v3/preventedMatches` | *"not to be confused with a trade, as no orders will match"*; quantity is consumed and the order leaves the book, but nothing traded |
 | OKX STP | `cancel_maker` (default) / `cancel_taker` / `cancel_both`, set at master-account level and applied across sub-accounts | a cancellation, booked as a cancellation |
 | System restatement | FIX `ExecType` = Restated; OUCH `Order Restated` (type R) | order parameters changed with no client action and no execution |
-| Priority change | OUCH `Order Priority Update` (type T) — *"a new order reference number will be assigned"* | your venue-side handle changed; the order did not trade |
+| Priority change | OUCH `Order Priority Update` (type T): *"a new order reference number will be assigned"* | your venue-side handle changed; the order did not trade |
 | Trade break | FIX Trade Cancel / Trade Correct with `ExecRefID(19)` → the **last corrected** `ExecID`; OUCH Broken Trade | a fill *void*, routed to `FillVoided`, not a new fill |
 
 A state machine that reads "the order left the book and quantity was consumed" as a fill books phantom trades
@@ -269,7 +269,7 @@ and diverges from the venue by the prevented quantity, permanently.
 ## FIX: `ExecType` is the event, `OrdStatus` is the state
 
 `OrdStatus(39)` is your state variable; `ExecType(150)` tells you which event this `ExecutionReport(35=8)` is.
-Switch on `ExecType`, then assert the resulting state matches `OrdStatus` — a mismatch is a parser bug or a
+Switch on `ExecType`, then assert the resulting state matches `OrdStatus`; a mismatch is a parser bug or a
 message you dropped, and it should raise.
 
 - **Precedence.** When an order is simultaneously several things, `OrdStatus` reports the highest-precedence
@@ -278,18 +278,18 @@ message you dropped, and it should raise.
   under a cancel request reports `PendingCancel`, and code that derives "am I still working?" from `OrdStatus`
   alone loses the partial. Derive it from `LeavesQty`.
 - **`OrderQty = CumQty + LeavesQty`**, and `CumQty`/`AvgPx` *"should be calculated to reflect the cumulative
-  result of all versions of an order"* — **cumulative across the entire replace chain**. Resetting `CumQty` on
+  result of all versions of an order"*, **cumulative across the entire replace chain**. Resetting `CumQty` on
   a replace mis-states your own position by everything filled before the amend. This is the single most common
   FIX-side position error.
 - **`OrigClOrdID(41)`.** A cancel or cancel/replace carries the new `ClOrdID(11)` and the `OrigClOrdID(41)` of
   the order being acted on. Your state machine is keyed on the **chain**, not on one ID: keep a
   `chain_id → [ClOrdID…]` map so a report naming any link resolves to one order.
 - **Order Cancel Reject (`35=9`)** echoes the request's `ClOrdID` and the `OrigClOrdID`; when
-  `CxlRejReason` = Unknown Order, `OrigClOrdID` is set to the literal string `"NONE"` — a parser expecting an
+  `CxlRejReason` = Unknown Order, `OrigClOrdID` is set to the literal string `"NONE"`; a parser expecting an
   ID gets `"NONE"` and must not treat it as one. *"Filled orders cannot be changed."* A cancel reject is the
   normal outcome of racing a fill; it is a transition back to the pre-request state, not an error path.
 - **Execution and state changes do not share a report.** FIX specifies that execution information *"should not
-  be communicated in the same report as one which communicates other state changes"* — so a handler that only
+  be communicated in the same report as one which communicates other state changes"*, so a handler that only
   applies fills when the status also changed will miss fills.
 - Pending states are a genuine model split, not a detail: FIX makes PendingCancel/PendingReplace the two
   highest-precedence statuses, while OUCH has no general pending-cancel at all (its `Cancel Pending`, type P,
@@ -298,7 +298,7 @@ message you dropped, and it should raise.
 
 ## `PossDupFlag` vs `PossResend`
 
-These are two different layers and handling either with the other's mechanism fails in opposite directions —
+These are two different layers and handling either with the other's mechanism fails in opposite directions:
 dropped orders one way, duplicated fills the other.
 
 | | `PossDupFlag(43)` | `PossResend(97)` |
@@ -317,12 +317,12 @@ One order: placed, partially filled, cancel requested, the cancel races a final 
 | Step | Binance spot | OKX | Bybit | Hyperliquid | FIX 4.4 |
 |---|---|---|---|---|---|
 | accepted | `NEW` | `state: live` | order id + `orderLinkId` returned | status `resting` (carries `oid`) | `ExecType=New`, `OrdStatus=New` |
-| partial | exec type `TRADE`, cumulative `z`/`Z`, last `l`/`L`/`t` | `state: partially_filled`, `accFillSz` | `cumExecQty` | — | `ExecType=Trade`, `OrdStatus=PartiallyFilled`, `CumQty` |
-| cancel sent | REST ack ≠ cancelled | **only** the orders channel showing `"state":"canceled"` confirms it | — | — | `OrdStatus=PendingCancel` (outranks PartiallyFilled) |
+| partial | exec type `TRADE`, cumulative `z`/`Z`, last `l`/`L`/`t` | `state: partially_filled`, `accFillSz` | `cumExecQty` | n/a | `ExecType=Trade`, `OrdStatus=PartiallyFilled`, `CumQty` |
+| cancel sent | REST ack ≠ cancelled | **only** the orders channel showing `"state":"canceled"` confirms it | n/a | n/a | `OrdStatus=PendingCancel` (outranks PartiallyFilled) |
 | late fill | another `TRADE` after the cancel ack | `partially_filled` → `filled` | another `cumExecQty` step | status `filled` (`totalSz`, `avgPx`) | `ExecType=Trade` after the cancel ack |
 | terminal | fully-filled / cancelled statuses per `enums.md` for **your** product line | `filled`, `canceled`, `mmp_canceled` | `Cancelled`, `Rejected`, `Deactivated` among others | `filled` / `error` | `Filled`, `Canceled`, `Expired`, `Rejected` |
 
 Two cross-venue warnings. OKX documents that *"Successful response only means the request has been accepted by
-the exchange"* — the REST 200 on a cancel is not the cancel. And terminal-status **spelling differs between a
+the exchange"*; the REST 200 on a cancel is not the cancel. And terminal-status **spelling differs between a
 venue's own product lines** (Binance spot vs USDⓈ-M do not share every enum value); read the enum page for the
 product you are trading rather than reusing a mapping that worked on the other one.
