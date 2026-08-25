@@ -9,18 +9,22 @@
 > https://docs.polymarket.com/api-reference/markets/get-clob-market-info ·
 > https://docs.polymarket.com/concepts/order-lifecycle ·
 > https://docs.polymarket.com/trading/place-orders ·
-> https://docs.polymarket.com/concepts/pusd · https://docs.polymarket.com/llms.txt
-> pinned: `Polymarket/py-clob-client-v2@v1.1.0`, commit `215fc63a8fd6ec3a10c7edb73997c9772d8686d3`,
-> which was the tip of `main` when this file was written. Every code behaviour below was read at that commit.
-> verified: the two exchange addresses and their EIP-712 domain; the eleven signed struct members; the salt and
-> timestamp construction; the six accepted tick sizes and the price bound; the fee curve as the pinned client
-> computes it; the `fd` and `feeSchedule` field names and their documented meanings; the order and trade status
-> vocabularies; the GTD offset rule; the POST response members.
+> https://docs.polymarket.com/concepts/pusd · https://docs.polymarket.com/programs/builders/fees ·
+> https://docs.polymarket.com/llms.txt
+> pinned: `Polymarket/py-clob-client-v2@v1.1.0`, commit `215fc63a8fd6ec3a10c7edb73997c9772d8686d3`. On
+> 2026-08-25 that commit was confirmed through the GitHub API to be both the target of tag `v1.1.0` and the
+> current tip of `main`. Every code behaviour below was read from a clone checked out at that commit.
+> verified: the two exchange addresses and their EIP-712 domain; the eleven signed struct members and their
+> order; the salt and timestamp construction; the six accepted tick sizes, the price bound and the documented
+> multiples rule; the fee curve as the pinned client computes it; the `fd`, `mbf`, `tbf` and `feeSchedule` field
+> names and their documented meanings; the builder-fee rate model, its basis-point formula and its caps; the
+> order and trade status vocabularies; the GTD offset rule; the POST response members.
 > unverified: everything in the closing section, which lists each gap and why it is open. The largest is the
 > relationship between the three fee-parameter surfaces.
 > revalidate_when: a V3 migration notice appears; the `fd` or `feeSchedule` members change; a new tick size is
-> accepted; `py-clob-client-v2` publishes a tag past `v1.1.0`; or work starts on `Polymarket/py-sdk`, which the
-> pinned repository's own README recommends over this client for new projects.
+> accepted; `py-clob-client-v2` publishes a tag past `v1.1.0`; the builder-fee caps move off 100 and 50 bps; or
+> work starts on `Polymarket/py-sdk`, which the pinned repository's own README recommends over this client for
+> new projects.
 
 ## Contents
 
@@ -70,11 +74,12 @@ rather than trusting a constant that does not vary by chain.
 
 ## Collateral is pUSD
 
-pUSD replaces USDC.e as the collateral token. The docs describe it as "a standard ERC-20 on Polygon backed by
-USDC, with backing enforced onchain by the smart contract", with 6 decimals, and as "the collateral token used
-for all trading on Polymarket". An API trader converts by calling `wrap(address _asset, address _to, uint256
-_amount)` on the CollateralOnramp at `0x93070a847efEf7F70739046A929D47a521F5B8ee`, and reverses it with
-`unwrap` on the CollateralOfframp.
+pUSD replaces USDC.e as the collateral token. The docs describe it, quoted: "pUSD (Polymarket USD) is the
+collateral token used for all trading on Polymarket. It's a standard ERC-20 token on Polygon, backed by USDC."
+Backing is enforced onchain, and the token carries 6 decimals. An API trader converts by calling
+`wrap(address _asset, address _to, uint256 _amount)` on the CollateralOnramp at
+`0x93070a847efEf7F70739046A929D47a521F5B8ee`, and reverses it with `unwrap` on the CollateralOfframp, whose
+address the page does not give.
 
 Two consequences for a client that already held a balance. A balance check that reads the USDC.e contract
 reports a number that can no longer be traded with, and reports it as a healthy balance rather than as an error.
@@ -103,10 +108,10 @@ milliseconds, used for order uniqueness)". It replaces `nonce`.
 from `time.time_ns() // 1_000_000` at build time and ignores any value the caller put on the order args. So the
 order hash, which is what the venue and the chain know your order by, is a fresh random value on every build.
 Build the same intent twice and you have signed two economically distinct orders. There is no
-`clientOrderId` anywhere in the V2 payload: `order_to_json_v2` emits the eleven signed members plus `signature`,
-`owner`, `orderType`, `deferExec` and `postOnly`, and the place-orders page states no idempotency guarantee at
-all. Treat the absence as the fact it is: **the venue offers you no deduplication, so a resend is a second
-order.**
+`clientOrderId` anywhere in the V2 payload: `order_to_json_v2` emits the eleven signed members plus the unsigned
+`expiration`, plus `signature`, `owner`, `orderType`, `deferExec` and `postOnly`. No member of that payload is
+supplied by you as an idempotency key, and the place-orders page states no idempotency guarantee at all. Treat
+the absence as the fact it is: **the venue offers you no deduplication, so a resend is a second order.**
 
 Two practical consequences.
 
@@ -146,11 +151,15 @@ Fees "are rounded to 5 decimal places. The smallest fee charged is 0.00001 USDC.
 for Crypto, with maker rates uniformly 0. The worked example on that page is 100 Crypto shares at 0.50, giving
 `100 × 0.07 × 0.50 × 0.50 = $1.75`.
 
-**That formula is the special case of the real one.** The pinned client computes, in `fees.py`:
+**That formula is the special case of the real one.** The pinned client computes, in
+`fees.py::adjust_buy_amount_for_fees`, verbatim at the pinned commit:
 
 ```python
 platform_fee_rate = fee_rate * (price * (1 - price)) ** fee_exponent
-platform_fee = (fee_base_amount / price) * platform_fee_rate * (1 + fee_slippage / 100)
+effective_platform_fee_rate = platform_fee_rate * (1 + fee_slippage / 100)
+fee_base_amount = min(amount, user_usdc_balance)
+platform_fee = (fee_base_amount / price) * effective_platform_fee_rate
+builder_fee = fee_base_amount * builder_taker_fee_rate
 ```
 
 `fee_base_amount / price` is shares, so this is `C × rate × (p(1-p))**e`. The documented formula is that
@@ -169,16 +178,29 @@ estimated fee is zero and the reserve is short by the whole fee. A response with
 Neither case raises. Assert that both members are present and that the exponent is what you expect before you
 size anything.
 
-**The platform fee is symmetric; the builder fee is not.** `(p(1-p))**e` is unchanged by swapping p and 1 - p
-for any exponent, so the platform fee on the two legs of the venue's own YES/NO identity is the same number.
-The builder fee in the same function is `fee_base_amount * builder_taker_fee_rate`, proportional to collateral.
-Buying 100 shares at 0.99 pays a builder fee 99 times the fee for buying 100 at 0.01, while the platform fee at
-those two prices is identical. A router that compares total taker cost across the two legs will drift toward one
-of them once a builder code is attached. Builder rates come from `builder_maker_fee_rate_bps` and
-`builder_taker_fee_rate_bps` divided by `BUILDER_FEES_BPS = 10000`, and `__ensure_builder_fee_rate_cached`
-catches every exception and logs a warning, leaving the rate at 0, which under-reserves. **The builder-fees
-documentation page listed in `llms.txt` returned 404 at both URL forms on 2026-08-25, so every builder-fee
-statement here comes from the pinned client only and the venue-side semantics are UNVERIFIED.**
+**The platform fee is symmetric; the builder fee is not, and the venue says so itself.** `(p(1-p))**e` is
+unchanged by swapping p and 1 - p for any exponent, so the platform fee on the two legs of the venue's own
+YES/NO identity is the same number. The fees page states that property in its own words: "The fee amount in
+USDC is symmetric around 50% probability — a trade at 30¢ incurs the same dollar fee as a trade at 70¢."
+
+The builder fee has the opposite shape. The builder-fees page describes it as "a flat percentage of notional",
+gives the formula `builder_fee = notional × builder_fee_rate_bps / 10000`, caps the taker rate at "100 bps (1%)"
+and the maker rate at "50 bps (0.5%)" with 1 bp granularity and both defaulting to 0, and states that builder
+and platform fees are "additive — they stack on top of platform fees, never replace them". Proportional to
+notional means proportional to price: buying 100 shares at 0.99 pays a builder fee 99 times the fee for buying
+100 at 0.01, while the platform fee at those two prices is identical. **So attaching a builder code re-breaks
+the symmetry the platform curve was built to preserve,** and a router that compares total taker cost across the
+two legs of one economic trade will drift toward the cheap-notional leg on every trade once one is attached.
+
+The pinned client agrees: `builder_fee = fee_base_amount * builder_taker_fee_rate`, rates read from
+`builder_maker_fee_rate_bps` and `builder_taker_fee_rate_bps` over `BUILDER_FEES_BPS = 10000`. One client
+behaviour has no venue-side counterpart and is worth guarding: `__ensure_builder_fee_rate_cached` catches every
+exception and logs a warning, leaving the rate at 0, which silently under-reserves the whole builder fee.
+
+**On the source, because an earlier pass got this wrong.** `/programs/builder-fees` returns 404, which that pass
+recorded as the builder-fee documentation being absent. It is not absent, the path is different: `llms.txt`
+indexes `/programs/builders/fees`, which fetched on 2026-08-25 and is the source of every rate, cap and formula
+above. A 404 is evidence about one URL, never about a fact.
 
 `fee_slippage` is a percentage buffer, validated as 0 or a value between 1 and 100, that inflates the estimated
 platform fee. It exists because the fee is "determined by the protocol at match time, not embedded in your
@@ -200,9 +222,17 @@ into the curve. What is **UNVERIFIED**: that `feeSchedule.rate` and `fd.r` carry
 market at the same instant; that `feeSchedule.exponent` and `fd.e` do; that `takerOnly` and `to` do; how the
 basis-point members `mbf` and `tbf` relate to a rate that is not in basis points; and whether
 `feeSchedule.rebateRate` has any CLOB counterpart at all, since the pinned client reads none and the CLOB
-endpoint documents none. Do not build a fee model that reads one surface and validates against another as
-though they were the same number. Pick one surface, say in a comment which one and why, and reconcile against
-the fee the venue actually charged on a fill.
+endpoint documents none.
+
+Note that `mbf` and `tbf` are *not* the builder rates: those are a separate per-builder value from
+`/programs/builders/fees`, which the client divides by `BUILDER_FEES_BPS`. Four basis-point-or-rate spellings
+now exist across three endpoints, and no page relates any pair of them.
+
+**Resolve this at runtime, from the market you are about to trade.** The live venue metadata for that market is
+the authority; this file is not, and neither is a constant. Read one surface, say in a comment which one and
+why, and reconcile the estimate against the fee the venue actually charged on a fill. Do not build a fee model
+that reads one surface and validates against another as though they were the same number, and do not let a
+disagreement between two surfaces resolve silently in favour of whichever your code happened to read first.
 
 The pinned client also exposes `get_fee_rate_bps`, which reads `base_fee` from a separate `/fee-rate` endpoint.
 At the pinned commit that value is passed only to V1 order building and is `None` for V2 orders. It is a fourth
@@ -225,15 +255,17 @@ whether the price sits on a multiple of the tick.
 
 Nothing in the client puts it on one either. `ROUNDING_CONFIG` maps tick "0.005" to 3 price decimals and tick
 "0.0025" to 4, and `create_order` applies `round_normal(price, decimals)`. Rounding 0.1234 to three decimals
-gives 0.123, which has the right decimal count and is not a multiple of 0.005. The place-orders page states
-"The CLOB rejects an order whose price does not conform to the market's current tick size." So on the two new
-tick sizes the client's rounding is not the venue's acceptance test. Quantise to an integer multiple of the tick
-yourself before signing, in `Decimal`, and assert it. Whether the CLOB tests divisibility or only the decimal
-count is not documented and is **UNVERIFIED**; the guard is two lines and the failure it prevents is a rejected
-order at best.
+gives 0.123, which has the right decimal count and is not a multiple of 0.005.
 
-`orderMinSize` is documented as "Minimum order size in USDC; CLOB rejects orders below". Check it in the same
-place as the tick check, after rounding, because rounding size down can cross it.
+**The venue documents the stricter rule, and the client does not implement it.** The market-details page states
+"Prices must be multiples of this value", and the place-orders page states "The CLOB rejects an order whose
+price does not conform to the market's current tick size." Multiples, not decimal places. So on the two tick
+sizes that are not powers of ten, `0.005` and `0.0025`, the client's decimal rounding is not the venue's
+acceptance test and can hand you a price the venue will reject. Quantise to an integer multiple of the tick
+yourself before signing, in `Decimal`, and assert it. The guard is two lines.
+
+`orderMinSize` is documented as "Minimum order size in USDC. The CLOB rejects orders below this threshold."
+Check it in the same place as the tick check, after rounding, because rounding size down can cross it.
 
 **The tick cache has no expiry.** `tickSizeTtlMs` is gone: the migration page says it is "no longer
 configurable", and the constructor no longer accepts it. What replaced it is not a shorter TTL but no TTL.
@@ -336,10 +368,12 @@ def test_market_info_is_refreshed_because_nothing_evicts_it(client, clock):
 Verified on 2026-08-25 by reading the pages listed in the provenance block and the pinned client at
 `215fc63a8fd6ec3a10c7edb73997c9772d8686d3`: the package names, the two exchange addresses, the domain name and
 both domain versions, the eleven signed members and the four removed ones, the salt and timestamp construction,
-the six tick sizes, `price_valid`, the `ROUNDING_CONFIG` decimals, the fee curve as the client computes it, the
-category rate table, the `fd`, `mbf`, `tbf` and `feeSchedule` member names and their documented meanings, the
-pUSD description and the onramp address and function signature, the order and trade status vocabularies, the GTD
-offset and the three-minute floor, and the POST response members.
+the six tick sizes and the documented multiples rule, `price_valid`, the `ROUNDING_CONFIG` decimals, the fee
+curve as the client computes it, the category rate table and the documented symmetry statement, the `fd`, `mbf`,
+`tbf` and `feeSchedule` member names and their documented meanings, the builder-fee formula, caps and additivity
+statement, the pUSD description and the onramp address and function signature, the order and trade status
+vocabularies, the GTD offset and the three-minute floor, and the POST response members. The pinned commit was
+confirmed through the GitHub API on the same date to be both tag `v1.1.0` and the tip of `main`.
 
 Explicitly unverified. Do not build on any of these without checking first.
 
@@ -348,17 +382,18 @@ Explicitly unverified. Do not build on any of these without checking first.
 - Whether `feeSchedule.rebateRate` has any CLOB counterpart. The pinned client reads none.
 - How `mbf` and `tbf`, both in basis points, relate to the `fd` curve on the same response.
 - Which exponent production markets carry. The docs formula is the `e == 1` form; the client's own tests use 2.
-- The token in which a fee debit is denominated, given pUSD collateral and a fees page that says USDC.
+- The token in which a fee debit is denominated, given pUSD collateral and a fees page that says fees are
+  calculated in USDC.
 - What token the pinned client's `collateral` constant `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` is, and why
-  chain 137 and Amoy chain 80002 carry the same value. The pUSD page I read gives no token address.
-- Whether the CLOB tests tick divisibility or only the decimal count.
+  chain 137 and Amoy chain 80002 carry the same value. The pUSD page gives no token address.
 - Whether the venue constrains or deduplicates a repeated `metadata` value.
-- Every builder-fee statement above. It comes from the pinned client; the builder-fees documentation page
-  returned 404 on 2026-08-25.
-- Whether the V2 exchange keeps the V1 rule that two buys cross at `priceA + priceB >= 1` and mint the pair. The
-  V1 contract source is not evidence about a different deployed address, and the V2 source was not read.
-- Whether a flat account can sell an outcome it does not hold. The V1 exchange moved outcome tokens out of the
-  maker's balance on a SELL, which makes a flat-account YES sell a NO buy reserving `1 - p` per share rather
-  than `p`, a shortfall of `1 - 2p` per share while `p < 0.5`. The arithmetic holds wherever the semantics do;
-  the semantics were not re-verified against the V2 exchange.
-- The V1-era `"0.5"` default on the last-trade-price endpoint. Not re-checked for V2.
+- Whether a flat account can sell an outcome it does not hold on the V2 exchange, and what it returns if it
+  cannot. No page fetched documents a borrow, a short facility or a rejection. The reserve arithmetic for a
+  flat sell, `q * (1 - p)` rather than `q * p`, holds wherever those semantics hold; that they hold on V2 was
+  not established, so gate the send on inventory you can prove rather than on an expected venue error.
+
+Three items that appeared in an earlier version of this list are gone rather than carried. Two were deleted for
+want of a fetchable source: a rule attributed to V1 exchange contract source about two buys crossing at a price
+sum of one, and a `"0.5"` default attributed to a V1 last-trade-price endpoint. The third, whether the CLOB
+tests tick divisibility, is resolved above, because the market-details page states that prices must be
+multiples of the tick.

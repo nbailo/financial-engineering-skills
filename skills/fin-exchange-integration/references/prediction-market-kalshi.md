@@ -4,10 +4,10 @@
 > provider: Kalshi · surface: Predictions REST v2, WebSocket, FIX order entry · version: OpenAPI `info.version: 3.29.0`, AsyncAPI `info.version: 2.0.0`
 > verified_at: 2026-08-25
 > sources: https://docs.kalshi.com/openapi.yaml · https://docs.kalshi.com/asyncapi.yaml · https://docs.kalshi.com/getting_started/order_direction · https://docs.kalshi.com/getting_started/orderbook_responses · https://docs.kalshi.com/getting_started/fixed_point_migration · https://docs.kalshi.com/getting_started/fee_rounding · https://docs.kalshi.com/getting_started/market_lifecycle · https://docs.kalshi.com/getting_started/market_settlement · https://docs.kalshi.com/getting_started/exchange_sharding · https://docs.kalshi.com/getting_started/rate_limits · https://docs.kalshi.com/fix/order-entry · https://docs.kalshi.com/changelog
-> pinned: `openapi.yaml` 3.29.0 and `asyncapi.yaml` 2.0.0 as served on 2026-08-25; the Fixed-Point Representation page carries "Last Updated: August 20, 2026"; the newest changelog entries read were labelled August 27, 2026. No client SDK source was read in this pass, so nothing below is a claim about SDK behaviour.
+> pinned: `openapi.yaml` 3.29.0 and `asyncapi.yaml` 2.0.0 as served on 2026-08-25; the Fixed-Point Representation page carries "Last Updated: August 20, 2026". The newest changelog entry carried the label "August 27, 2026", which is ahead of the fetch date; that is the vendor's own label, reproduced rather than corrected, and it is a reason to re-read the changelog rather than to trust any date arithmetic over it. No client SDK source was read in this pass, so nothing below is a claim about SDK behaviour.
 > verified: the direction vocabularies and their equivalence table; the REST orderbook shape and sort order; `use_yes_price` and its migration plan; `price_ranges` and `price_level_structure`; the fixed-point dollar and count types and their precisions; the three fee components and the per-order accumulator; the series/event/market fee-authority chain and the `FeeType` enum; the market status enum and its transitions; the settlement record fields; the FIX reject vocabulary; exchange sharding and per-shard collateral; the amend `count` semantics.
-> unverified: whether resending an order with a `client_order_id` already used creates a second order on REST (no idempotency statement exists for that field in the spec fetched); the numeric fee rate tables, which live in a PDF that returned HTTP 429 on 2026-08-25 and was not re-read; whether a settlement row carries any stable unique id; the WebSocket `seq` gap-recovery procedure, which the AsyncAPI describes only as a number to check.
-> revalidate_when: `use_yes_price` changes default or is removed; the legacy `action`/`side` fields pass their stated removal floor of May 14, 2026; a new `price_level_structure` name appears; `FeeType` gains a member; a new `exchange_index` shard is announced; the OpenAPI `info.version` moves off 3.29.0.
+> unverified: whether resending an order with a `client_order_id` already used creates a second order on REST, the create-order-v2 reference page giving that field no description and never using the word idempotency, and `openapi.yaml` being too large to search exhaustively in this pass; the numeric fee rate tables, which live in a PDF that returned HTTP 429 on 2026-08-25; whether a settlement row carries any stable unique id, the documented field list carrying none; the WebSocket `seq` gap-recovery procedure, which the AsyncAPI describes only as a number to check.
+> revalidate_when: `use_yes_price` changes default or is removed; the legacy `action`/`side` fields are actually removed, their stated floor of May 28, 2026 having already passed; a new `price_level_structure` name appears; `FeeType` gains a member; a new `exchange_index` shard is announced; the OpenAPI `info.version` moves off 3.29.0.
 
 Kalshi is a binary event exchange whose API has moved twice under integrators in the last year: integer cents became
 fixed-point dollar strings, and a two-field direction vocabulary replaced `action` plus `side`. Both migrations leave code
@@ -39,7 +39,9 @@ The changelog entry announcing the cutover states that legacy integer count fiel
 integer cents price fields (those with `_dollars` equivalents) would be **removed** from all REST and WebSocket response
 payloads on **March 12, 2026**. The Fixed-Point Representation page describes the two current types:
 
-- `*_dollars` is a fixed-point dollar string. Requests accept 2 to 4 decimal places; responses emit up to 6.
+- `*_dollars` is a fixed-point dollar string, documented as carrying "up to 4 decimal places", the page's own example
+  being the string `0.1200`. The page separately notes that "intermediate calculations can reach up to 6 decimal
+  places", which is a statement about arithmetic and **not** about what a response emits. Do not read it as one.
 - `*_fp` is a fixed-point contract count string. Requests accept 0 to 2 decimal places; responses always emit 2. The
   minimum granularity is 0.01 contracts, so contract counts are fractional.
 - Where a request carries both an integer field and its `_fp` twin, "they must match".
@@ -68,12 +70,17 @@ The Order direction page defines two canonical fields carrying "the same bit in 
 The equivalence with the deprecated `action` plus `side` pair collapses four spellings onto two: `(buy, yes)` and
 `(sell, no)` are both `outcome_side=yes`; `(buy, no)` and `(sell, yes)` are both `outcome_side=no`. On public `Trade`
 objects and the `trade` channel the fields are `taker_outcome_side` and `taker_book_side`, because a public trade has no
-user perspective. The legacy `action` and `side` fields on `Order` and `Fill` are marked deprecated and, per their own
-schema descriptions, "will not be removed before May 14, 2026".
+user perspective.
 
 Direction does not move the price: "An order at price `p` with `outcome_side=no` is matched by an order at the same
 price `p` with `outcome_side=yes`". A position keeper that treats `outcome_side=no` as a negative quantity at the same
 price has inverted the economics.
+
+**The deprecation floor quoted on that page has already passed, and is historical.** The page states, quoted, "The
+legacy fields below are marked deprecated and **will not be removed before May 28, 2026**." That is a "no earlier than",
+not a commitment to act, and as of the verified_at date above it is in the past. Do not plan around it in either
+direction: it is not evidence the fields are gone, and it is not evidence they remain. Read the current spec for the
+fields you consume, and write new code against `outcome_side` and `book_side` only.
 
 **The V2 order endpoints speak a third thing.** `CreateOrderV2`, `AmendOrderV2` and the V2 cancel take `side` as a
 `BookSide`, whose schema says: "For event markets, this refers to the YES leg only: `bid` means buy YES, `ask` means
@@ -151,9 +158,11 @@ wrong; the quantizer needs the band containing the price. Second, the grid **cha
 market's structure changes, the `price_level_structure_updated` event on the market lifecycle WebSocket channels carries
 the new `price_ranges`." Subscribe to it, or discover the change as a run of rejections.
 
-Requests and responses also disagree on precision. `FixedPointDollars` says requests accept 2 to 4 decimal places while
-responses emit up to 6, so echoing `last_price_dollars` straight back as an order price can be both off-grid and
-over-precision. Requantize against the live `price_ranges` after every round trip.
+Requantize against the live `price_ranges` after every round trip anyway, and not because of a precision mismatch: an
+earlier version of this file asserted that responses emit more decimal places than requests accept, and the page does
+not say that. The reason that survives is the grid itself. `price_ranges` is per market and changes under a live market,
+so a value you read at one moment, including `last_price_dollars`, is not guaranteed to sit on the band that governs the
+order you are about to send. Snap to the band you just read, in `Decimal`, every time.
 
 ## Fee authority is a four-level lookup
 
@@ -213,12 +222,15 @@ per fill, and let the venue's `fee_cost` be the record.
 
 ## Order identity, the ambiguous response, and the cancel you cannot send
 
-`client_order_id` is a free string field on `CreateOrderV2Request`. **The OpenAPI document fetched on 2026-08-25
-contains exactly one use of the word "idempotency", and it is on `client_transfer_id` for intra-account transfers, not
-on `client_order_id`.** Nothing in that spec says resending a create with a repeated `client_order_id` returns the
-original order rather than creating a second one, so on REST it is a correlation key and you must not treat it as a
-deduplicator. The create endpoint does document a `409` response, "Conflict - resource already exists or cannot be
-modified", but the spec does not tie that status to a repeated client id, so do not build the branch on an inference.
+`client_order_id` is a free string field on `CreateOrderV2Request`. **On the create-order-v2 reference page fetched on
+2026-08-25 it carries no description at all: a string property with an optional flag and no accompanying text, and
+neither "idempotency" nor "idempotent" appears anywhere on that page.** Nothing there says resending a create with a
+repeated `client_order_id` returns the original order rather than creating a second one, so on REST it is a correlation
+key and you must not treat it as a deduplicator. The create endpoint does document a `409` response, "Conflict -
+resource already exists or cannot be modified", but nothing ties that status to a repeated client id, so do not build
+the branch on an inference. The `openapi.yaml` was too large to search exhaustively in this pass, so treat the absence
+as established for the reference page and unestablished for the spec as a whole; that asymmetry does not change the
+rule, because a dedupe guarantee you cannot find documented is one you must not depend on.
 
 Resolution after a lost create response is constrained by what you can look up:
 
@@ -340,7 +352,8 @@ economic rather than cosmetic. "Kalshi's collateralization checks will continue 
 Programmatic traders must preallocate collateral on a given exchange shard before order placement." Balances are
 per-shard, "Subaccount balances are local to a specific exchange instance", and "Order groups do not function across
 exchange instances". Funds move between shards through `POST /portfolio/intra_account_transfer`, whose
-`client_transfer_id` is the one field in the spec documented "for idempotency".
+`client_transfer_id` is documented as an idempotency key for that transfer, which is a stronger statement than
+anything the create-order page makes about `client_order_id`.
 
 Routing is implicit unless you make it explicit: `exchange_index >= 0` routes directly, `-1` auto-routes by ticker, and
 an omitted value auto-routes when a ticker is present or otherwise defaults to `0`. Market ticker formats are unchanged,
@@ -360,7 +373,7 @@ shard cannot collateralise.
 from decimal import Decimal
 
 def test_prices_are_parsed_as_decimal_strings(market):
-    # responses emit up to 6 dp; requests accept 2-4; float round-trips fall off the grid
+    # prices are strings on a per-market grid that changes under you; float round-trips fall off it
     assert isinstance(market.last_price_dollars, str)
     px = Decimal(market.last_price_dollars)
     assert on_grid(client.quantize_to_grid(px, market.price_ranges), market.price_ranges)
@@ -406,9 +419,10 @@ sentence and schema description above. `openapi.yaml` self-reported `info.versio
 
 Explicitly unverified, and labelled as such wherever it appears above:
 
-- **`client_order_id` deduplication on REST.** The spec fetched documents idempotency only for `client_transfer_id`.
-  Whether a repeated `client_order_id` creates a second order, and whether the documented `409` is how a repeat
-  surfaces, is not established. Do not resend to find out on a live account.
+- **`client_order_id` deduplication on REST.** The create-order-v2 reference page gives the field no description and
+  never mentions idempotency. Whether a repeated `client_order_id` creates a second order, and whether the documented
+  `409` is how a repeat surfaces, is not established. Do not resend to find out on a live account. The `openapi.yaml`
+  was too large to search exhaustively in this pass, so this is an absence established on the reference page only.
 - **Numeric fee rates.** `https://kalshi.com/docs/kalshi-fee-schedule.pdf` returned HTTP 429 on 2026-08-25 and was not
   read. No percentage from it is quoted here. The `FeeType` enum, the multiplier chain and the override mechanism are
   verified; the rates are not.
@@ -416,5 +430,8 @@ Explicitly unverified, and labelled as such wherever it appears above:
   credit is composed by you.
 - **WebSocket gap recovery.** The AsyncAPI describes `seq` as a number to check and documents `get_snapshot`, but states
   no recovery procedure. The re-snapshot approach above is the conservative reading, not a quoted rule.
-- **Anything dated.** The deprecation floors quoted (May 14, 2026 for `action`/`side`, May 6 and May 21, 2026 for the
-  legacy order endpoints) are the venue's own "no earlier than" language, not commitments to act on those dates.
+- **Anything dated, and every quoted floor here has already passed.** The `action`/`side` floor of May 28, 2026 is the
+  venue's own "no earlier than" language, not a commitment to act on that date, and it is historical as of the
+  verified_at date above. It is evidence neither that the fields are gone nor that they remain. Read the current spec
+  for the fields you consume. Floors for the legacy order endpoints are not quoted here, because this pass did not
+  re-read them.

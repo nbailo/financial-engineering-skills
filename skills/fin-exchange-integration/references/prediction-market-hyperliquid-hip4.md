@@ -4,10 +4,10 @@
 > provider: Hyperliquid · surface: HIP-4 outcome markets on HyperCore, via the `info` and `exchange` endpoints · version: experimental, unversioned, staged rollout
 > verified_at: 2026-08-25
 > sources: https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-4-outcome-markets · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/asset-ids · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/hip-4-deployer-actions · https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
-> pinned: GitBook publishes no revision identifier. The HIP-4 overview page rendered the footer "Last updated 2 months ago" when fetched on 2026-08-25. Every page above is also served as raw Markdown by appending `.md` to its URL, which is how each quotation below was taken. Re-fetch before relying on any of it; treat this file as dated, not current.
-> verified: the name "HIP-4: Outcome markets" as a documentation page title and URL segment; the outcome asset-id encoding and its three spellings; `outcomeMeta`, `settledOutcome`, `outcomeTemplates` and `outcomeMetaUpdates` as request and subscription types; the `outcome`, `name`, `description`, `sideSpecs`, `quoteToken`, `settleFraction` and `details` fields with their example values; the merged-book rule and price-side-time priority; the four `userOutcome` actions and their acknowledgement-only responses; the deployer settlement actions and the `settleFraction` range; the deployer fee scale formula; the recurring-outcome settlement formula.
-> unverified: whether HIP-4 deployer actions are live on mainnet as opposed to testnet, since the published deployer limits are given only as testnet values; the tick and lot rules for outcome assets, which the Tick and lot size page does not mention; whether `cloid` is accepted on an outcome order, which no page read here states; the complete `outcomeMeta` response schema, since the deployer page names fields the published example omits; the current base outcome trading fee rate; whether an `l2Book` or `trades` subscription on a `#<encoding>` coin returns the merged book or one leg.
-> revalidate_when: multi-outcome markets ship to mainnet; the `outcomeMeta` example gains or loses a field; `settleQuestion2` is superseded the way `settleQuestion` was; the "Fees are currently zero for outcome markets for initial testing" sentence disappears; the asset-id encoding formula changes.
+> pinned: GitBook publishes no revision identifier. The HIP-4 overview page rendered the footer "Last updated 2 months ago" when fetched on 2026-08-25. Every page above is also served as raw Markdown by appending `.md` to its URL; quotations below were taken from one or both forms, and where a page did not return the section being checked that is said in place rather than filled in. Re-fetch before relying on any of it; treat this file as dated, not current.
+> verified: the name "HIP-4: Outcome markets" as a documentation page title and URL segment; the outcome asset-id encoding and its three spellings; `outcomeMeta`, `settledOutcome`, `outcomeTemplates` and `outcomeMetaUpdates` as request and subscription types; the `outcome`, `name`, `description`, `sideSpecs`, `quoteToken`, `settleFraction` and `details` fields with their example values; the merged-book rule and price-side-time priority; the deployer settlement actions, the `settleFraction` range and the question settlement constraint; the sub-deployer grant list and the 183-day deactivation rule; the description encoding and its keyword hint formats; the deployer fee scale formula and the no-maker-rebate rule; the `(block_time, coin, tid)` trade key.
+> unverified: whether HIP-4 deployer actions are live on mainnet as opposed to testnet, since the published deployer limits are given only as testnet values; the tick and lot rules for outcome assets, which the Tick and lot size page does not mention; whether `cloid` is accepted on an outcome order, which no page read here states; the complete `outcomeMeta` response schema, since the deployer page names fields the published example omits; the current base outcome trading fee rate; whether an `l2Book` or `trades` subscription on a `#<encoding>` coin returns the merged book or one leg; the action names, request shapes and success-response shape of the split, merge and negate outcome actions, because the exchange-endpoint page could not be read to its outcome sections in this pass; how protocol-deployed recurring outcomes are settled, beyond the one example sentence quoted below.
+> revalidate_when: multi-outcome markets ship to mainnet; the `outcomeMeta` example gains or loses a field; `settleQuestion2` is superseded the way `settleQuestion` was; the "Fees are currently zero for outcome markets for initial testing" sentence disappears; the asset-id encoding formula changes; or the exchange-endpoint page's `#split-outcome` and `#negate-outcome` sections become readable.
 
 Outcomes are Hyperliquid's prediction-market and bounded-payoff primitive. The docs describe them as "fully
 collateralized contracts that settle within a fixed range", useful "for applications such as prediction markets and
@@ -23,7 +23,7 @@ markets will be rolled out in stages." Write the client so that a rollout stage 
 - The merged book: buying Yes at `p` is selling No at `1 - p`
 - Settlement is a fraction, not a bit, and two different parties set it
 - The description is a pipe-delimited encoding whose values may contain a colon
-- Split, merge, negate: four value-moving actions that return no identifier
+- Split, merge, negate: value-moving actions whose payloads this file does not restate
 - Fees: a base rate times a deployer scale, and no maker rebate
 - What is unverified, stated plainly
 - Assertions to write
@@ -32,8 +32,9 @@ markets will be rolled out in stages." Write the client so that a rollout stage 
 
 This file covers the outcome surface only. Standard Hyperliquid spot and perpetual trading belongs in the ordinary
 venue references and must not be duplicated here: order placement and `cloid`, nonce semantics and API wallets,
-positions and PnL, funding, margin, and venue-originated liquidation and ADL as client-observed facts. Outcomes have
-"no leverage or liquidations" at all, so a liquidation rule imported from the perp adapter does not apply to them.
+positions and PnL, funding, margin, and venue-originated liquidation and ADL as client-observed facts. The HIP-4 page
+describes outcomes as "an alternative form of derivative trading that does not involve leverage or liquidations", so a
+liquidation rule imported from the perp adapter does not apply to them.
 
 Two properties of the surface should shape every design decision below. It is **experimental**: features arrive in
 stages and one action variant has already been discontinued in place. And it is **version sensitive**: GitBook exposes
@@ -57,10 +58,11 @@ All three are now established, from pages other than the info-endpoint page, fet
   points at it: "The outcome trading API is similar to spot, with key differences highlighted here" followed by the
   Asset IDs URL.
 
-The correction is worth keeping visible rather than quietly absorbing: the earlier pass was right that the info-endpoint
-page does not establish these, and right to refuse to assert them from it. The resolution was a different official page,
-not a stronger inference. The `outcomeMeta` and `settledOutcome` shapes recorded in that pass are unchanged and are
-reproduced below from the Spot info-endpoint page.
+Both pages were fetched again on 2026-08-25 and still say this, so the resolution rests on two independent reads rather
+than one. The correction is worth keeping visible rather than quietly absorbing: the earlier pass was right that the
+info-endpoint page does not establish these, and right to refuse to assert them from it. The resolution was a different
+official page, not a stronger inference. The `outcomeMeta` and `settledOutcome` shapes recorded in that pass are
+unchanged and are reproduced below from the Spot info-endpoint page.
 
 ## Asset identity: one encoding, three spellings
 
@@ -118,9 +120,10 @@ you compute. Get it from `outcomeMeta`, whose published example is:
 ```
 
 The set of outcomes changes under a running process, so subscribe to `{ "type": "outcomeMetaUpdates" }`, whose data
-format is `WsOutcomeMetaUpdates` and whose documented purpose is "Changes to the outcome meta". Note also that the
-market-data `coin` for an outcome is the `#<encoding>` string, so the composite trade key the WebSocket page prescribes,
-`(block_time, coin, tid)`, is per outcome side rather than per market.
+format the subscriptions page gives as `WsOutcomeMetaUpdates`; the page lists the subscription without a prose purpose,
+so treat the name as the whole of what is documented. Note also that the market-data `coin` for an outcome is the
+`#<encoding>` string, so the composite trade key the WebSocket page prescribes, quoted, "For a globally unique trade id,
+use (block_time, coin, tid)", is per outcome side rather than per market.
 
 **The side names are not reliably "Yes" and "No".** The HIP-4 page says the tokens are "labeled by `sideSpecs` in the
 `outcomeMeta` info endpoint, often `Yes` and `No`", and the deployer page confirms the exception: for standalone
@@ -179,20 +182,27 @@ fraction (e.g. `"0.66"` for scalar payouts); outcomes that belong to a question 
 A payout model that branches on a yes-or-no result is correct only for question outcomes and is wrong for a standalone
 scalar.
 
-**Two settlement authorities exist and they are not the same counterparty.** Protocol-deployed recurring outcomes are
-"automatically deployed and settled by the protocol on a fixed cadence", and the current binary series settles by
-interpolation: the contract "settles to YES if and only if `markPrice0 + (settlementTime - t0) / (t1 - t0) *
-(markPrice1 - markPrice0) >= targetPrice` where `t0` and `t1` are the timestamps of mark price updates immediately
-before and after `settlementTime`". The multi-price variant uses "the same interpolation as binary markets". There is
-"guaranteed to be at most one recurring series for each `(seriesType, underlying, period)` combination".
+**Two settlement authorities exist and they are not the same counterparty.** Deployer-created outcomes are settled by
+their deployer, through the `settleOutcome` and `settleQuestion2` actions, or by a sub-deployer the deployer authorised
+for that variant through `setSubDeployers`; the grant list is `registerStandaloneOutcomeFromTemplate`,
+`registerQuestionFromTemplate`, `registerAndAssociateNamedOutcomeFromTemplate`, `settleOutcome` and `settleQuestion`,
+and "The `settleQuestion` grant authorizes the `settleQuestion2` action." A deployer carries a staking obligation:
+"Active deployers must maintain the staking requirement for as long as it remains an outcome deployer", and
+"Deactivation requires that the minimum deployer staking duration (183 days) has elapsed and that the deployer has no
+active outcomes."
 
-Deployer-created outcomes are settled by their deployer, through the `settleOutcome` and `settleQuestion2` actions, or
-by a sub-deployer the deployer authorised for that variant through `setSubDeployers`. The deployer is a permissionless
-party subject to a staking requirement and a 183-day minimum staking duration, not the protocol. So the answer to "who
-decides what this contract pays" is a property of the individual outcome, and a client crediting a settlement should
-record which authority set it. For a question, settlement is sequential and constrained: outcomes "may settle to `"0"`
-in any order", exactly one settles to `"1"`, and that one settling "automatically settles the fallback to 0 and settles
-the question".
+Some outcomes are instead deployed and settled by the protocol on a cadence. The HIP-4 page's example is, quoted: "The
+first market is a recurring binary outcome that settles daily at 06:00 UTC to the BTC mark price on HyperCore mark
+prices." **UNVERIFIED, and deliberately not restated here:** the settlement rule for protocol-deployed recurring
+outcomes, including any interpolation formula and any uniqueness constraint over series. An earlier pass recorded a
+specific formula for these; re-fetching the HIP-4 and deployer pages on 2026-08-25 did not find it on either, and the
+HIP-4 page points at a separate specification this pass did not read. Do not implement a recurring settlement rule
+from this file. Read `settledOutcome` from the venue instead, which is the design rule below in any case.
+
+So the answer to "who decides what this contract pays" is a property of the individual outcome, and a client crediting
+a settlement should record which authority set it. For a question, settlement is sequential and constrained: outcomes
+"may settle to `"0"` in any order", exactly one settles to `"1"`, and that one settling "automatically settles the
+fallback to 0 and settles the question".
 
 Treat a settlement observation the way any externally decided fact is treated: read `settledOutcome` from the venue
 before crediting, dedupe the credit on the `outcome` id durably, and express a correction as a reversing entry.
@@ -218,32 +228,30 @@ produce `template:<template_id>`, and "The `template:` prefix is reserved. Only 
 Parse the description into typed fields, assert the keys you require are present, and refuse to trade an outcome whose
 description you could not parse. A silently missing `expiry` is a position with no known end.
 
-## Split, merge, negate: value-moving actions that return no identifier
+## Split, merge, negate: value-moving actions whose payloads this file does not restate
 
-Four `userOutcome` actions on `POST https://api.hyperliquid.xyz/exchange` move value without an order:
+Actions exist that move value between collateral and shares without crossing the book. The HIP-4 page states it and
+names where they live, quoted: "Advanced users may also manually split and merge outcomes to convert between primary
+and dual balances", pointing at `exchange-endpoint.md#split-outcome` and `exchange-endpoint.md#negate-outcome` for the
+API examples. The operations are split, merge and negate, the last being how a holder of No shares across outcomes of
+one question converts into Yes shares of the others.
 
-| Action | Effect as documented |
-| --- | --- |
-| `splitOutcome` `{ "outcome": Number, "amount": String }` | "Split `X` quote tokens into `X` Yes and `X` No shares." |
-| `mergeOutcome` `{ "outcome": Number, "amount": String or null }` | "Merge `X` Yes and `X` No shares into `X` quote tokens." `null` means max. |
-| `mergeQuestion` `{ "question": Number, "amount": String or null }` | "Merge `X` Yes shares from each outcome associated to the same question into `X` quote tokens." |
-| `negateOutcome` `{ "question": Number, "outcome": Number, "amount": String }` | "Convert `X` No shares from an outcome associated with a question into `X` Yes shares of every other outcome associated with the question." |
+**UNVERIFIED, and it is the part a client would build against:** the exact action names, request field shapes and
+success-response shape. The exchange-endpoint page is long, and neither its HTML nor its `.md` form returned its
+outcome sections in this pass, so nothing here quotes them. An earlier pass recorded a four-row table of exact
+payloads and an acknowledgement-only success response carrying no identifier. That table has been removed rather than
+reproduced, because a request shape copied from an unread page is exactly the kind of claim that reaches production as
+code. Read the anchors above before you write the call.
 
-These are how a holder converts between collateral and shares without crossing the book, and how "users with No shares
-on different outcomes of the same question can redeem quote tokens before the underlying outcomes settle".
-
-**Every one of them is documented as returning `{'status': 'ok', 'response': {'type': 'default'}}`.** There is no
-identifier in the success response: no operation id, no receipt, nothing to query afterwards. The only identity the
-request carries is the `nonce`, documented on each action as "Recommended to use the current timestamp in
-milliseconds". A timeout on any of these four is therefore ambiguous in the hardest way, because the acknowledgement
-you did not receive contained nothing you could have looked up.
-
-Treat them exactly as an ambiguous external effect. Commit an intent row carrying the exact nonce and amount before the
-send, in a transaction that closes before the call rather than one enclosing it. On an unknown outcome, resolve by
-reading the balances the action would have changed, comparing them against the pre-send snapshot in the intent row, and
-never by resending with a fresh nonce. `mergeOutcome` and `mergeQuestion` accept `null` for "max", which makes a blind
-retry unsafe in a second way: the same request submitted twice against a changed balance is not the same instruction.
-Send an explicit amount on any path that can retry.
+What survives without the payload shapes is the design rule, and it does not depend on them. These are value-moving
+external effects reached over a network, so treat every one as ambiguous on timeout. Commit an intent row carrying the
+exact nonce and amount before the send, in a transaction that closes before the call rather than one enclosing it. On
+an unknown outcome, resolve by reading the balances the action would have changed, comparing them against a pre-send
+snapshot stored in that intent row, and never by resending with a fresh nonce. **Verify before you rely on it whether
+the success response carries any identifier at all**; if it does not, that balance comparison is your only resolution
+path and the intent row is the only handle you will hold. If any variant accepts a "max" sentinel in place of an
+explicit amount, a blind retry is unsafe in a second way, because the same request submitted twice against a changed
+balance is not the same instruction. Send an explicit amount on any path that can retry.
 
 ## Fees: a base rate times a deployer scale, and no maker rebate
 
@@ -290,9 +298,15 @@ Each of these is a gap in what the official pages establish, not a thing I decid
 - **Merged book on the market-data channels.** Whether an `l2Book` or `trades` subscription on a `#<encoding>` coin
   returns the merged book or one leg of it is not stated on any page read here. Verify before treating a one-sided
   depth snapshot as total liquidity.
-- **`settleQuestion`.** The page says "The original `settleQuestion` variant is discontinued" while the
+- **`settleQuestion`.** The original `settleQuestion` variant is discontinued in favour of `settleQuestion2`, while the
   `setSubDeployers` grant is still spelled `settleQuestion` and "authorizes the `settleQuestion2` action". Read that as
   evidence that action names in this surface change in place, and pin the variant you send.
+- **The split, merge and negate action payloads and their success response.** Named in that section above.
+  The exchange-endpoint page did not return its outcome sections in this pass, so no request shape and no response
+  shape is quoted anywhere in this file. Read them from the page before writing the call.
+- **Protocol-deployed recurring settlement.** How a recurring outcome's `settleFraction` is determined is not restated
+  here. The only sentence this pass could verify is the daily-06:00-UTC BTC example quoted above, and the HIP-4 page
+  refers to a separate specification for the rest.
 
 ## Assertions to write
 
@@ -330,7 +344,8 @@ def test_flat_sell_of_yes_reserves_the_complement(keeper):
     assert keeper.reserved_collateral == Decimal("60")
 
 def test_user_outcome_action_commits_intent_before_the_send(db, gateway):
-    # the success response carries no identifier; the nonce in the committed row is the only handle
+    # asserts our own recovery path, which holds whatever the response shape turns out to be:
+    # the committed nonce and pre-send balance snapshot resolve the timeout, not a resend
     intent = gateway.split_outcome(outcome=7, amount=Decimal("100"))
     assert db.committed(intent.nonce)          # readable by another process, not a flush
     gateway.fail_next_response_with_timeout()

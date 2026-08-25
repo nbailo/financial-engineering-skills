@@ -117,10 +117,11 @@ the status string alone.
 
 Two things must be established per venue before a market closes on you, and neither is safe to infer.
 
-**What happens to resting orders.** Kalshi documents a reactivation transition from `inactive` back to `active` which,
-quoted, "cancels all resting orders", so a market can round-trip through a state that clears your book without any
-instruction from you. Whether the transition to `closed` does the same is a separate question in the same document, and your
-handler needs an answer for both. Treat a resting order that vanishes without a cancellation you sent as an event to book,
+**What happens to resting orders.** Kalshi documents a reactivation transition from `inactive` back to `active` where,
+quoted, "All resting orders are cancelled on this reactivation", so a market can round-trip through a state that clears
+your book without any instruction from you. Its close path is documented separately and differently: "Once `close_time`
+passes, all order operations, including cancellations, are rejected with `MARKET_INACTIVE`." Two different mechanisms,
+and your handler needs an answer for both. Treat a resting order that vanishes without a cancellation you sent as an event to book,
 not an inconsistency to reconcile away.
 
 **Which states accept a cancel.** A cancel is normally the always-safe action for an ambiguous order, and near settlement it
