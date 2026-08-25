@@ -12,6 +12,7 @@ Repo budgets (docs/architecture.md):
   - SKILL.md <= 500 lines; description <= 430 chars; suite total <= 3000 chars,
     because the skill listing budget is shared with every other suite installed.
   - AGENTS.md <= 2 KB: it carries routing discipline only, never financial rules.
+  - skills/ holds exactly the six installed skills; advanced/ is not part of the product.
   - references/ one level deep; any reference over 100 lines carries its own
     table of contents, because a partially-read file must still reveal structure.
 
@@ -31,10 +32,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LEGAL_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 RESERVED = ("anthropic", "claude")
-MAX_SKILL_LINES = 500
+MAX_SKILL_LINES = 220   # a SKILL.md is loaded whole on every activation
 MAX_DESC = 430
 SPEC_MAX_DESC = 1024
-TOTAL_DESC_BUDGET = 3000
+TOTAL_DESC_BUDGET = 2600
 MIN_REF_LINES = 120
 MIN_REF_PROSE_WORDS = 400
 AGENTS_BUDGET = 2048   # routing reinforcement only; a rule layer cannot fit in 2 KB
@@ -194,8 +195,7 @@ def check_skill(skill_md: Path) -> int:
 
 
 
-FINANCIAL_CHECK_LABELS = ("tier", "effect", "identity", "ambiguity", "authority",
-                          "recovery", "controls")
+SECTIONS = ("When to use", "When not to", "Workflow", "Invariants", "References", "Output")
 
 RULE_NAMES = (
     "the economic-diff gate",
@@ -279,32 +279,53 @@ def check_prose(md: Path, binding: bool) -> None:
         report(f"{rel}:{line} contains an em dash")
 
 
+
+def check_invariant_citations(skill_md: Path) -> None:
+    """A domain skill cites a money-core invariant by name and adds only the specialisation.
+
+    The hierarchy only works if the name resolves. A citation of a rule fin-money-core no longer
+    states sends the reader to nothing, and it is invisible: the prose still reads correctly.
+    """
+    if skill_md.parent.name == "fin-money-core":
+        return
+    core = ROOT / "skills" / "fin-money-core" / "SKILL.md"
+    if not core.is_file():
+        return
+
+    def norm(s: str) -> str:
+        return " ".join(s.split()).strip().rstrip(".:,").lower()
+
+    known = {norm(n) for n in re.findall(r"\*\*([A-Za-z][^*]{2,60})\*\*",
+                                        core.read_text(encoding="utf-8"))}
+    text = skill_md.read_text(encoding="utf-8")
+    for m in re.finditer(r"[Ss]pecialises \*([^*]+)\*", text):
+        if norm(m.group(1)) not in known:
+            line = text[: m.start()].count("\n") + 1
+            err(f"{skill_md.relative_to(ROOT)}:{line} cites *{' '.join(m.group(1).split())}*, "
+                f"which fin-money-core does not state")
+
 def check_structure(skill_md: Path) -> None:
-    """The workflow is the first thing an agent reads, so it is the first H2."""
+    """The six installed skills share one shape, so a reader with two of them loaded is never
+    guessing which section answers what.
+
+    Routing comes before the workflow on purpose: if the skill does not apply, everything after
+    the second section is wasted context, and "When not to" is what sends the agent elsewhere.
+    """
     text = skill_md.read_text(encoding="utf-8")
     rel = skill_md.relative_to(ROOT)
-    h2s = re.findall(r"(?m)^## (.+)$", text)
-    if not h2s:
-        err(f"{rel} has no H2 sections")
-        return
-    if h2s[0].strip().lower() != "workflow":
-        err(f"{rel} opens with '## {h2s[0]}' — the first H2 must be '## Workflow', "
-            f"because it is what tells the agent what to do")
-    if "FINANCIAL CHECK" not in text:
-        err(f"{rel} never shows the FINANCIAL CHECK block — it is the default output at T0 and T1")
-    else:
-        # Eight independent rewrites converged on this block. Pin it: a reader who has two
-        # skills loaded must not be shown two different default output contracts, and `tier`
-        # has to be emitted because it is what gates the T2+ escalation.
-        block = text.split("FINANCIAL CHECK\n", 1)[1].split("```", 1)[0]
-        labels = re.findall(r"(?m)^([a-z]+):", block)
-        if labels != list(FINANCIAL_CHECK_LABELS):
-            err(f"{rel} FINANCIAL CHECK labels are {labels}, expected "
-                f"{list(FINANCIAL_CHECK_LABELS)}")
-        if "UNRESOLVED: <control> (<why>)" not in block:
-            err(f"{rel} FINANCIAL CHECK is missing the UNRESOLVED form "
-                f"'UNRESOLVED: <control> (<why>)' — a described control with no location "
-                f"is the defect this line exists to catch")
+    h2s = [h.strip() for h in re.findall(r"(?m)^## (.+)$", text)]
+    if h2s != list(SECTIONS):
+        err(f"{rel} sections are {h2s}, expected {list(SECTIONS)}")
+
+    if "FINANCIAL CHECK" in text:
+        err(f"{rel} still shows the retired FINANCIAL CHECK block. v0.3 output is one entry per real "
+            f"finding (FINDING / WHY / EVIDENCE / FIX / TEST), emitted only where a finding exists")
+    for label in ("FINDING", "EVIDENCE", "FIX"):
+        if label not in text:
+            err(f"{rel} never shows the {label} line of the default output")
+    if re.search(r"(?m)^\s*\|?\s*T[0-3]\b", text) or "Financial tier:" in text:
+        err(f"{rel} still uses the T0-T3 tier scale. v0.3 reports two orthogonal fields: "
+            f"authority (EXTERNAL|SELF) and exposure (own|customer|record)")
 
 
 def main() -> int:
@@ -354,10 +375,25 @@ def main() -> int:
         check_prose(ref, binding=True)
     for skill_md in skills:
         check_structure(skill_md)
+        check_invariant_citations(skill_md)
     for md in sorted((ROOT / "docs").glob("*.md")) + sorted(ROOT.glob("examples/**/*.md")) \
             + [ROOT / "README.md"]:
         if md.is_file():
             check_prose(md, binding=False)
+
+    installed = {p.parent.name for p in skills}
+    expected = {"fin-money-core", "fin-exchange-integration", "fin-payments",
+                "fin-ledger", "fin-onchain", "fin-verification"}
+    if installed != expected:
+        err(f"skills/ must hold exactly the six installed skills. "
+            f"unexpected: {sorted(installed - expected) or 'none'}; "
+            f"missing: {sorted(expected - installed) or 'none'}")
+    # An installed copy contains skills/ only, so a LINK into advanced/ dangles for every user.
+    # Naming it in prose is fine and is how "When not to" routes a reader away.
+    for md in ROOT.glob("skills/**/*.md"):
+        body = md.read_text(encoding="utf-8")
+        if re.search(r"\]\([^)]*advanced/", body) or re.search(r"(?m)^\s*\[[^\]]+\]:\s*\S*advanced/", body):
+            err(f"{md.relative_to(ROOT)} links into advanced/, which is not installed with the product")
 
     agents = ROOT / "AGENTS.md"
     if not agents.is_file():
