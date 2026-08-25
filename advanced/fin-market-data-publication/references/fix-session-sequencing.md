@@ -1,5 +1,14 @@
 # FIX session sequencing and recovery
 
+> **Provenance**
+> provider: FIX Trading Community · surface: the FIX session layer as a publisher uses it: `MsgSeqNum`, Resend Request, Sequence Reset in gap fill and in reset mode, logon sequence resets, the duplicate and resend flags, and FIXP session identity
+> version: FIX 4.4 session layer plus FIXP, as cited in the body. No specification edition, errata level or extension pack was recorded.
+> verified_at: not established
+> sources: https://www.fixtrading.org/standards/ · https://www.onixs.biz/fix-dictionary/4.4/msgType_4_4.html
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. Some of the session-layer text it paraphrases was re-read on 2026-08-25 for the order-entry FIX reference in the exchange-integration skill, but that pass covered that file's sentences, not these, and nothing here was compared against it. The URLs above are where a recheck starts; both resolved on 2026-08-25, and neither was read against a sentence in this file.
+> revalidate_when: your counterparty moves above FIX 4.4, or to FIXP with a different session identity; a venue you publish to disables Resend Request; the specification changes what a Sequence Reset in reset mode may do, or what a gap fill must carry.
+
 Protocol behaviour for feeds that ride a FIX or FIXP session rather than a multicast transport. The session
 layer, not the application message, owns identity, ordering and gap recovery here, so the sequencing contract
 you publish is largely a set of decisions about how you use the session protocol. Read this when the

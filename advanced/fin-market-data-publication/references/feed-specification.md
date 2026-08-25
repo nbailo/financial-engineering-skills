@@ -24,11 +24,13 @@ SEQUENCING
   [ ] Whether packets carry multiple messages, and how the count is encoded
   [ ] Every additional counter published, its scope, and what it is NOT valid for
 CONTROL
-  [ ] Heartbeat interval and what a heartbeat carries
+  [ ] Heartbeat interval, what a heartbeat carries, and whether it consumes a sequence number
+  [ ] What a heartbeat covers: the channel, or the state of any one instrument
   [ ] End-of-session semantics and how long recovery requests remain serviceable
 RESET
   [ ] The reset message and its trigger
   [ ] Exactly what a reset clears, what it renumbers, and what it does NOT resend
+  [ ] How ONE instrument is withdrawn and restored, and what that event invalidates
 SNAPSHOT
   [ ] The join key, and which stream's sequence it names
   [ ] Direction of the join: which buffered updates are dropped and which applied
@@ -38,11 +40,14 @@ GAP
   [ ] Recovery address, request format, retained depth, truncation rule, rate limit
   [ ] What a gap invalidates: this instrument, or every book on the channel
 CONTENT
-  [ ] Which message types are book-eligible; which are volume-eligible; the printable flag
+  [ ] Which message types are book-eligible; which are volume-eligible; the whole volume-bearing set
+  [ ] Which rulebook decides eligibility, and which figures are computed from which set
   [ ] Every deliberately-constant field, its value, and its effective date
-  [ ] Conflation policy: which streams, under what conditions, state- or delta-encoded
+  [ ] Conflation policy: which streams, state- or delta-encoded, the interval, the bound, the chain link
+  [ ] The slow-consumer policy per stream, and the recovery load it implies
 TIME
   [ ] Each timestamp's meaning, epoch, timezone, DST rule, and clock discipline
+  [ ] Which measurement each supports: event age, send latency, receive latency
   [ ] Which timestamp is authoritative for staleness
 ```
 
@@ -54,9 +59,11 @@ the open. Omit the scope of a secondary counter and consumers gap-detect on the 
 counter used as a channel gap detector reports a gap on every instrument that was simply quiet.
 
 **Control.** Omit the heartbeat interval and every consumer picks their own liveness timeout, so the
-false-positive rate of the whole consumer population is a number you do not know and cannot change. Omit the
-end-of-session window and consumers stop requesting recovery while the ranges are still available, or keep
-requesting after the store has dropped them.
+false-positive rate of the whole consumer population is a number you do not know and cannot change. Omit what
+the heartbeat covers and consumers read a channel-level liveness signal as a statement about each instrument
+on it, which it is not: a heartbeat cannot age or invalidate the book they hold for one symbol, and only an
+event scoped to that symbol can. Omit the end-of-session window and consumers stop requesting recovery while
+the ranges are still available, or keep requesting after the store has dropped them.
 
 **Reset.** Omit what the reset clears and consumers keep a session volume, a high, a low or an indicative
 price that has no trades behind it. Omit that it renumbers a counter and a consumer's monotonicity check
@@ -81,6 +88,8 @@ reports on a value that means nothing.
 twice a year. Omit the clock discipline and the age they compute carries an unbounded constant error, so a
 staleness gate built on it either never fires or always fires. Omit which timestamp is authoritative and they
 will use the one that is always present, which is the send time, which is the one retransmission invalidates.
+Say which measurement each timestamp is for, too, because event age, send latency and receive latency are
+three different subtractions and only the first belongs in a gate on content.
 
 ## Facts that cannot be derived from the wire format
 

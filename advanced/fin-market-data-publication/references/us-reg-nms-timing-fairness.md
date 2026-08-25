@@ -1,5 +1,18 @@
 # Timing fairness under US Regulation NMS (US-specific)
 
+> **Provenance**
+> provider: US Securities and Exchange Commission · surface: Regulation NMS Rule 603(a) as codified, and the 2012 settled administrative proceeding that applied it to a venue's fan-out architecture
+> version: 17 CFR 242.603 as in force on 2026-08-25; SEC Release No. 34-67857, September 14, 2012, Administrative Proceeding File No. 3-15023
+> verified_at: 2026-08-25
+> sources: https://www.sec.gov/files/litigation/admin/2012/34-67857.pdf
+> · https://www.sec.gov/news/press-release/2012-2012-189htm
+> · https://www.ecfr.gov/current/title-17/section-242.603
+> pinned: the order was downloaded and read as text on 2026-08-25; the eCFR page is the current edition served that day.
+> verified: every sentence in quotation marks in this file was read in the order on 2026-08-25. The sentence describing what the rule prohibits is the order's own, in section III. The four findings quoted are the order's: the internal architecture giving the depth-of-book feed a faster path than the path to the Network Processor, the second feed structured to operate independently of that system, the software issue that delayed the Network Processor path during periods of high trading volume in 2010, and the failure to retain the files carrying the transmission times. The disparity range and the 5,000,000 dollar civil money penalty are in the order; "first-ever SEC financial penalty against an exchange" is the SEC's own headline on the press release. The current text of 603(a)(1) and (a)(2), with the "fair and reasonable" and "not unreasonably discriminatory" standards, was read on eCFR.
+> corrected: one quotation was reshaped to the order's wording, which is that NYSE structured the other proprietary feed to operate independently of the system that sent data to the Network Processor.
+> unverified: the codified rule text does not itself state the timing prohibition; that reading is the Commission's, given in the Regulation NMS adopting release at 70 Fed. Reg. 37,496, 37,567 and 37,569, and quoted in the order. The adopting release itself was not opened here, so it is cited at second hand. Nothing was checked about any later enforcement action, about the market data infrastructure amendments now restructuring paragraph (b), or about how another jurisdiction's rules compare. The publisher rules and the record shape proposed below are this repository's engineering advice, not the SEC's text.
+> revalidate_when: 17 CFR 242.603 is amended again; the Commission brings a newer proprietary-versus-consolidated timing action, or issues guidance that supersedes the 2012 findings; the consolidated-feed architecture the rule assumes is replaced by the competing-consolidator model; your venue comes under a regulator other than the SEC.
+
 **This file states a United States requirement and applies only to venues subject to it.** Regulation NMS
 governs exchanges and other trading centres in the US national market system for equities and options. Most
 venues in the world are not subject to it, and nothing in this file should be read as a universal property of
@@ -29,6 +42,13 @@ Reg NMS Rule 603(a) "prohibits an exchange from releasing data relating to quote
 through proprietary feeds before it sends its quotes and trade reports for inclusion in the consolidated
 feeds."
 
+That sentence is the Commission's, from the order discussed below, and it is worth knowing that it is a
+reading rather than a transcription. The codified text at 17 CFR 242.603(a) says only that market data is
+distributed on terms that are "fair and reasonable" and "not unreasonably discriminatory"; the timing
+prohibition comes from the Regulation NMS adopting release, which states that "independently distributed data
+could not be made available on a more timely basis than core data is made available to a Network processor."
+A venue arguing about the boundary argues about that release, not about the two standards.
+
 Two structural facts about the US market make this rule necessary and give it its shape. Consolidated quote
 and trade data is distributed through processors operated on behalf of the whole market, and exchanges also
 sell their own proprietary depth-of-book feeds carrying the same facts and more. A venue that reaches its own
@@ -45,7 +65,7 @@ recognise without any regulatory knowledge:
 | Finding | The code shape that produces it |
 |---|---|
 | "NYSE's internal architecture gave its real-time depth-of-book proprietary feed a path to customers that was faster than the path used to send quotes to the Network Processor" | Two sinks fed from separate queues after a fan-out, with different serialisation cost |
-| A second proprietary feed "was structured to operate independently of the system that sent data to the Network Processor" | A sink that does not inherit the shared path's delays, so it wins whenever that path is slow |
+| "NYSE structured the other proprietary feed to operate independently of the system that sent data to the Network Processor" | A sink that does not inherit the shared path's delays, so it wins whenever that path is slow |
 | A load-dependent software defect delayed the consolidated path under high volume | Backpressure applied to one sink only, and it was the one that must not be last |
 | NYSE could not prove compliance: it had not retained the transmission-timing files | No durable per-message record of when each sink was handed the bytes |
 

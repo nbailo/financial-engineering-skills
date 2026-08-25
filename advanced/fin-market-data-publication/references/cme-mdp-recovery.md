@@ -1,5 +1,14 @@
 # CME MDP 3.0: sequencing, reset, snapshot and arbitration
 
+> **Provenance**
+> provider: CME Group · surface: Market Data Platform (MDP) 3.0: the two sequence counters, channel reset, snapshot and incremental recovery, and A/B line arbitration
+> version: MDP 3.0. The original pass recorded no document revision or publication date, so there is no edition to compare a recheck against.
+> verified_at: not established
+> sources: https://www.cmegroup.com/market-data/
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. Two things make a recheck harder than usual and are worth knowing before you rely on a quotation here: no URL for the specific MDP 3.0 market data and market recovery documents was recorded when the file was written, and cmegroup.com refused a non-browser client on 2026-08-25 with HTTP 403, so even the location above was not opened. Start from the market data index in a browser and find the MDP 3.0 pages in CME's client systems documentation.
+> revalidate_when: CME publishes an MDP version above 3.0; the Channel Reset message changes what it clears or renumbers; the snapshot stops naming its join point in the incremental stream; the published A/B arbitration contract changes.
+
 Protocol behaviour for CME's Market Data Platform, and the model worth copying when you design your own
 recovery. MDP is the most completely specified public example of the four mechanisms in this domain: two
 independent counters, an explicit reset that enumerates what it invalidates, a snapshot that names its join

@@ -1,15 +1,31 @@
 # Conflation and backpressure
 
+> **Provenance**
+> provider: Binance, cited for one worked example of a covered-range field
+> surface: spot WebSocket diff depth stream
+> version: the documentation served at the URL below on 2026-08-25
+> verified_at: 2026-08-25
+> sources: https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams
+> verified: the field descriptions quoted below, `U` as "First update ID in event" and `u` as "Final update ID
+> in event", and that the stream is described as depth updates "used to locally manage an order book".
+> unverified: the sentence describing each event as the absolute quantity for a price level, and the futures
+> stream's third field carrying the previous event's final update id. Neither could be retrieved in this pass,
+> because the futures documentation URL redirected to the docs index, so both are labelled inline below.
+> Nothing here is a claim about how any Binance stream behaves today beyond the two quoted field descriptions.
+> revalidate_when: the diff depth payload gains or renames a covered-range field, or the futures chain-link
+> field is confirmed or removed.
+
 What a publisher is allowed to drop, and what it owes a consumer once it has dropped something. A slow
 consumer forces a choice, and the choice is a correctness decision rather than a performance one: two of the
 four available responses leave the consumer able to reconstruct a correct book, one leaves them provably
-unable to, and one back-pressures the matcher. This file decides which is which, and states what has to be
-published alongside a conflated stream so that a consumer can still detect loss.
+unable to, and one is legitimate or catastrophic depending on where the backpressure ends up. This file
+decides which is which, and states what has to be published alongside a conflated stream so that a consumer
+can still detect loss.
 
 ## Contents
 
 - The four responses to a slow consumer, and what each one leaves reconstructable
-- State-encoded and delta-encoded feeds: the one property that decides whether conflation is legal
+- The three conditions conflation has to meet: equivalent, bounded, recoverable
 - The covered-range identifier, and why a contiguous sequence is not a gap check on a conflated feed
 - What conflation destroys even when it is legal: trades, message counts, ordering signals
 - Load-dependent conflation, and why it makes the feed's semantics a function of load
@@ -22,22 +38,43 @@ published alongside a conflated stream so that a consumer can still detect loss.
 
 | Strategy | What the consumer can still reconstruct | Legitimate when | Must be published |
 |---|---|---|---|
-| Block the publisher | Everything | Never on a feed: it back-pressures the matching engine | n/a |
-| Disconnect the consumer | Nothing, until they recover | Always acceptable: a gap is visible and recoverable | The disconnect reason and the recovery entry point |
+| Block the publisher | Everything | Only where a bounded buffer stops the backpressure before it reaches the sequencer or the matcher | The bound, and what happens when it is reached |
+| Disconnect the consumer | Nothing, until they recover | The default, provided the recovery path can absorb the reconnects the policy causes | The disconnect reason and the recovery entry point |
 | Conflate **state** (replace the pending update for a key with its latest absolute value) | The book at each observed instant, **not** the path between instants | The feed is absolute-quantity per key | That intermediate states are unobservable, plus a covered-range identifier per event |
 | Conflate **deltas** (drop some) | Nothing correct, ever | Never | n/a |
 
-Blocking is disqualified for a reason that has nothing to do with the consumer. A publisher that blocks on a
-full socket buffer applies backpressure through the fan-out into the sequencer and from there into the
-matcher, so one slow subscriber changes the rate at which orders are matched for everybody. The slow consumer
-becomes a participant in price formation. Disconnecting is the honest answer: the consumer loses the stream,
-knows it lost the stream, and re-enters through a recovery path you already had to build.
+Blocking is disqualified by where the backpressure ends, not by anything about the consumer. A publisher that
+blocks on a full socket buffer applies backpressure through the fan-out into the sequencer and from there into
+the matcher, so one slow subscriber changes the rate at which orders are matched for everybody and becomes a
+participant in price formation. That is the case to refuse. Where a bounded buffer terminates the chain before
+the sequencer, an archive, a replay sink or a downstream fan-out process being the usual cases, blocking is a
+legitimate choice and the bound is the thing to publish. Trace the chain to its end before ruling either way,
+because "blocking never works" is a claim about a topology rather than about blocking.
+
+Disconnecting is the honest default: the consumer loses the stream, knows it lost the stream, and re-enters
+through a recovery path you already had to build. It is not free, and calling it always correct hides the
+cost. Disconnects correlate, because the burst that made one consumer slow made all of them slow, so the
+policy has to be sized against the reconnect storm it produces rather than against one reconnect. A recovery
+path that cannot absorb that storm converts a slow-consumer incident into a recovery-path incident at the
+moment of highest load. And where a consumer is entitled to the feed by rule or contract, the entitlement does
+not lapse because they were slow, so the answer there is a documented degraded mode rather than silence.
 
 ## The property that decides whether conflation is legal
 
-**Conflation is safe only on a state-encoded feed.** A state-encoded event carries the absolute value for a
-key, so the latest event for that key is sufficient and every earlier one is redundant. A delta-encoded event
-carries a change, so every event is load-bearing and dropping one corrupts the book permanently.
+**Conflation is legitimate only where it is semantically equivalent, bounded and recoverable.** State
+encoding buys the first condition and neither of the other two, which is why a feed can be state-encoded and
+still be conflated wrongly.
+
+- **Equivalent.** A state-encoded event carries the absolute value for a key, so the latest event for that key
+  is sufficient and every earlier one is redundant. A delta-encoded event carries a change, so every event is
+  load-bearing and dropping one corrupts the book permanently. Equivalence is per field rather than per
+  message: one field carrying a change, on an otherwise absolute message, makes that message unconflatable.
+- **Bounded.** A published maximum interval and a published queue bound, so the age of what a consumer holds
+  has a ceiling they can reason about. Unbounded conflation is indistinguishable from a stalled stream during
+  exactly the burst that caused it, which is the period a consumer most needs to see.
+- **Recoverable.** Every conflated event carries the range of updates it stands for and a link a consumer can
+  check against the event they last received. Without both, a drop is undetectable and a snapshot cannot be
+  joined to the stream, so nothing repairs the state afterwards.
 
 The corruption is undetectable from the consumer side, which is what makes it the worst failure in this file.
 The transport sequence is still contiguous, because you dropped the message before it was numbered, or
@@ -53,17 +90,20 @@ is not.
 ## The covered-range identifier
 
 A conflated event has to say which updates it stands for, or a consumer cannot join it to a snapshot and
-cannot detect a dropped event at all. Binance's depth stream is the worked example of doing this correctly:
-"The data in each event is the absolute quantity for a price level", each event carries the range of update
-ids it covers as a first and last id, and the futures stream adds a third field carrying the previous event's
-last id.
+cannot detect a dropped event at all. Binance's spot diff depth stream is the worked example of the range
+half: its payload carries `U`, documented as "First update ID in event", and `u`, "Final update ID in event",
+on a stream described as depth updates "used to locally manage an order book". The chain half, a field
+carrying the previous event's final update id, exists on the futures diff depth stream, and that field and the
+sentence describing each event as the absolute quantity for a price level were **not re-verified in this
+pass**, because the futures documentation URL redirected to the docs index on 2026-08-25. Treat the futures
+detail as a shape to look for and check it before copying it.
 
-The third field exists precisely because conflation defeats the naive gap check. With only a first and last
-id per event, a consumer checks that this event's first id follows the previous event's last id. That check
-passes across a server-side coalescing boundary even when the coalescing dropped an event, because the
-surviving event's range was widened to cover what was dropped. Carrying the previous event's last id
-explicitly turns the check into an assertion about the publisher's own chain rather than about arithmetic the
-publisher can widen at will.
+The chain field exists because conflation defeats the naive gap check, and that argument stands on its own.
+With only a first and last id per event, a consumer checks that this event's first id follows the previous
+event's last id. That check passes across a server-side coalescing boundary even when the coalescing dropped
+an event, because the surviving event's range was widened to cover what was dropped. Carrying the previous
+event's last id explicitly turns the check into an assertion about the publisher's own chain rather than about
+arithmetic the publisher can widen at will.
 
 Three consequences for your own feed:
 
@@ -122,8 +162,10 @@ a conflation policy is behaving as documented.
 ## What to publish, and the tests
 
 Publish the conflation policy per stream: whether the stream is conflated at all, whether it is state or delta
-encoded, the interval or trigger, the covered-range fields, and the fact that intermediate states are
-unobservable. Publish the disconnect reason codes and the recovery entry point for each.
+encoded, the interval or trigger, the queue bound, the covered-range fields, the chain link, and the fact that
+intermediate states are unobservable. Publish the disconnect reason codes, the recovery entry point for each,
+and, where blocking is the chosen policy on a stream, the buffer that terminates the backpressure and what
+happens when it fills.
 
 Three tests hold this in place:
 

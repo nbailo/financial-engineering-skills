@@ -43,6 +43,9 @@ figure computed from your own prints.
   the engine replays from. That is `fin-matching-engine`, loaded alongside this file when one change spans
   both. The seam is the sequencer: what the engine commits is the engine's, what leaves the process is this
   file's.
+- The change decides how a mark, index or oracle is selected, or how a margin, liquidation or risk engine
+  consumes one. That is risk-engine design. This file governs the publication of a figure, never the decision
+  to act on it.
 - The change is only amount arithmetic, rounding direction, operation identity or retry classification.
   `fin-money-core` states those in full.
 - The numbers never become an obligation and never leave the process: a backtest over recorded feed captures,
@@ -82,21 +85,30 @@ per-instrument counter detects that this instrument's updates are contiguous. Pu
 consumer must invalidate every book on any loss. Changing the scheme is a new feed version, never a quiet
 deploy. Specialises *operation identity*.
 
-**A control message with no payload still carries sequence.**
-A heartbeat is the only thing that distinguishes "nothing is trading" from "your delivery stopped", and the
-consumer's guess is always the first. Emit heartbeats through quiet periods at a stated interval, carrying the
-next expected sequence, and publish the interval: every consumer's liveness timeout derives from it, and
-tightening it later changes their false-positive rate with no message saying so. An end-of-session message
-commits that the sequence is closed. Serve recovery requests while the session drains, never emit further
-messages under a closed identity, and mint a new one instead.
+**A liveness signal is an obligation you publish; its encoding belongs to the protocol.**
+A heartbeat is what separates "nothing is trading" from "your delivery stopped", and a consumer with no
+liveness signal guesses the first. Emit one through quiet periods at a stated interval and publish the
+interval, because every consumer's liveness timeout derives from it. What it carries is a protocol decision:
+a payload-free packet carrying the next expected sequence, a session message that consumes a sequence number
+of its own, and a transport frame outside the sequence space are three different contracts, and gap arithmetic
+differs under each. Say which one you emit, and say what it covers. A heartbeat on a channel carrying many
+instruments states that the channel is alive and states nothing about any one instrument, so it can neither
+age nor invalidate the book a consumer holds for a single symbol. An end-of-session message commits that the
+sequence is closed: serve recovery while the session drains, never publish under a closed identity, and mint
+a new identity instead.
 
 **A reset is a message you send, never a fact a consumer infers from a counter going backwards.**
 Both arms a consumer can write are wrong after a silent reset, and the silent arm reaches production:
 rejecting a lower sequence as stale freezes the book at its pre-reset state while trading continues, and
 nothing logs an error. Emit the reset before the first message carrying the new numbering, in the same ordered
 stream, not on a side channel and not as an operations notice. Enumerate what it clears, what it renumbers and
-what it does not resend. The publisher-side mirror: the reset clears derived aggregates in the same commit
-that resets the counter, or you publish a session volume figure with no trades behind it.
+what it does not resend. The encoding is the protocol's: a control message on the incremental, a session-level
+sequence reset and a new session identity differ in what stays recoverable across them, so state which one you
+send. The publisher-side mirror: the reset clears derived aggregates in the same commit that resets the
+counter, or you publish a session volume figure with no trades behind it. Withholding one instrument is the
+same obligation at a smaller scope. Stop publishing a symbol silently and every consumer holds the last book
+you sent, indefinitely and with no error anywhere, because silence is what a quiet market looks like. Emit an
+explicit unavailable or invalidation event scoped to that instrument, and state what it invalidates.
 
 **A snapshot is the book as of a stated point in the incremental stream, and the point is stamped with the copy.**
 Without that point the snapshot is unusable, because the consumer cannot know which buffered updates it
@@ -132,47 +144,63 @@ one gap wedges forever at truncation. Treating a truncated response as a covered
 failing inside your own publisher: the cursor advances past a range it never covered. Session restart is the
 last resort, because a new identity strands everything unrecovered under the old one.
 
-**Conflation is safe only on a state-encoded feed, and it changes what the feed is.**
-Dropping one delta on a delta-encoded feed corrupts the book permanently with no gap visible anywhere: the
-sequence stays contiguous, so no consumer can detect it. Where the feed carries an absolute quantity per key,
-conflation is legitimate and every conflated event carries the range of updates it covers. Trades are never
+**Conflation is legitimate only where it is semantically equivalent, bounded and recoverable.**
+Equivalent: the surviving event leaves a consumer where the events it replaced would have left them, which
+holds when every field carries an absolute value for a key and fails on any field carrying a change. Bounded:
+a published interval and queue bound, so what a consumer holds has a stated maximum age rather than a
+load-dependent one. Recoverable: every event carries the range of updates it stands for and a link to the
+event before it, so a drop is detectable and a snapshot still joins. Miss one condition and the corruption is
+silent, because the sequence stays contiguous and no gap detector fires anywhere. Trades are never
 conflatable: each print is an economic fact with its own identity, and collapsing two destroys volume, VWAP
 and every trade-based signal. A conflated feed has last-value-cache semantics, so anything derived from the
 count or order of updates is invalid on it, and consumers build those things unless you say so. It must not
-vary silently with load, or a backtest built on quiet-period captures does not describe the open. Blocking the
-publisher is never the answer, because it back-pressures the matcher; disconnecting a slow consumer always is,
-because a gap is visible and recoverable.
+vary silently with load, or a backtest built on quiet-period captures does not describe the open. Neither
+answer to a slow consumer is unconditional: blocking is disqualified wherever the backpressure can reach the
+matcher, since one subscriber then sets the rate at which orders match for everybody, and it is available
+where a bounded buffer terminates that chain first. Disconnecting is the honest default because a gap is
+visible and recoverable, and it still has a cost to size, because the recovery path must absorb every
+reconnect the policy causes, including the correlated ones.
 
-**One feed, two filters: book-eligible and volume-eligible are different sets.**
-Publish which filter applies to which downstream computation. Trade prints are not book events, and counting
+**One event, several eligibility questions, and different documents answer them.**
+Whether an execution is published as a print, whether it counts toward the volume figure you report, whether
+it updates a last, high or low, and whether a downstream index or settlement benchmark admits it are separate
+answers. Your own specification decides what you publish and what you count; a tape or plan rulebook decides
+what the official record counts; a methodology you do not write decides the last. Publish which filter applies
+to which computation and compute each figure from its own set. Trade prints are not book events, and counting
 them as book updates double-counts depth. An execution a later bulk print will cover is excluded from
-published volume, or the same quantity is counted twice. Matches between one beneficial owner are not volume:
-CFTC v. Coinbase, March 2021, 6.5M USD, where self-matched volume propagated into third-party indices. A field
-you deliberately hold constant is part of the contract. State the constant and its effective date, and
-populate it from a named encoder constant with a test asserting constancy. You cannot un-constant it on the
-same feed version: the day it carries real data, every consumer that special-cased it silently produces
-different output and nothing says the semantics changed. A field constant by accident becomes variable by
-accident.
+published volume, or the same quantity is counted twice. Whether a match between accounts under one beneficial
+owner is printed, counted or excluded is a rulebook question with different answers in different markets, so
+name the rule you are applying and apply it in one place. A field you deliberately hold constant is part of
+the contract. State the constant and its effective date, and populate it from a named encoder constant with a
+test asserting constancy. You cannot un-constant it on the same feed version: the day it carries real data,
+every consumer that special-cased it silently produces different output and nothing says the semantics
+changed. A field constant by accident becomes variable by accident.
 
-**Staleness is computed from the time the event happened, not the time you sent it.**
-Three timestamps do three jobs: event time set by the matcher when the book event occurred, send time set at
-serialisation, receive time set by the consumer. Only event time belongs in `now - t > max_age`. Send time is
-disqualified by retransmission, since a resent message carries a fresh send time for old content. Receive time
-is disqualified because it exists only when a message arrives, so it can never detect a publisher that went
-quiet; that is the heartbeat's job. For the subtraction to be computable at all, publish an unambiguous epoch,
-timezone and daylight-saving rule, and state what your clock is disciplined to. Leave either unstated and the
-age carries an unbounded constant error, so a `max_age` gate either never fires or always fires.
+**Four questions, four measurements, and one timestamp cannot answer another's.**
+Event age is now minus the event time the matcher set, and it is the only input to a staleness gate on
+content. Send latency is send time minus event time, and it measures how long your own publisher held the
+event. Receive latency is receive time minus send time, exists only for messages that arrived, and means
+nothing across two clocks disciplined to different references. Transport liveness is that nothing arrived
+within the published heartbeat interval, and it needs no timestamp at all. The defect is answering one
+question with another's measurement: send time is disqualified as an age input because retransmission gives
+old content a fresh send time, and receive time can never detect a publisher that went quiet. Publish an
+unambiguous epoch, timezone and daylight-saving rule per timestamp, state what your clock is disciplined to,
+and say which timestamp is authoritative for staleness. Leave any of those unstated and the age carries an
+unbounded constant error, so a `max_age` gate either never fires or always fires.
 
 **The aggregate you publish is checked on the path that publishes it.**
 The default shape of a hand-written price level is wrong here: an aggregate decremented with unchecked
 unsigned subtraction, guarded by an assertion the release build compiles out, on the path that publishes
 depth. The rationalisation is always that the quantity cannot exceed the aggregate by construction. It was by
 construction; drift is the bug you are hunting. Use a checked subtraction that returns an error, and on breach
-freeze at the smallest scope containing it, withhold the level, and never clamp to zero, because a clamp is
-fabricated depth with no exception attached. Where a panic would abandon in-flight obligations and you
-saturate instead, emit the saturation as an event on the feed. Assert `best_bid <= best_ask` on every
-top-of-book publish: a crossed book is arithmetically impossible, and NASDAQ published one to the world on
-18 May 2012 when the Facebook cross was marked in error. Specialises *rounding and conservation*.
+freeze at the smallest scope containing it, withhold the level behind an explicit invalidation event, and
+never clamp to zero, because a clamp is fabricated depth with no exception attached. Where a panic would
+abandon in-flight obligations and you saturate instead, emit the saturation as an event on the feed. A
+top-of-book assertion states your rulebook rather than a law of arithmetic: `best_bid <= best_ask` is right
+for a continuous executable book whose rules forbid a crossed state, and wrong during an auction, where
+interest that would execute rests on both sides until the auction runs, and on a venue whose rules permit a
+locked market. Assert what your rulebook forbids, gate it on the session state, and say which states it holds
+in. Specialises *rounding and conservation*.
 
 **Publication is deterministic, and the fan-out happens once, after the sequence is assigned.**
 The same committed inputs produce the same bytes in the same order on every replica and every replay, or your
@@ -182,17 +210,16 @@ A fan-out to two sinks with different queueing or serialisation cost is a review
 or not either sink is currently slow, because the disparity is structural and shows up under the load you did
 not test. Whether one destination must be no later than another depends on the venue's rules and its
 regulator; where that duty exists, the evidentiary failure is charged separately from the timing failure.
-Specialises *replay*.
+Specialises *reconciliation* in the form it takes with no external authority: those retained records are the
+only copy a later comparison can read.
 
-**A number you publish and also act on is an input an adversary can pay to move.**
-Separate the number that reports from the number that decides, and name which is the record for each
-calculation. A statistic you compute from your own feed and then consume in your own risk, margin, valuation
-or auction logic is an input any participant can bid the cost of moving. Size the controls so the cost of
-moving it exceeds the payoff of the position it settles, and publish the inputs and the method, because a
-consumer who cannot recompute your figure cannot tell it moved for a reason that was not trading. Hyperliquid's
-JELLY market, 26 March 2025: a thinly traded price the venue's own risk calculations consumed was moved
-deliberately, and the venue absorbed the result. Nor is the exposure confined to your perimeter, because where
-your figure feeds somebody else's index your filter errors leave with it. Specialises *authority*.
+**A statistic you publish is a method, and the method is part of the feed.**
+Name which number is the record for each calculation, and separate the number that reports from the number
+that decides. Publish the input set, the eligibility filter, the calculation and the effective date: a
+consumer who cannot recompute your figure cannot tell that it moved for a reason that was not trading, and
+neither can you, because the figure comes back as evidence about itself. The exposure does not stop at your
+perimeter, since where your figure feeds somebody else's index or settlement your filter errors leave with it.
+Specialises *authority*.
 
 ## References
 
@@ -201,10 +228,10 @@ The triggers are mechanical on purpose. A change to conflation policy must not l
 
 | file | read it immediately when |
 |---|---|
-| [conflation-and-backpressure.md](references/conflation-and-backpressure.md) | the code contains `conflate`, `coalesce`, a last-value cache, a ring buffer that overwrites, a slow-consumer drop or disconnect policy, an outbound queue high-water mark, or an event carrying a range of covered update ids such as `U` / `u` / `pu` |
-| [emit-path-assertions.md](references/emit-path-assertions.md) | the code contains `total_qty`, `debug_assert`, `-=` or `checked_sub` / `saturating_sub` on an unsigned aggregate, `best_bid` / `best_ask`, a top-of-book publish, or a depth figure recomputed anywhere other than where it is emitted |
+| [conflation-and-backpressure.md](references/conflation-and-backpressure.md) | the code contains `conflate`, `coalesce`, a last-value cache, a ring buffer that overwrites, a slow-consumer drop or disconnect policy, an outbound queue bound or high-water mark, or an event carrying a range of covered update ids such as `U` / `u` / `pu` |
+| [emit-path-assertions.md](references/emit-path-assertions.md) | the code contains `total_qty`, `debug_assert`, `-=` or `checked_sub` / `saturating_sub` on an unsigned aggregate, `best_bid` / `best_ask`, a top-of-book publish, a crossed or locked book check, an instrument freeze or withhold path, or a depth figure recomputed anywhere other than where it is emitted |
 | [feed-specification.md](references/feed-specification.md) | you are writing or reviewing the document consumers read, onboarding a first external consumer, versioning a feed, or any slot in the feed contract cannot be answered from the repository |
-| [nasdaq-itch-and-moldudp64.md](references/nasdaq-itch-and-moldudp64.md) | the code contains `MoldUDP64`, `SoupBinTCP`, `MessageCount`, a 10-byte session id, `0xFFFF`, a re-request server, `ITCH`, `TotalView`, `OUCH`, `Printable`, `Order Reference Number`, `Buy/Sell Indicator`, or "nanoseconds since midnight" |
+| [nasdaq-itch-and-moldudp64.md](references/nasdaq-itch-and-moldudp64.md) | the code contains `MoldUDP64`, `SoupBinTCP`, `MessageCount`, a 10-byte session id, `0xFFFF`, a re-request server, `ITCH`, `TotalView`, `OUCH`, `Printable`, `Sale Condition`, a consolidated-tape or UTDF eligibility flag, a self-match or wash-trade exclusion, `Order Reference Number`, `Buy/Sell Indicator`, or "nanoseconds since midnight" |
 | [cme-mdp-recovery.md](references/cme-mdp-recovery.md) | the code contains `MDIncrementalRefresh`, `35=X`, `269=J`, `RptSeq`, `LastMsgSeqNumProcessed`, `TransactTime`, `ApplID`, SBE templates, a Market Recovery snapshot channel, MBP or MBO book depth, or A/B line arbitration |
 | [fix-session-sequencing.md](references/fix-session-sequencing.md) | the code contains `MsgSeqNum`, `ResendRequest`, `SequenceReset`, `GapFillFlag`, `ResetSeqNumFlag`, `PossDupFlag`, `OrigSendingTime`, `SendingTime`, FIXP, a session `UUID`, or a Not Applied message |
 | [us-reg-nms-timing-fairness.md](references/us-reg-nms-timing-fairness.md) | the venue is a US national market system equity or option venue, or the code contains `Reg NMS`, `603(a)`, `SIP`, a consolidated feed, a Network Processor, `CTA`, `UTP`, or a proprietary depth-of-book feed published alongside a consolidated one |
@@ -229,29 +256,32 @@ TEST      <the property to assert>
 
 A claimed control points at executable code and, where the risk needs it, a named test. A comment, a TODO, an
 uncalled helper or a design note describing a control is the same defect as the missing control, reported as
-`UNRESOLVED: <control> (<why>)`. No findings is one or two sentences saying so and why the change is safe. Add
+`UNRESOLVED: <control> (<why>)`. No findings is one or two sentences saying so. Add
 `VERDICT   SHIP | NO-SHIP: <the unresolved control>` only when the task is a review or a ship decision.
 
-**This skill also emits a fuller block, and it emits it by default,** because authority is SELF: no consumer
-can tell you that you are wrong, so the evidence has to be internal, and findings alone do not show whether it
-exists. Fill only the slots this change touches. A slot it touches and cannot fill **is the finding**,
-reported as `UNRESOLVED:`. A slot it does not touch is omitted, never left blank.
+**The block below is emitted by default,** because authority is SELF: no consumer can tell you that you are
+wrong, so the evidence has to be internal. Fill only the slots this change touches. A slot it touches and
+cannot fill **is the finding**, reported as `UNRESOLVED:`. A slot it does not touch is omitted, never blank.
 
 ```
 FEED CONTRACT
 - Identity:    <what scopes the sequence space> · new identity minted by <event> at <file:line>
 - Sequence:    <the counter consumers gap-detect on> · arithmetic <expected += n> · assigned at <file:line>
                · other counters <name> scoped to <scope>, NOT valid for <use>
-- Control:     heartbeat every <interval> carrying <what> · end-of-session drains for <window>
+- Control:     heartbeat every <interval> carrying <what>, covering <scope> · end-of-session drains <window>
 - Reset:       announced by <message> · clears <list> · renumbers <list> · does NOT resend <list>
+               · one instrument invalidated by <message>, which ends on <event>
 - Snapshot:    as-of names <stream>.<counter>, stamped with the copy at <file:line> · cycle <period>
                · omits <fields>
 - Recovery:    <mechanism> terminates on <condition> · retained depth <n> · truncation and rate limit in <doc>
 - Arbitration: <A/B or none> · byte-identity produced at <file:line> · gap declared after arbitration
-- Conflation:  <none | state-encoded on <streams>> · covered-range field <name> · trades excluded
-- Filters:     book-eligible <set> · volume-eligible <set> · constant <field>=<value> since <date>, test <name>
+- Conflation:  <none | state-encoded on <streams>> · interval <n> · queue bound <n> · covered range <field>
+               · chain link <field> · trades excluded
+- Filters:     book-eligible <set> · volume-eligible <set>, decided by <rulebook> · constant <field>=<value>
+               since <date>, test <name>
 - Time:        event time <field, epoch, timezone, DST rule>, authoritative for staleness · clock <source>
-- Emit checks: <assertion> at <file:line> · on breach <freeze scope> · saturation emitted at <file:line>
+- Emit checks: <assertion>, valid in <session states>, at <file:line> · on breach <freeze scope> and
+               <invalidation event> · saturation emitted at <file:line>
 - Fan-out:     single point at <file:line> · sinks <list> · hand-off records retained at <location>
 ```
 
