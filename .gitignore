@@ -4,3 +4,6 @@ node_modules/
 __pycache__/
 *.pyc
 .research/
+
+# Local agent scratch area, never published.
+.agent/
