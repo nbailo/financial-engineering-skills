@@ -167,11 +167,11 @@ if __name__ == "__main__":
 
 | Defect | Rule | What actually happens | Loss shape |
 |---|---|---|---|
-| `except Timeout: ... retry` around `new_order` | `fin-money-core`: *Durable intent before the external effect*, *Every failure signal carries a class, and the class reaches the decision point*. `fin-exchange-integration`: *An answer that is not a clean acceptance says nothing about whether the effect happened* | A timeout means the request may have reached the matching engine and the response was lost. It is `UNKNOWN`, not "did not happen". The retry sends a second, unconditioned buy. | Double position at double notional, one leg invisible to the bot's own sizing. Unbounded if the loop is longer than one retry. |
-| `cid = resp["clientOrderId"]`, read *after* the send | `fin-money-core`: *Operation identity is a property of the decision, not of the bytes*. `fin-exchange-integration`: *An identity the counterparty scopes to open instructions correlates; it does not deduplicate* | The correlation key is minted by the venue and only exists once the response arrives. On the exact failure it is needed for, there is nothing to query by. Nothing durable is written before the first byte goes out. | Total loss of the recovery path: the bot cannot tell "never placed" from "placed and filled". |
-| Design note 2: "newClientOrderId is unique … retrying is safe" | `fin-exchange-integration`: *An identity the counterparty scopes to open instructions correlates; it does not deduplicate*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | On Binance spot and futures the client order ID is unique **only among open orders**. Once the first order fills or is cancelled, the ID is free again and the resend creates a genuine second order. `-2010` never fires. The comment is what let this survive review. | The duplicate above, plus false confidence: the assertion is load-bearing for the retry and is false. |
-| `snap()` runs `value % increment` on floats | `fin-money-core`: *An obligation and an estimate are different kinds of number* | `0.29 % 0.01 == 0.009999999999999974`, so `snap(0.29, 0.01)` returns **0.28**, a whole step below the intended value. `int(0.29/0.01) == 28` fails identically. Rounding "down to the nearest tick" silently drops a full tick whenever the value is not exactly representable in binary. | One tick or one step per order, always in the same direction. On quantity it also risks tripping `minNotional` and being rejected outright. |
-| `entry = float(buy["price"])` for the take-profit | `fin-exchange-integration`: *A cost paid in a third unit is still part of the outcome* | The target is computed from the price the bot *asked for*, not from `cummulativeQuoteQty / executedQty`, and it is never grossed up for the round-trip commission. A `+1%` target at 0.1% taker fees per side realises **+0.798%**. The sell quantity is separately shaved by the base-asset commission with no compensating price increase. | Persistent bleed: ~20% of the intended edge, on 100% of round trips, always understating cost. |
+| `except Timeout: ... retry` around `new_order` | `fin-money-core`: *operation identity*, *ambiguous outcomes*. `fin-exchange-integration`: *A response that does not prove the outcome is UNKNOWN, and the answer is a query* | A timeout means the request may have reached the matching engine and the response was lost. It is `UNKNOWN`, not "did not happen". The retry sends a second, unconditioned buy. | Double position at double notional, one leg invisible to the bot's own sizing. Unbounded if the loop is longer than one retry. |
+| `cid = resp["clientOrderId"]`, read *after* the send | `fin-money-core`: *operation identity*. `fin-exchange-integration`: *A client order ID correlates; it deduplicates only where the venue documents that* | The correlation key is minted by the venue and only exists once the response arrives. On the exact failure it is needed for, there is nothing to query by. Nothing durable is written before the first byte goes out. | Total loss of the recovery path: the bot cannot tell "never placed" from "placed and filled". |
+| Design note 2: "newClientOrderId is unique … retrying is safe" | `fin-exchange-integration`: *A client order ID correlates; it deduplicates only where the venue documents that*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | On Binance spot and futures the client order ID is unique **only among open orders**. Once the first order fills or is cancelled, the ID is free again and the resend creates a genuine second order. `-2010` never fires. The comment is what let this survive review. | The duplicate above, plus false confidence: the assertion is load-bearing for the retry and is false. |
+| `snap()` runs `value % increment` on floats | `fin-money-core`: *exact representation* | `0.29 % 0.01 == 0.009999999999999974`, so `snap(0.29, 0.01)` returns **0.28**, a whole step below the intended value. `int(0.29/0.01) == 28` fails identically. Rounding "down to the nearest tick" silently drops a full tick whenever the value is not exactly representable in binary. | One tick or one step per order, always in the same direction. On quantity it also risks tripping `minNotional` and being rejected outright. |
+| `entry = float(buy["price"])` for the take-profit | `fin-exchange-integration`: *The round-trip gross-up, and the quantization direction* | The target is computed from the price the bot *asked for*, not from `cummulativeQuoteQty / executedQty`, and it is never grossed up for the round-trip commission. A `+1%` target at 0.1% taker fees per side realises **+0.798%**. The sell quantity is separately shaved by the base-asset commission with no compensating price increase. | Persistent bleed: ~20% of the intended edge, on 100% of round trips, always understating cost. |
 | `# TODO: on startup, reconcile our open orders …` | `fin-money-core`: *Implemented, not described* | A named risk written as a comment is the same defect as the missing control: the right control is identified and described accurately, then written as prose instead of built. | Whatever the un-built control was worth. Here: an orphan resting order that keeps filling. |
 
 ---
@@ -465,8 +465,9 @@ if __name__ == "__main__":
 ```
 
 And the test that makes the first defect a regression rather than an opinion. `fin-exchange-integration`
-requires this as a **required output slot**: the response that creates or edits an order path contains it
-as code, not as a plan:
+requires the first of its five properties proved in the repository's own framework: an instruction whose
+response is lost creates no duplicate economic effect. A description or a pointer to a test plan is the
+missing control, not a plan for it.
 
 ```python
 # tests/test_ambiguous_submit.py
@@ -483,8 +484,9 @@ def test_timeout_that_already_filled(bot, venue):
 
 
 def test_timeout_that_did_not_arrive(bot, venue):
-    """The mirror case: the request never reached the venue. The ladder must conclude
-    non-existence and the caller must be free to place again."""
+    """The mirror case: the request never reached the venue. Only the harness knows
+    that, so the production path still ends UNKNOWN, closes the gate and resends
+    nothing. Harness knowledge is not a licence to retry."""
     venue.drop_before_delivery("POST /api/v3/order")
 
     with pytest.raises(Unresolved):
@@ -506,53 +508,122 @@ quantization; and the reconciliation TODO becomes `resume()`.
 **Not changed, deliberately.** The strategy is untouched: buy the bid, rest a target above it. The
 polling fill loop was not replaced with a user-data websocket; the bot still holds one position at a time
 with no position store; there is no dead-man switch, because a single non-restarting script that exits
-after placing one order is not the case *Your absence is the counterparty's job to notice, and your return
-does not restore what you missed* is about, and adding cancel-on-disconnect here would be
+after placing one order is not the case *Your absence is the venue's job to notice, and your return does
+not restore the range* is about, and adding cancel-on-disconnect here would be
 ceremony. `minNotional` handling, the `PARTIALLY_FILLED` branch, `recvWindow` skew and `429`/`418`
 backoff were already correct in the original and were left alone, which is why the suite spends no words
 on them.
 
 **Not changed, and it should worry you.** There is still no scheduled reconciliation of position and
 realized PnL against the venue, and no funding, ADL or settlement ingestion, because spot has none. If
-this bot grows a position store, *The counterparty's number is the record; yours is a hypothesis until it
-is compared* becomes the most important rule on this page and the `resume()` call is not a substitute
-for it.
+this bot grows a position store, *The venue's number is the record; yours is a hypothesis until it is
+compared* becomes the most important rule on this page and the `resume()` call is not a substitute for it.
 
 ---
 
-## The block the review ends with
+## The output the review ends with
 
-A single-account spot bot trading its own capital is **T1**: a value-moving call is reachable and a live
-credential path exists, and the loss is bounded by the account. There is no customer on a position row, no
-payout path and one venue adapter, so nothing escalates it to T2. At T1 the whole output is the
-`FINANCIAL CHECK`. No `VENUE CONTRACT`, and no named-risks table: the `controls:` line carries the
-implementation evidence, and a control named without a location is the defect.
+Binance holds the record and answers any question about it, so authority is EXTERNAL and reconciliation
+against the venue is the primary proof. There is no customer on a position row, no payout path and one
+venue adapter, so exposure stays `own`. At `own`, `fin-verification`'s *At exposure `own`, five tests and
+one scheduled comparison carry the risk* sets the whole evidence bar, and no fuller venue contract is
+emitted: `fin-exchange-integration` asks for that only when exposure is `customer` or `record`, or when a
+second venue adapter appears.
 
-The anchors below name functions rather than lines, because the corrected code is a listing in this file.
-In a real response every one of them is a `file:line`.
+`EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
+real response every one of them is a `file:line`.
 
 ```
-ECONOMIC-DIFF: amount, effect, replay
-FINANCIAL CHECK
-tier:       T1, live BINANCE_KEY, own capital, one account, no customer balance row
-effect:     a spot buy and a resting limit sell on Binance, own capital, quote asset USDT
-identity:   the fes-<uuid4> client order id, committed by scalper.py commit_intent() before the socket
-            write, and replayed verbatim from request_json
-ambiguity:  transport failure, ServerError, and any ClientError whose code is not in DEFINITE_NO; each
-            resolves through scalper.py resolve(), which queries origClientOrderId and never resends
-authority:  the venue. executedQty, cummulativeQuoteQty and the my_trades commission rows are the record;
-            the local order_intents table is a hypothesis until resolve() or record_outcome() compares it
-recovery:   scalper.py resume() runs before the first send, resolves every INFLIGHT and INFLIGHT_UNKNOWN
-            intent, and exits rather than trading a symbol it could not resolve
-controls:   intent committed before the call -> scalper.py commit_intent()
-            UNKNOWN resolved by query, never by resubmit -> scalper.py resolve()
-            DEFINITE-NO restricted to documented codes -> scalper.py DEFINITE_NO
-            estimate-to-obligation crossing on Decimal -> scalper.py quantize()
-            round-trip fee gross-up on the executed VWAP -> scalper.py take_profit_order()
-            base-asset commission subtracted before the sell -> scalper.py take_profit_order()
-            startup reconciliation of open intents -> scalper.py resume()
-            alert destination with no default -> scalper.py ALERT_SINK
-            delivered-then-failed submit regression -> tests/test_ambiguous_submit.py
-            UNRESOLVED: scheduled comparison of position and realized PnL against the venue, because this
-            bot holds no position store yet; adding one makes the comparison mandatory
+authority: EXTERNAL (Binance) · exposure: own
+
+FINDING   A timed-out buy is sent a second time, leaving twice the intended position at twice the
+          notional, with one leg invisible to the bot's own sizing. Unbounded if the retry loop is
+          longer than one attempt.
+WHY       The except clause treats a transport failure as "did not happen". The request may have reached
+          the matching engine with only the response lost, which is UNKNOWN, and the resend is
+          unconditioned.
+EVIDENCE  scalper.py place_buy(), the bare retry inside the except clause; scalper.py
+          place_take_profit(), the same shape on the sell
+FIX       Classify the signal, and resolve UNKNOWN by querying the identity already sent rather than by
+          sending again: scalper.py submit() and scalper.py resolve(), with DEFINITE_NO restricted to the
+          codes Binance documents as not enqueued.
+TEST      A submit whose request is delivered and whose response is then lost leaves exactly one order,
+          one POST and a query by the minted client order ID: tests/test_ambiguous_submit.py
+          test_timeout_that_already_filled.
+
+FINDING   On the exact failure the recovery path exists for, the bot cannot tell "never placed" from
+          "placed and filled", so the recovery path is not merely broken but absent.
+WHY       `cid = resp["clientOrderId"]` is read after the send. The correlation key is minted by the venue
+          and exists only once the response arrives, and nothing durable is written before the first byte
+          goes out.
+EVIDENCE  scalper.py place_buy(), the `cid = resp["clientOrderId"]` assignment and the INSERT after it
+FIX       Mint `fes-<uuid4>` from the intent instance and commit the intent row, with the exact request
+          bytes, before the socket write: scalper.py submit() and scalper.py commit_intent(); the retry
+          replays `request_json` verbatim rather than rebuilding it.
+TEST      Every field written ahead of the effect is read back by the recovery path: a process killed
+          between the intent commit and the response restarts into scalper.py resume() and resolves that
+          intent by ID.
+
+FINDING   The retry above was approved because a design note asserts Binance deduplicates on
+          `newClientOrderId`, and the assertion is false.
+WHY       On Binance spot and futures the client order ID is unique only among *open* orders. Once the
+          first order fills or is cancelled the ID is free again and the resend creates a genuine second
+          order, so `-2010` never fires. The reuse window is zero seconds after a fill, which is exactly
+          the marketable-limit case where a lost response is most likely.
+EVIDENCE  scalper.py module docstring, design note 2
+FIX       Treat the identity as a correlation key, delete the sentence, and put the venue's documented
+          semantics beside the code that depends on them: scalper.py submit() and scalper.py resolve().
+TEST      Each numbered design note is bound to a test name or deleted; note 2 has no test and does not
+          survive the pass.
+
+FINDING   Every order leaves one tick low on price and one step low on quantity, always in the same
+          direction, and a quantity shaved this way can drop under `minNotional` and be rejected outright.
+WHY       `snap()` runs `value % increment` on binary floats. `0.29 % 0.01 == 0.009999999999999974`, so
+          `snap(0.29, 0.01)` returns 0.28, a whole step below the intended value. `int(0.29/0.01) == 28`
+          fails identically.
+EVIDENCE  scalper.py snap(), and its call sites in place_buy() and place_take_profit()
+FIX       One named function crosses from estimate to obligation with no binary float as an operand:
+          scalper.py quantize(), over Decimals built from the venue's own filter strings in
+          scalper.py load_filters(), with scalper.py wire() so `str(1e-05)` never reaches the wire.
+TEST      Quantizing a value that is not exactly representable in binary returns the intended multiple,
+          and a normalised order satisfies every venue filter simultaneously.
+
+FINDING   A nominal +1% take-profit realises +0.798% at 0.1% taker fees per side, and the sell quantity is
+          separately short by the base-asset commission. About 20% of the intended edge, on 100% of round
+          trips, always understating cost.
+WHY       The target is computed from the price the bot asked for rather than from
+          `cummulativeQuoteQty / executedQty`, and is never grossed up for the round-trip commission. A
+          BUY on Binance spot charges the fee in the base asset just bought, so what can be sold is less
+          than `executedQty`.
+EVIDENCE  scalper.py place_take_profit(), the `entry` and `tp` computation and the `qty` taken from
+          executedQty
+FIX       Take the basis from the executed VWAP, gross up by both commission legs before quantizing,
+          quantize a sell target up rather than to nearest, and subtract the base-asset commission read
+          from the venue's own trade records: scalper.py take_profit_order(), fed by client.my_trades().
+TEST      A round trip filled at the target price nets at least the requested return after both fees, and
+          the sell quantity never exceeds the filled quantity net of base-asset commission.
+
+FINDING   A crash mid-cycle leaves an orphan resting order that keeps filling, and the control that would
+          find it was described rather than built.
+WHY       `# TODO: on startup, reconcile our open orders against the exchange before placing anything new`
+          names the right control accurately and then writes it as prose. A named risk in a comment is the
+          same defect as the missing control.
+EVIDENCE  scalper.py main(), the TODO above the first place_buy() call
+FIX       scalper.py resume(), called before the first send: it resolves every INFLIGHT and
+          INFLIGHT_UNKNOWN intent and exits rather than trading a symbol it could not resolve.
+TEST      An intent left INFLIGHT by a killed process is resolved on the next start, and one that stays
+          unresolved refuses to trade that symbol.
+
+UNRESOLVED: scheduled comparison of position and realized PnL against the venue (this bot holds one
+position at a time and no position store, so there is no local number to compare; adding a position store
+makes the comparison mandatory, and resume() is not a substitute for it)
+
+VERDICT   SHIP
 ```
+
+`SHIP` is honest only because this script places one order and exits. Two things carry that verdict and
+neither appears as a finding, because the diff fixed them rather than leaving them open: `scalper.py`
+`ALERT_SINK` is a config key with no default, so import fails rather than alerting into a void, and an
+unresolved intent closes the risk gate instead of placing anything else. The unresolved comparison stays on
+the page rather than being deleted from it, which is what makes it blocking the day a position store
+appears.

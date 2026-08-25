@@ -1,6 +1,6 @@
 # Tokyo Stock Exchange arrowhead — a failover that did not fire, and a halt that cut the wire while the matching engine kept matching (2020-10-01)
 
-**Domain:** Cash equity exchange, matching engine, halt and resume | **Loss:** no direct trading loss published; the entire Japanese cash equity market failed to open and stayed halted for the full day — the first such outage since arrowhead launched. TSE's president resigned. | **Failure class:** Indeterminate outcome / partial failure (with change and configuration) | **Skill:** fin-matching-and-settlement
+**Domain:** Cash equity exchange, matching engine, halt and resume | **Loss:** no direct trading loss published; the entire Japanese cash equity market failed to open and stayed halted for the full day — the first such outage since arrowhead launched. TSE's president resigned. | **Failure class:** Indeterminate outcome / partial failure (with change and configuration) | **Skill:** advanced/fin-matching-and-settlement
 
 ## What happened
 

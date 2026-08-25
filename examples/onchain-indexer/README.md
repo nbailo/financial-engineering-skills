@@ -137,11 +137,11 @@ void main();
 
 | Defect | Rule | What actually happens | Loss shape |
 |---|---|---|---|
-| The cursor advances to `toBlock` with no completeness check | `fin-money-core`: *Proven coverage before the cursor advances*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | `getLogs` is called once per range and the result is trusted. Providers cap results (Alchemy publishes a per-chain, per-tier table, and the response is separately capped at 150 MB), and at the cap the range is not covered. There is no result-count check, no adaptive halving, and a single transport, so one provider's outage is indistinguishable from a quiet range. | **Permanent silent under-crediting.** A customer's deposit vanishes with no error and no log line, and nothing will ever look at that range again. |
-| `catch { ROLLBACK; log.error("moving on") }` then `fromBlock = toBlock + 1n` | `fin-money-core`: *Proven coverage before the cursor advances*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | The rollback correctly leaves the cursor where it was, and then the loop advances anyway, so the *next* successful range writes a `last_block` past the failed one. The skipped range is never revisited. | Same as above, but triggered by any transient RPC failure, which is a daily event. |
-| `if (addresses.size > 0)` guards the query; the advance runs unconditionally | `fin-money-core`: *Proven coverage before the cursor advances*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | On a fresh deploy with an empty `deposit_addresses` table, the cursor sprints from genesis to the safe head in a few minutes. With no backfill job, **every address registered afterwards can never see a deposit in a passed block.** The same shape sits one line up: `addresses` is snapshotted once per outer tick while the inner drain runs for hours, so an address registered mid-drain is invisible for the rest of it. | Total, permanent, and it lands on day one of production, the day the address table is empty. |
-| `UNIQUE (tx_hash, log_index)` | `fin-onchain`: *The dedupe key must separate the same event twice from the same event in a different history* | This has a real unique constraint and is above the bad bar, and it deliberately excludes block identity, which is what makes re-crediting after a reorg impossible: the re-included log collides with the orphaned row and `ON CONFLICT DO NOTHING` refuses to replace it. In the other direction, a transaction re-included in a different block at a different `logIndex` passes the constraint and credits twice. | Under-credit on re-inclusion at the same index; double-credit on re-inclusion at a different one. Both silent. |
-| `Number(l.args.value!) / 1e18` | `fin-onchain`: *Credit the delta you measured at the authority, not the number in the notification*. `fin-money-core`: *An obligation and an estimate are different kinds of number* | USDC has **6** decimals. The constant is 18 because it was copied from an ETH indexer, and the comment says "wei", which is the tell. A 1,000 USDC deposit credits `0.000000001`. `Number()` on a `bigint` separately loses precision above 2^53. The token address is `process.env.USDC_ADDRESS ?? …`, so the asset can change without the exponent changing. | Every deposit under-credited by a factor of 10^12, on 100% of events, until someone opens a support ticket. |
+| The cursor advances to `toBlock` with no completeness check | `fin-money-core`: *durable dedupe*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | `getLogs` is called once per range and the result is trusted. Providers cap results (Alchemy publishes a per-chain, per-tier table, and the response is separately capped at 150 MB), and at the cap the range is not covered. There is no result-count check, no adaptive halving, and a single transport, so one provider's outage is indistinguishable from a quiet range. | **Permanent silent under-crediting.** A customer's deposit vanishes with no error and no log line, and nothing will ever look at that range again. |
+| `catch { ROLLBACK; log.error("moving on") }` then `fromBlock = toBlock + 1n` | `fin-money-core`: *durable dedupe*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | The rollback correctly leaves the cursor where it was, and then the loop advances anyway, so the *next* successful range writes a `last_block` past the failed one. The skipped range is never revisited. | Same as above, but triggered by any transient RPC failure, which is a daily event. |
+| `if (addresses.size > 0)` guards the query; the advance runs unconditionally | `fin-money-core`: *durable dedupe*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | On a fresh deploy with an empty `deposit_addresses` table, the cursor sprints from genesis to the safe head in a few minutes. With no backfill job, **every address registered afterwards can never see a deposit in a passed block.** The same shape sits one line up: `addresses` is snapshotted once per outer tick while the inner drain runs for hours, so an address registered mid-drain is invisible for the rest of it. | Total, permanent, and it lands on day one of production, the day the address table is empty. |
+| `UNIQUE (tx_hash, log_index)` | `fin-onchain`: *The dedupe key separates the same event twice from the same event on a different branch* | This has a real unique constraint and is above the bad bar, and it deliberately excludes block identity, which is what makes re-crediting after a reorg impossible: the re-included log collides with the orphaned row and `ON CONFLICT DO NOTHING` refuses to replace it. In the other direction, a transaction re-included in a different block at a different `logIndex` passes the constraint and credits twice. | Under-credit on re-inclusion at the same index; double-credit on re-inclusion at a different one. Both silent. |
+| `Number(l.args.value!) / 1e18` | `fin-onchain`: *Credit the delta you measured at the asset's authority, not the number in the notification*. `fin-money-core`: *exact representation* | USDC has **6** decimals. The constant is 18 because it was copied from an ETH indexer, and the comment says "wei", which is the tell. A 1,000 USDC deposit credits `0.000000001`. `Number()` on a `bigint` separately loses precision above 2^53. The token address is `process.env.USDC_ADDRESS ?? …`, so the asset can change without the exponent changing. | Every deposit under-credited by a factor of 10^12, on 100% of events, until someone opens a support ticket. |
 | `if (l.removed) continue` | `fin-onchain`: *A history that can be rewritten does not reliably tell you it was rewritten*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | `eth_getLogs` **never** sets `removed`. In go-ethereum that field is set only inside the reorg path feeding `core.RemovedLogsEvent`, which serves subscriptions and `eth_getFilterChanges`; `FilterAPI.GetLogs` never sets it. A polling indexer receives no reorg signal at all. The line is dead code that reads as reorg handling, and no `block_hash` is stored anywhere, so a reorg deeper than the confirmation lag is undetectable forever. | Whatever a reorg does, undetected. The line's real cost is that it stops anyone from writing the code that would work. |
 
 ---
@@ -225,8 +225,8 @@ const CONFIRMATIONS = BigInt(requireEnv("DEPOSIT_CONFIRMATIONS"));
 const REORG_BUDGET = requireEnv("DEPOSIT_REORG_BUDGET");
 const ROLLBACK_FLOOR = Number(requireEnv("DEPOSIT_ROLLBACK_FLOOR"));
 
-// Reconciliation runs in production: the alert destination has no default, so import
-// fails rather than alerting into a void.
+// Reconciliation: the alert destination has no default, so import fails rather than
+// alerting into a void.
 const ALERT_SINK = requireEnv("INDEXER_ALERT_SINK");
 
 const TRANSFER = parseAbiItem(
@@ -469,8 +469,9 @@ async function tick(): Promise<boolean> {
       );
       if (inserted.rowCount === 0) continue; // already credited from this exact block
 
-      // Seam S2, staging: the credit posts to a PENDING account and moves to
-      // AVAILABLE at the policy's finality. Withdrawal authorises from AVAILABLE alone.
+      // Staging, SEAM S2(iv): observed, final and spendable are three quantities. The
+      // credit posts to a PENDING account and moves to AVAILABLE at the policy's
+      // finality, and only AVAILABLE authorises a withdrawal.
       await creditPending(tx, userId, token, (l as any).args.value as bigint,
                           inserted.rows[0].id);
     }
@@ -510,9 +511,10 @@ async function main(): Promise<void> {
 void main();
 ```
 
-And the reconciliation, because none of the above is worth anything if nobody is checking. This is seam
-S2's assertion, `fin-money-core`'s *Reconciliation runs in production*, and `fin-verification`'s
-*A detector that has never detected is not known to detect*:
+And the reconciliation, because none of the above is worth anything if nobody is checking. This is
+`fin-onchain`'s *The chain-to-ledger reconciliation names the authority and the join key, and runs in
+production*, `fin-money-core`'s *reconciliation*, and `fin-verification`'s *A detector that has never
+detected is not known to detect*:
 
 ```typescript
 // reconcile.ts: scheduled. Compares what we credited against what the chain shows.
@@ -568,7 +570,8 @@ node restart, and web3.js #1766 documents the same removal delivered twice. The
 service is still one process with one cursor; no sharding, no queue.
 
 **Deliberately not implemented, with the reason stated in code.** The `balanceOf`-delta clause of
-*Credit the delta you measured at the authority, not the number in the notification* is **not** implemented
+*Credit the delta you measured at the asset's authority, not the number in the notification* is **not**
+implemented
 on the ingest path. The reason
 is that `DEPOSIT_TOKENS` is a pinned list whose `symbol()` and `decimals()` are asserted at startup, and
 neither pinned token is fee-on-transfer or rebasing. That is a closure, not a deferral: the moment a token
@@ -577,86 +580,128 @@ on-chain balance independently every hour, which is where a fee-on-transfer disc
 break rather than as silence. If the list ever accepts an arbitrary token, the delta measurement becomes
 mandatory and the pin is what stops that from happening by accident.
 
-**Still absent.** There is no handling for contract-originated native transfers, which
-*A receipt proves inclusion, not effect* covers, because this service indexes ERC-20 logs only and native
-deposits go through a different address set. The memo and destination-tag column of *An address is not
-always the whole destination* does not apply on EVM and would be required on the first tag-addressed chain
-added.
+**Still absent.** There is no handling for contract-originated native transfers, which *Inclusion is not
+effect* covers, because this service indexes ERC-20 logs only and native deposits go through a different
+address set. The memo and destination-tag half of *The chain model decides the identity rule, and
+flattening it is wrong half the time* does not apply on EVM and would be required on the first
+tag-addressed chain added.
 
 ---
 
-## The block the review ends with
+## The output the review ends with
 
-**Why this is T2.** Every credit lands on a `user_id`, and a customer eats the error: an under-credit is
-their deposit that never arrived, and a double-credit is house money they can withdraw. `fin-onchain` makes
-that explicit, because any path that credits a user deposit is T2 by definition. It escalates further the
-moment this service feeds a withdrawal path, which is what the PENDING to AVAILABLE staging exists to gate.
+Every credit lands on a `user_id` and a customer eats the error: an under-credit is their deposit that
+never arrived, and a double-credit is house money they can withdraw. The chain holds the record and answers
+questions about it, so authority is EXTERNAL and `balanceOf` at the finalized height is what this service
+is compared against. The stakes rise again the moment this service feeds a withdrawal path, which is what
+the PENDING to AVAILABLE staging exists to gate.
 
-At T2 and above the `FINANCIAL CHECK` is followed by the `CHAIN CROSSING` block. A slot that cannot be
-filled is the finding, and it goes on the `controls:` line as `UNRESOLVED`.
+`fin-onchain` asks for its fuller crossing contract when authority is SELF, when exposure is `customer` on
+a crediting path, or when the change spans more than one of identity, coverage, finality and amount. This
+change spans all four, so the anchors below are the ones that contract would have carried.
 
-The anchors below name functions rather than lines, because the corrected code is a listing in this file.
-In a real response every one of them is a `file:line`.
-
-```
-ECONOMIC-DIFF: amount, effect, authority, replay
-FINANCIAL CHECK
-tier:       T2, a user_id on every credit row, a crediting path fed by external history, deposit balances
-            other systems spend against
-effect:     an ERC-20 deposit credits a customer's internal balance, in the token's own base units, from
-            an external sender to a per-customer deposit address
-identity:   (chainId, blockHash, txHash, logIndex), unique on unreversed credits, at
-            migrations/002_deposit_credits.sql deposit_credits_identity
-ambiguity:  a provider error, a range rejection, a result count at the cap and a truncated page are all
-            holes rather than empty results; getLogsComplete() halves and retries and throws rather than
-            returning a short answer
-authority:  the chain. balanceOf at the finalized height is the record, and deposit_credits is a claim
-            about it that reconcile.ts compares every hour
-recovery:   nothing advances the cursor outside the transaction that covered the range, so a crash or a
-            thrown range leaves the cursor where it was and the range is retried whole
-controls:   provable range coverage, halving on any hole -> indexer.ts getLogsComplete()
-            cursor advanced only inside the covered branch -> indexer.ts tick()
-            empty address set holds the cursor -> indexer.ts tick()
-            address set re-read every iteration -> indexer.ts tick()
-            cursor row locked across check and act -> indexer.ts tick() FOR UPDATE
-            four-part dedupe identity -> deposit_credits_identity
-            unreversed-twin assertion before credit -> indexer.ts tick()
-            parent-hash chaining and fork search -> indexer.ts findForkPoint()
-            reorg unwind as a reversing row -> indexer.ts unwind()
-            unrecoverable-depth halt -> indexer.ts UnrecoverableReorg
-            token scale read from the contract -> indexer.ts pinTokens()
-            self-transfer excluded from income -> indexer.ts tick()
-            confirmation depth with a recorded budget -> indexer.ts CONFIRMATIONS, REORG_BUDGET
-            hourly comparison against balanceOf at finality -> reconcile.ts reconcile()
-            alert destination with no default -> indexer.ts ALERT_SINK
-            UNRESOLVED: no planted-break test proves reconcile.ts detects; it is scheduled and has never
-            been shown to fire
-            UNRESOLVED: balanceOf-delta measurement on the ingest path, closed by the pinned token list
-            rather than implemented, and mandatory the moment that list accepts an arbitrary token
-```
+`EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
+real response every one of them is a `file:line`.
 
 ```
-CHAIN CROSSING: ethereum mainnet · account+forwarder
+authority: EXTERNAL (Ethereum mainnet) · exposure: customer
 
-DEPOSIT
-  dedupe key           (chain_id, block_hash, tx_hash, log_index), one unique index   deposit_credits_identity
-  range completeness   halve on error, range rejection or a count at the cap; throw   getLogsComplete()
-  cursor guard         same predicate as the query, advanced only over a proven range tick()
-  reorg detector       parent_hash chained against the stored block_hash              findForkPoint()
-  unwind               reversing row keyed on reverses_credit_id                      unwind()
-  amount source        the event's value in base units; the delta measurement is      tick()
-                       closed by the pinned token list, not deferred
-  self-transfer guard  from_address not in our addresses, and not a house address     tick()
-  finality gate        DEPOSIT_CONFIRMATIONS against DEPOSIT_REORG_BUDGET, recorded   tick()
-                       on every credit row
-  memo / tag           model: n/a on EVM; required on the first tag-addressed chain   n/a
+FINDING   A customer's deposit vanishes with no error and no log line, and nothing will ever look at that
+          range again. Permanent silent under-crediting.
+WHY       `getLogs` is called once per range and the result is trusted. Providers cap results (Alchemy
+          publishes a per-chain, per-tier table, and the response is separately capped at 150 MB), and at
+          the cap the range is not covered. There is no result-count check, no adaptive halving, and a
+          single transport, so one provider's outage is indistinguishable from a quiet range.
+EVIDENCE  indexer.ts tick(), the single getLogs call and the unconditional cursor UPDATE that follows it
+FIX       indexer.ts getLogsComplete() classifies every response as covered, rejected, failed or at the
+          documented cap, halves and retries, and throws rather than returning a short answer; the cap and
+          the range come from config (RPC_LOG_RESULT_CAP, RPC_MAX_BLOCK_RANGE) rather than a constant, and
+          the transport is a two-provider fallback.
+TEST      A range whose provider returns exactly the cap is subdivided rather than accepted, and a range
+          that cannot be proved complete at single-block width throws instead of advancing the cursor.
 
-WITHDRAWAL
-  intent identity      not in scope: this service credits and never broadcasts        n/a
-  broadcast hash set   not in scope                                                   n/a
-  allocator lock       not in scope                                                   n/a
-  queue preconditions  not in scope                                                   n/a
+FINDING   Any transient RPC failure, a daily event, permanently skips a block range: the next successful
+          range writes a `last_block` past the failed one and nothing revisits it.
+WHY       The rollback correctly leaves the cursor where it was, and then `fromBlock = toBlock + 1n`
+          advances the loop anyway. A branch that skipped the work did not skip the advance.
+EVIDENCE  indexer.ts tick(), the catch clause logging "range failed; moving on" and the loop increment
+          below it
+FIX       The catch alerts and rethrows, stopping the loop: indexer.ts tick(). No statement in the file
+          writes `last_block` except the one inside the branch that covered the range.
+TEST      A failed range leaves the cursor unchanged and is retried whole on the next tick.
+
+FINDING   On a fresh deploy with an empty `deposit_addresses` table the cursor sprints from genesis to the
+          safe head in minutes, so every address registered afterwards can never see a deposit in a passed
+          block. Total, permanent, and it lands on day one of production.
+WHY       `if (addresses.size > 0)` guards the query while the advance runs unconditionally, and there is
+          no backfill job. The same shape sits one line up: `addresses` is snapshotted once per outer tick
+          while the inner drain runs for hours, so an address registered mid-drain is invisible for the
+          rest of it.
+EVIDENCE  indexer.ts tick(), the `addresses.size > 0` guard and the loadDepositAddresses() call outside
+          the drain loop
+FIX       An empty address set returns without advancing, and the address map is re-read every iteration:
+          indexer.ts tick().
+TEST      With no deposit addresses registered the cursor does not move, and an address registered
+          mid-drain is credited for blocks indexed after its registration.
+
+FINDING   A reorged deposit is either under-credited or credited twice, silently. Re-inclusion at the same
+          index is refused; re-inclusion at a different index credits again.
+WHY       `UNIQUE (tx_hash, log_index)` is a real constraint that excludes block identity. The re-included
+          log collides with the orphaned row and `ON CONFLICT DO NOTHING` refuses to replace it; a
+          transaction re-included in a different block at a different `logIndex` passes the constraint
+          entirely.
+EVIDENCE  migrations/001_deposits.sql deposits UNIQUE (tx_hash, log_index)
+FIX       A four-part identity that carries the branch, unique on unreversed credits only, so an unwind can
+          post a reversing row against the same log:
+          migrations/002_deposit_credits.sql deposit_credits_identity, plus the unreversed-twin assertion
+          in indexer.ts tick() that stops a re-included log crediting before its unwind has landed.
+TEST      A log re-included on a different branch credits exactly once after the unwind, and re-including
+          it at a different logIndex does not produce a second credit.
+
+FINDING   Every deposit is under-credited by a factor of 10^12, on 100% of events, until someone opens a
+          support ticket.
+WHY       USDC has 6 decimals. The constant is 18 because it was copied from an ETH indexer, and the
+          comment says "wei", which is the tell: a 1,000 USDC deposit credits `0.000000001`. `Number()` on
+          a `bigint` separately loses precision above 2^53, and `process.env.USDC_ADDRESS ?? …` lets the
+          asset change without the exponent changing.
+EVIDENCE  indexer.ts tick(), `const amount = Number(l.args.value!) / 1e18`
+FIX       Store the token's own base units as an exact integer and never divide on the ingest path:
+          migrations/002_deposit_credits.sql amount_raw numeric(78,0), with `decimals()` and `symbol()`
+          read from the contract at startup and cached per (chainId, address) in indexer.ts pinTokens().
+          Display scaling happens at the edge, from the recorded token_decimals.
+TEST      A 1,000 USDC deposit credits 1_000_000_000 base units, and a token whose decimals differ from the
+          pinned assumption fails startup rather than crediting.
+
+FINDING   A reorg deeper than the confirmation lag is undetectable forever, and the line that looks like
+          reorg handling is what stops anyone writing the code that would work.
+WHY       `eth_getLogs` never sets `removed`. In go-ethereum that field is set only inside the reorg path
+          feeding `core.RemovedLogsEvent`, which serves subscriptions and `eth_getFilterChanges`;
+          `FilterAPI.GetLogs` never sets it. A polling indexer receives no reorg signal at all, and no
+          `block_hash` is stored anywhere.
+EVIDENCE  indexer.ts tick(), `if (l.removed) continue; // dropped by a reorg`
+FIX       Build the signal: store (number, hash, parent_hash) for every block credited in and every range
+          boundary in migrations/002_deposit_credits.sql processed_blocks, search for the fork point in
+          indexer.ts findForkPoint(), unwind with a reversing row keyed on reverses_credit_id in
+          indexer.ts unwind(), and halt on indexer.ts UnrecoverableReorg below the configured rollback
+          floor rather than rolling back past it.
+TEST      A fork below the last processed block is detected by stored block identity alone, produces
+          reversing rows rather than deletes, and a fork deeper than DEPOSIT_ROLLBACK_FLOOR halts instead
+          of silently continuing.
+
+UNRESOLVED: planted-break test proving reconcile.ts detects a discrepancy (it is scheduled and has never
+been shown to fire; a detector that has never detected is not known to detect)
+UNRESOLVED: balanceOf-delta measurement on the ingest path (closed by the pinned token list rather than
+implemented, and mandatory the moment that list accepts an arbitrary token)
+
+VERDICT   NO-SHIP: planted-break test proving reconcile.ts detects a discrepancy
 ```
 
-The withdrawal half is `n/a` rather than blank because this service has no send path at all. If one is ever
-added to the same codebase, those four rows stop being `n/a` and the tier goes up with them.
+`NO-SHIP` on a page whose six findings are all closed is the point. The reconciliation is written,
+scheduled and reads through an independent path, and none of that is evidence that it fires. Feeding it a
+known discrepancy on a known address, against a freshly migrated store, is the cheapest test here and the
+one that protects every control above it.
+
+Four things the retired block listed as `n/a` are simply absent now: intent identity, the broadcast hash
+set, the allocator lock and the queue preconditions. This service credits and never broadcasts, so a
+concept it does not touch gets no slot. Adding a send path to this codebase brings all four back, and moves
+exposure with them.

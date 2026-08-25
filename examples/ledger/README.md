@@ -169,15 +169,15 @@ def reverse_transfer(conn, txid, allow_overdraft=False):
 
 | Defect | Rule | What actually happens | Loss shape |
 |---|---|---|---|
-| Two legs for a three-leg transaction | `fin-ledger`: *A posting is a set of legs that nets to zero in every unit of account* | The group is `−amount` and `+net`. It sums to `−fee`, not zero. The fee is debited from the sender and credited to **nobody**: there is no revenue account leg and no revenue account. The materialised balances agree with the entries, so nothing in the system disagrees with anything else. The money is simply not there. | Silent, per-transfer, permanently unattributed. The trial balance is off by the cumulative fee take from the first transfer onwards, and the discrepancy grows with volume. |
-| `idempotency_key text UNIQUE` + `Optional[str] = None` | `fin-money-core`: *Operation identity is a property of the decision, not of the bytes*. `fin-ledger`: *A repeated posting request returns the original outcome only if it is the same request* | The mechanism is built and then made optional, with enforcement deferred to prose about the API layer, which is the usual shape. Callers that omit it get no protection at all. Callers that supply it hit a `SELECT`-then-`INSERT` race with no `ON CONFLICT`, so an honest concurrent retry gets a raw `UniqueViolation` through the `TransferError` hierarchy. Nothing compares the stored row's `from`/`to`/`amount` to the request, so a replayed key with a different body is accepted. | Duplicate transfer under concurrency; and an unvalidated replay lets `reverse_transfer` mark a transfer reversed **while writing zero compensating entries**. |
-| Invariants as SQL in a schema comment | `fin-ledger`: *Every balance you report has a named authority, a join key, and a comparison that actually runs*. `fin-money-core`: *Reconciliation runs in production*, *Implemented, not described*. `fin-verification`: *A detector that has never detected is not known to detect* | The two queries are correct. They run nowhere. There is no scheduled entrypoint, no alert destination, no break record, and no owner. The usual version of this ships annotated *"worth running as a cron"*. Zero of the reps that were probed on conservation passed, in either domain where it was probed. | This is the control that would have caught the row above. Its absence converts a one-line bug into an unbounded, undetected one. |
-| `CHECK (balance_cents >= 0)` on the accounts table | `fin-ledger`: *A control that stops ordinary debits must not stop the remedy for them* | The clawback path is structurally impossible. When the recipient has spent the money, `reverse_transfer`'s debit drives the balance negative and Postgres rejects it, so the fraud reversal aborts. `allow_overdraft` is accepted and never read: dead code. Only `transfer()` catches `CheckViolation`, so the raw `psycopg` error escapes the typed hierarchy mid-clawback. And `AccountNotActive` means the standard flow (freeze the recipient, then claw back) is blocked by the code, forcing an unfreeze that reopens exactly the drain window the freeze existed to close. | The safety operation cannot be performed at the moment it is needed. Full loss of the disputed amount, plus whatever drains during the unfreeze. |
+| Two legs for a three-leg transaction | `fin-ledger`: *The balanced set commits whole, and a posted entry is immutable* | The group is `−amount` and `+net`. It sums to `−fee`, not zero. The fee is debited from the sender and credited to **nobody**: there is no revenue account leg and no revenue account. The materialised balances agree with the entries, so nothing in the system disagrees with anything else. The money is simply not there. | Silent, per-transfer, permanently unattributed. The trial balance is off by the cumulative fee take from the first transfer onwards, and the discrepancy grows with volume. |
+| `idempotency_key text UNIQUE` + `Optional[str] = None` | `fin-money-core`: *operation identity*. `fin-ledger`: *A repeat of an identity returns the original outcome only if it is the same request* | The mechanism is built and then made optional, with enforcement deferred to prose about the API layer, which is the usual shape. Callers that omit it get no protection at all. Callers that supply it hit a `SELECT`-then-`INSERT` race with no `ON CONFLICT`, so an honest concurrent retry gets a raw `UniqueViolation` through the `TransferError` hierarchy. Nothing compares the stored row's `from`/`to`/`amount` to the request, so a replayed key with a different body is accepted. | Duplicate transfer under concurrency; and an unvalidated replay lets `reverse_transfer` mark a transfer reversed **while writing zero compensating entries**. |
+| Invariants as SQL in a schema comment | `fin-ledger`: *A stored balance is a cache, and a cache with no drift detector is a rumour*. `fin-money-core`: *reconciliation*, *Implemented, not described*. `fin-verification`: *A detector that has never detected is not known to detect* | The two queries are correct. They run nowhere. There is no scheduled entrypoint, no alert destination, no break record, and no owner. The usual version of this ships annotated *"worth running as a cron"*. Zero of the reps that were probed on conservation passed, in either domain where it was probed. | This is the control that would have caught the row above. Its absence converts a one-line bug into an unbounded, undetected one. |
+| `CHECK (balance_cents >= 0)` on the accounts table | `fin-ledger`: *Corrections are reversals, never mutations, and the remedy has to be able to land* | The clawback path is structurally impossible. When the recipient has spent the money, `reverse_transfer`'s debit drives the balance negative and Postgres rejects it, so the fraud reversal aborts. `allow_overdraft` is accepted and never read: dead code. Only `transfer()` catches `CheckViolation`, so the raw `psycopg` error escapes the typed hierarchy mid-clawback. And `AccountNotActive` means the standard flow (freeze the recipient, then claw back) is blocked by the code, forcing an unfreeze that reopens exactly the drain window the freeze existed to close. | The safety operation cannot be performed at the moment it is needed. Full loss of the disputed amount, plus whatever drains during the unfreeze. |
 
 The first and fourth rows are the same shape in opposite directions: a constraint that was not written
-where it was needed, and a constraint that was written where it did harm. *A control that stops ordinary
-debits must not stop the remedy for them* exists specifically so that fixing the second does not produce
-`DROP CONSTRAINT`.
+where it was needed, and a constraint that was written where it did harm. *Corrections are reversals,
+never mutations, and the remedy has to be able to land* exists specifically so that fixing the second does
+not produce `DROP CONSTRAINT`.
 
 ---
 
@@ -599,80 +599,116 @@ concurrency. Integer minor units stayed. `entries` is still one table with a cur
 not split into one ledger per currency, which is a schema people spend a year unwinding.
 
 **One thing was deleted, not moved.** The first SQL comment, *"every transaction's entries net to zero"*,
-does not appear anywhere in the corrected code. It is not in `reconcile.py`. Under *Conservation belongs to
-the write path, not to a checker that runs later*, a runtime
+does not appear anywhere in the corrected code. It is not in `reconcile.py`. Under *The balanced set commits
+whole, and a posted entry is immutable*, a runtime
 "do the books balance" check that can fire means either a bypass path exists, in which case close the
 bypass, or it is not a conservation breach at all but a disagreement with an external record, which is
 what axis 3 is for. Once the posting API and the deferred trigger make an unbalanced group unrepresentable,
 a job that looks for one is checking that Postgres works.
 
 **Still absent, and named.** `REVOKE UPDATE, DELETE ON accounts` with the chokepoint as a `SECURITY DEFINER`
-function is the stronger form of `fin-ledger`'s *Solvency and its chokepoint*, and it is not implemented
-here; the application role still writes `accounts.balance_cents` directly, and axis 1 is what makes that
-survivable. Bitemporality, which `fin-ledger` carries in
+function is the stronger form of `fin-ledger`'s *One entrypoint, and the solvency check lives inside it*, and
+it is not implemented here; the application role still writes `accounts.balance_cents` directly, and axis 1
+is what makes that survivable. Bitemporality, which `fin-ledger` carries in
 [corrections-and-bitemporality.md](../../skills/fin-ledger/references/corrections-and-bitemporality.md), is
 absent because this ledger has no reporting period and no back-dating. Both become required the moment
 this system has an accounting close.
 
 ---
 
-## The block the review ends with
+## The output the review ends with
 
-**Why this is T3.** This ledger is the system of record. It is not a mirror of an external processor: it
-assigns the transaction ids other systems consume, it decides what a customer's balance is, and no external
-oracle holds the same numbers to reconcile against. The custodian statement covers one axis and nothing
-covers the rest, so the evidence has to be internal. That is the T3 test, and the escalation applies twice
-over, because the original wrote `SELECT` then `UPDATE` on a balance in separate statements and never set an
-isolation level.
+This ledger is the system of record. It assigns the transaction ids other systems consume, it decides what
+a customer's balance is, and no external oracle holds the same numbers, so nothing outside it can tell it
+that it is wrong. The custodian statement covers one axis, the aggregate customer position, and nothing
+covers the rest. Authority is therefore SELF, which is what makes `fin-verification`'s *When authority is
+SELF there is nothing to reconcile against* the rule that sets the evidence here: replay, conservation and
+a planted break rather than a comparison against somebody else's copy. Exposure is `customer`, because the
+money at risk is the customer's, and this ledger is also the record other systems consume, which raises the
+bar rather than lowering it.
 
-At T2 and above the `FINANCIAL CHECK` is followed by the `LEDGER CONTRACT`. An evidence cell that is empty,
-or that contains "should", "would", "recommend" or "next step", fails the run.
+`fin-ledger` asks for its per-verb contract table only when authority is SELF **and** the change adds,
+routes or reshapes a write to the entries. This change does exactly that, so the evidence anchors below are
+the ones that table would have carried.
 
-The anchors below name functions rather than lines, because the corrected code is a listing in this file.
-In a real response every one of them is a `file:line`.
+`EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
+real response every one of them is a `file:line`.
 
 ```
-ECONOMIC-DIFF: amount, effect, authority, replay
-FINANCIAL CHECK
-tier:       T3, authoritative balances, an id assigner other systems consume, no external oracle for the
-            journal itself
-effect:     an internal transfer between two customer accounts, less a 0.25% fee to revenue, and the
-            reversal that claws the whole group back, in integer minor units per currency
-identity:   the caller's idempotency_key, required at the type level, stored with a request fingerprint
-            that is compared on every replay, at ledger.py post()
-ambiguity:  none outbound. The only ambiguous counterparty is the custodian, whose statement arrives
-            through a separate importer and is compared, never trusted as a write
-authority:  `entries` is the authority for every balance. `accounts.balance_cents` is a cache, and the
-            custodian is the authority for the aggregate customer position
-recovery:   entries and the materialised balance move in one transaction, so a crash leaves no window;
-            the deferred triggers are fired inside post()'s own error handling, not at a caller's COMMIT
-controls:   balanced-set assertion, per currency -> ledger.py post()
-            unfalsifiable conservation at the database -> assert_group_balances trigger
-            required idempotency key, fingerprint compared -> ledger.py post()
-            reversal permitted to overdraw -> assert_balance_floor trigger
-            ordinary debit still refused -> assert_balance_floor trigger
-            double reversal impossible -> ledger_transactions_reverses_uniq
-            append-only enforced by grant -> REVOKE UPDATE, DELETE ON entries
-            scheduled three-axis comparison -> reconcile.py run()
-            alert destination with no default -> reconcile.py ALERT_SINK
-            break aging and escalation -> reconcile.py ESCALATE_AFTER_HOURS
-            planted-break detection test -> tests/test_reconcile_detects.py
-            UNRESOLVED: REVOKE UPDATE, DELETE ON accounts with the chokepoint as SECURITY DEFINER; the
-            application role still writes balance_cents directly and axis 1 is the compensating control
+authority: SELF · exposure: customer
 
-LEDGER CONTRACT
+FINDING   Every transfer debits a fee from the sender and credits it to nobody. The trial balance is off by
+          the cumulative fee take from the first transfer onwards, and the discrepancy grows with volume.
+WHY       The group is `−amount` and `+net`, which sums to `−fee`, not zero. There is no revenue account
+          leg and no revenue account. The materialised balances agree with the entries, so nothing in the
+          system disagrees with anything else. The money is simply not there.
+EVIDENCE  ledger.py transfer(), the two INSERTs into entries
+FIX       ledger.py post() takes the set of legs and rejects any group that does not net to zero in every
+          unit of account separately; ledger.py transfer() supplies the third leg to FEE_REVENUE_ACCOUNT,
+          and migrations/002_conservation.sql assert_group_balances is the deferred backstop no caller,
+          ORM, psql session or migration can bypass.
+TEST      A transfer's entries sum to zero per currency, and a two-leg group carrying a fee is rejected by
+          both the typed error and the trigger.
+
+FINDING   Two callers, or one caller retrying, produce two real transfers; and a replayed key with a
+          different body lets reverse_transfer mark a transfer reversed while writing zero compensating
+          entries.
+WHY       The mechanism is built and then made optional: the column is `UNIQUE` and the parameter is
+          `Optional[str] = None`, with enforcement deferred to prose about the API layer. Callers that omit
+          it get no protection. Callers that supply it hit a SELECT-then-INSERT race with no `ON CONFLICT`,
+          so an honest concurrent retry raises a raw `UniqueViolation` outside the `TransferError`
+          hierarchy, and nothing compares the stored `from`/`to`/`amount` against the request.
+EVIDENCE  ledger.py transfer() signature and its SELECT on idempotency_key;
+          migrations/001_ledger.sql idempotency_key text UNIQUE
+FIX       A required keyword argument with no default at ledger.py post(), with
+          `ALTER COLUMN idempotency_key SET NOT NULL` behind it. The INSERT is the claim, and a
+          UniqueViolation resolves to the winner's row only after comparing request_fingerprint field by
+          field, raising IdempotencyMismatch when it differs.
+TEST      A concurrent replay of one key returns one transaction id and posts one group; the same key with
+          a different body raises rather than reporting work done that was never done.
+
+FINDING   The control that would have caught the missing fee leg does not run, which turns a one-line bug
+          into an unbounded, undetected one.
+WHY       The two invariant queries are correct and they run nowhere. There is no scheduled entrypoint, no
+          alert destination, no break record and no owner. The usual version of this ships annotated
+          "worth running as a cron". Zero of the reps that were probed on conservation passed, in either
+          domain where it was probed.
+EVIDENCE  migrations/001_ledger.sql, the invariant comment block
+FIX       reconcile.py run(), scheduled at `*/15 * * * *`, reading through a path the writer does not
+          share: three axes, a breaks table, an aging threshold at ESCALATE_AFTER_HOURS, and a custodian
+          disagreement posted to a real suspense account so the trial balance still balances while a human
+          works it. ALERT_SINK and its siblings are environment reads with no default, so import fails
+          rather than alerting into a void.
+TEST      tests/test_reconcile_detects.py test_reconciliation_detects_an_external_break plants a 13-cent
+          discrepancy against a freshly migrated database and asserts the break record, the suspense
+          posting and exactly one alert; test_materialised_drift_breaks_but_does_not_self_correct asserts
+          the recompute raises rather than papering over the drift.
+
+FINDING   When the recipient has spent the money, the fraud reversal aborts, so the safety operation cannot
+          be performed at the moment it is needed. Full loss of the disputed amount, plus whatever drains
+          during the unfreeze the standard flow is forced into.
+WHY       `CHECK (balance_cents >= 0)` is unconditional, so reverse_transfer's debit drives the balance
+          negative and Postgres rejects it. `allow_overdraft` is accepted and never read: dead code. Only
+          transfer() catches CheckViolation, so the raw psycopg error escapes the typed hierarchy
+          mid-clawback. And AccountNotActive blocks the standard flow of freeze first, then claw back,
+          forcing an unfreeze that reopens exactly the drain window the freeze existed to close.
+EVIDENCE  migrations/001_ledger.sql accounts.balance_cents CHECK; ledger.py reverse_transfer(), the
+          allow_overdraft parameter
+FIX       The floor becomes migrations/002_conservation.sql assert_balance_floor, a deferred trigger
+          conditioned on posting_type, so an ordinary debit still cannot overdraw and a reversal or
+          clawback can. ledger.py reverse() posts with posting_type='reversal', and ledger.py post() fires
+          the deferred triggers inside its own error handling so CheckViolation becomes InsufficientFunds
+          instead of surfacing at a caller's COMMIT. The constraint is conditioned, not dropped.
+TEST      tests/test_reconcile_detects.py test_clawback_can_overdraw_and_an_ordinary_debit_cannot; and
+          test_entries_are_append_only, because immutability is a grant the database enforces rather than a
+          review convention.
+
+UNRESOLVED: REVOKE UPDATE, DELETE ON accounts with the chokepoint as a SECURITY DEFINER function, the
+stronger form of fin-ledger's One entrypoint, and the solvency check lives inside it (the application role
+still writes accounts.balance_cents directly; axis 1 of reconcile.py is the compensating control)
+
+VERDICT   SHIP
 ```
 
-| item | evidence |
-|---|---|
-| balanced-set entrypoint (the only writer) | `ledger.py` `post()` |
-| legs written, one line each: account · dr/cr · currency | sender dr, recipient cr, revenue cr · one currency · Σ/ccy = 0 |
-| UPDATE/DELETE revoked on entries | `migrations/002_conservation.sql` + `test_entries_are_append_only` |
-| idempotency_key required; stored fields compared on hit | `ledger.py` `post()` signature, and its `request_fingerprint` comparison |
-| reconciliation entrypoint · schedule · alert config key | `reconcile.py` `run()` · `*/15 * * * *` · `LEDGER_ALERT_SINK` |
-| opening balances backfilled before first reconcile run | `migrations/002_conservation.sql`, the `'opening'` group |
-| reversal path: overdraws, and posts to a frozen account | `ledger.py` `reverse()` + `test_clawback_can_overdraw_and_an_ordinary_debit_cannot` |
-
-Every row is filled, so the contract itself passes. The one control still named `UNRESOLVED` on the
-`controls:` line is the revoked grant on `accounts`, and it is on that line rather than deleted from the
-page, which is the whole difference between a named risk and a comment about one.
+The one control still named `UNRESOLVED` is the revoked grant on `accounts`, and it is on the page rather
+than deleted from it, which is the whole difference between a named risk and a comment about one.

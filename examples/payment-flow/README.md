@@ -144,13 +144,13 @@ class OrderRefund(db.Model):
 
 | Defect | Rule | What actually happens | Loss shape |
 |---|---|---|---|
-| `db.session.flush()` then `db.session.rollback()` on `StripeError` | `fin-money-core`: *Durable intent before the external effect*, *Operation identity is a property of the decision, not of the bytes* | The docstring says the row exists so the attempt survives a timeout. It does not: `flush()` inside an open transaction is not persistence, and the `rollback()` fires on exactly the ambiguous timeout the row was written for. Postgres **does not roll back BIGSERIAL**. The client retries, gets `refund.id = N+1`, derives `order-7-refund-N+1`, and Stripe sees a brand-new request. | **A second real refund of the full amount.** Duplicate principal, silent, and the local table shows one refund because the first row was rolled away. |
-| `except stripe.error.StripeError` as one branch | `fin-money-core`: *Every failure signal carries a class, and the class reaches the decision point* | A `CardError`, an `InvalidRequestError` and a `requests.Timeout` are flattened into one 502. The classification that decides whether the money moved is destroyed at the point it is created. | Prerequisite for the above: without the classification there is no correct branch to take. |
-| `refund.status = obj["status"]`; `order.refunded_cents += obj["amount"]` | `fin-payments`: *A pushed event names an object; only the authority holds that object's state*. `fin-money-core`: *Arrival order is not occurrence order* | Every ledger move is made from a snapshot of the object as it looked when the event was *queued*. `stripe.Refund.retrieve(...)` appears **nowhere** in the handler. Order attribution comes from payload `metadata`, which is equally stale. | Money booked against the wrong amount, wrong status, or wrong order. |
-| No dispute or chargeback check before `Refund.create` | `fin-payments`: *A ceiling is computed from the authority's own numbers, net of everything in flight* | The strings "dispute" and "chargeback" appear **nowhere** in the endpoint. Stripe: *"You can't issue a refund outside the dispute process while the dispute is open."* On bank-debit rails the failure is worse: Stripe warns of *"a risk of double refund … the customer might receive two credits for the same transaction."* | **The customer is paid twice, plus the dispute fee.** The highest single-event loss in this example. |
-| The ceiling is `order.amount_cents`, counting only `succeeded` | `fin-payments`: *A ceiling is computed from the authority's own numbers, net of everything in flight* | The order total is not the captured amount: a partial capture, an incremental authorization or an application fee all break the equality. Counting only `succeeded` refunds means in-flight money reserves nothing, so two concurrent partial refunds both pass the check. | Over-refund up to the whole order, repeatable. |
-| `refund.last_event_created >= obj["created"]` | `fin-payments`: *Ordering is per object, and the guard is the write*. `fin-money-core`: *Arrival order is not occurrence order* | Stripe's `created` is **second-granularity**, and `refund.created` and `refund.updated` on the same `re_…` routinely share a second. A bare `>=` discards the `succeeded` event and the refund stays `pending` forever. The guard is also a TOCTOU: two concurrent redeliveries both read, both pass, both write. Event-id dedupe cannot substitute: a late `refund.created` carries a fresh `event.id` the table has never seen and re-arms the money branch. | Refund never books, or books twice. Both silent until the settlement report. |
-| Unresolvable event still inserted into `processed_stripe_events` | `fin-payments`: *Durably record what you applied, never that you saw it* | The signature verification and the unique index are both correct, and the unresolvable event is committed to the dedupe table anyway. Stripe then stops redelivering and the miss is permanent. The dedupe mechanism works **against** recovery. | Total, permanent loss of that event. No error, no retry, no log line anyone reads. |
+| `db.session.flush()` then `db.session.rollback()` on `StripeError` | `fin-money-core`: *operation identity*, *ambiguous outcomes* | The docstring says the row exists so the attempt survives a timeout. It does not: `flush()` inside an open transaction is not persistence, and the `rollback()` fires on exactly the ambiguous timeout the row was written for. Postgres **does not roll back BIGSERIAL**. The client retries, gets `refund.id = N+1`, derives `order-7-refund-N+1`, and Stripe sees a brand-new request. | **A second real refund of the full amount.** Duplicate principal, silent, and the local table shows one refund because the first row was rolled away. |
+| `except stripe.error.StripeError` as one branch | `fin-money-core`: *ambiguous outcomes* | A `CardError`, an `InvalidRequestError` and a `requests.Timeout` are flattened into one 502. The classification that decides whether the money moved is destroyed at the point it is created. | Prerequisite for the above: without the classification there is no correct branch to take. |
+| `refund.status = obj["status"]`; `order.refunded_cents += obj["amount"]` | `fin-payments`: *A pushed event names an object; only the authority holds that object's state*. `fin-money-core`: *authority* | Every ledger move is made from a snapshot of the object as it looked when the event was *queued*. `stripe.Refund.retrieve(...)` appears **nowhere** in the handler. Order attribution comes from payload `metadata`, which is equally stale. | Money booked against the wrong amount, wrong status, or wrong order. |
+| No dispute or chargeback check before `Refund.create` | `fin-payments`: *The refund ceiling is the processor's number, net of everything in flight* | The strings "dispute" and "chargeback" appear **nowhere** in the endpoint. Stripe: *"You can't issue a refund outside the dispute process while the dispute is open."* On bank-debit rails the failure is worse: Stripe warns of *"a risk of double refund … the customer might receive two credits for the same transaction."* | **The customer is paid twice, plus the dispute fee.** The highest single-event loss in this example. |
+| The ceiling is `order.amount_cents`, counting only `succeeded` | `fin-payments`: *The refund ceiling is the processor's number, net of everything in flight* | The order total is not the captured amount: a partial capture, an incremental authorization or an application fee all break the equality. Counting only `succeeded` refunds means in-flight money reserves nothing, so two concurrent partial refunds both pass the check. | Over-refund up to the whole order, repeatable. |
+| `refund.last_event_created >= obj["created"]` | `fin-payments`: *Ordering is per object, on the authority's own sequence, and the guard is the write*. `fin-money-core`: *concurrency on authoritative state* | Stripe's `created` is **second-granularity**, and `refund.created` and `refund.updated` on the same `re_…` routinely share a second. A bare `>=` discards the `succeeded` event and the refund stays `pending` forever. The guard is also a TOCTOU: two concurrent redeliveries both read, both pass, both write. Event-id dedupe cannot substitute: a late `refund.created` carries a fresh `event.id` the table has never seen and re-arms the money branch. | Refund never books, or books twice. Both silent until the settlement report. |
+| Unresolvable event still inserted into `processed_stripe_events` | `fin-payments`: *Record durably what you applied, never that you saw it* | The signature verification and the unique index are both correct, and the unresolvable event is committed to the dedupe table anyway. Stripe then stops redelivering and the miss is permanent. The dedupe mechanism works **against** recovery. | Total, permanent loss of that event. No error, no retry, no log line anyone reads. |
 
 ---
 
@@ -173,18 +173,18 @@ bp = Blueprint("refunds", __name__)
 stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
 WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
 
-# Reconciliation runs in production: the alert destination is a config key with no
-# default, so import fails rather than alerting into a void.
+# Reconciliation: the alert destination is a config key with no default, so import
+# fails rather than alerting into a void.
 ALERT_SINK = os.environ["PAYMENTS_ALERT_SINK"]
 
 # A dispute is closed only in these three states. Anything else, including a status
 # this code has never seen, is open, and open means no refund. Fail closed.
 CLOSED_DISPUTE = {"won", "lost", "warning_closed"}
 
-# Ordering is per object, and the guard is the write. These are the enumerated legal
-# (state, event) pairs. `succeeded → failed` is legal, because the bank can return the
-# money up to 30 days after the post date. `succeeded → pending` is not: a terminal
-# state is never re-opened by a status message.
+# Ordering is per object, on the authority's own sequence, and the guard is the write.
+# These are the enumerated legal (state, event) pairs. `succeeded → failed` is legal,
+# because the bank can return the money up to 30 days after the post date.
+# `succeeded → pending` is not: a terminal state is never re-opened by a status message.
 LEGAL_REFUND_TRANSITIONS = {
     ("pending", "pending"), ("pending", "requires_action"), ("pending", "succeeded"),
     ("pending", "failed"), ("pending", "canceled"),
@@ -469,71 +469,128 @@ protecting nothing that still needed protecting.
 
 **Not changed, and named as out of scope.** `post_refund_to_ledger` is a call, not an implementation.
 The balanced group it must write, including the fact that Stripe's original processing fee is **not**
-returned and so the refund group is not the mirror image of the charge group, is *A reversal is not the
-mirror image of the original* in `fin-payments`, and it lives in `examples/ledger`. Marketplace transfer
+returned and so the refund group is not the mirror image of the charge group, is *The processing fee is not
+returned by a reversal* in `fin-payments`, and it lives in `examples/ledger`. Marketplace transfer
 reversal, the other half of that same rule, is absent because this charge is single-party; if a
 `transfer_data` ever appears on the intent, the reversal has to land in the same unit of work as the
 refund.
 
 ---
 
-## The block the review ends with
+## The output the review ends with
 
-**Why this is T2.** A customer is on the other side of the money: the refund credits someone else's card,
-the crediting path is driven by a webhook this service does not control, and the loss lands on the merchant
-and the cardholder rather than on the account that wrote the code. That is the T2 test, and a payments
-integration meets it by default.
+A customer is on the other side of the money: the refund credits someone else's card, the crediting path is
+driven by a webhook this service does not control, and the loss lands on the merchant and the cardholder
+rather than on the account that wrote the code. Stripe holds the record and answers questions about it, so
+authority is EXTERNAL and comparison against its settlement report is the primary proof.
 
-So the review emits the `FINANCIAL CHECK` and then the `PAYMENTS CONTRACT`. Rows the change does not touch
-still appear; a row nobody can fill is work not yet done, not a row to delete.
+`fin-payments` asks for its fuller control table when exposure is `record`, when a payout, withdrawal or
+crediting path changes, when two or more processors are in scope, or when the change touches three or more
+of its invariants at once. This change touches six, so the test names below are the ones that table would
+have carried.
 
-The anchors below name functions rather than lines, because the corrected code is a listing in this file.
-In a real response every one of them is a `file:line`.
+`EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
+real response every one of them is a `file:line`.
 
 ```
-ECONOMIC-DIFF: amount, effect, authority, replay
-FINANCIAL CHECK
-tier:       T2, an order_id on the refunded amount, a crediting webhook, a live STRIPE_SECRET_KEY
-effect:     a partial or full refund of a captured Stripe charge, merchant to cardholder, in the charge's
-            own currency and minor units
-identity:   rf_<uuid4>, committed by app/refunds.py create_refund() before the Refund.create call, unique
-            per client Idempotency-Key and compared against the stored request_body on replay
-ambiguity:  APIConnectionError, APIError, RateLimitError and IdempotencyError are UNKNOWN; the endpoint
-            returns 202 and app/refunds.py resolve_inflight_attempts() resolves them by listing the
-            charge's refunds and matching metadata.attempt
-authority:  Stripe. amount_captured, amount_refunded, the dispute status and the refund's own status are
-            the record; refund_attempts is a local assertion about them
-recovery:   a crash between the commit and the call leaves an inflight row with the key already on disk,
-            which resolve_inflight_attempts() picks up on boot and on schedule
-controls:   idempotency key committed before the call -> app/refunds.py create_refund()
-            key minted from the intent, surviving ROLLBACK -> app/refunds.py create_refund()
-            stored request body compared on replay -> app/refunds.py create_refund()
-            DEFINITE-NO split from UNKNOWN -> app/refunds.py create_refund() except clauses
-            refund ceiling net of in-flight refunds -> app/refunds.py create_refund()
-            open dispute refuses the refund -> app/refunds.py CLOSED_DISPUTE
-            object re-read from the processor inside the handler -> app/refunds.py stripe_webhook()
-            per-object watermark applied as the write -> migrations refund_watermarks + stripe_webhook()
-            legal (state, event) pairs enumerated -> app/refunds.py LEGAL_REFUND_TRANSITIONS
-            unresolvable event dead-lettered, not processed -> app/refunds.py stripe_webhook()
-            alert destination with no default -> app/refunds.py ALERT_SINK
-            UNRESOLVED: scheduled settlement-report reconciliation, no importer exists yet
-            UNRESOLVED: the balanced refund group, including the unreturned processing fee, is called and
-            not implemented here; it lives in examples/ledger
+authority: EXTERNAL (Stripe) · exposure: customer
 
-PAYMENTS CONTRACT
+FINDING   A refund whose Stripe call times out is refunded a second time in full, and the local table
+          shows one refund because the first row was rolled away. Duplicate principal, silent.
+WHY       `db.session.flush()` inside an open transaction is not persistence, and `db.session.rollback()`
+          fires on exactly the ambiguous timeout the row was written for. Postgres does not roll back
+          BIGSERIAL, so the client retry gets `refund.id = N+1`, derives `order-7-refund-N+1`, and Stripe
+          sees a brand-new request.
+EVIDENCE  app/refunds.py create_refund(), the flush that mints the key and the rollback in the except
+          clause; app/models.py OrderRefund.id, BIGSERIAL
+FIX       Mint `rf_<uuid4>` from the intent instance, from a value that survives ROLLBACK, and commit it
+          with the exact request body before the call: app/refunds.py create_refund(), with no transaction
+          lexically enclosing the Stripe call and the replay resolved against the stored request_body.
+TEST      A retry after a timeout sends the same idempotency key and produces one refund at Stripe; a
+          reused key carrying a different body is rejected rather than executed.
+
+FINDING   The branch that decides whether the money moved cannot be written, because the information it
+          needs is destroyed at the point it arrives.
+WHY       `except stripe.error.StripeError` flattens a `CardError`, an `InvalidRequestError` and a
+          `requests.Timeout` into one 502. DEFINITE-NO and UNKNOWN become the same value.
+EVIDENCE  app/refunds.py create_refund(), the single except clause
+FIX       Split the handler: `InvalidRequestError` is the documented rejection and finishes the attempt as
+          `rejected`; `APIConnectionError`, `APIError`, `RateLimitError` and `IdempotencyError` are
+          UNKNOWN, return 202, and are resolved by app/refunds.py resolve_inflight_attempts() reading the
+          charge's refunds by `metadata.attempt`.
+TEST      Each modelled Stripe failure lands in exactly one class, and no UNKNOWN path resubmits.
+
+FINDING   Money is booked against the wrong amount, the wrong status or the wrong order, from a snapshot
+          of the object as it looked when the event was queued.
+WHY       `refund.status = obj["status"]` and `order.refunded_cents += obj["amount"]` read the payload.
+          `stripe.Refund.retrieve(...)` appears nowhere in the handler, and order attribution comes from
+          payload `metadata`, which is equally stale. The queue can be days deep.
+EVIDENCE  app/refunds.py stripe_webhook(), the assignments from `obj`
+FIX       Re-read the named object from Stripe outside any transaction, then decide, then write; every
+          value written comes from `fresh`: app/refunds.py stripe_webhook().
+TEST      test_webhook_reads_from_api_not_payload.
+
+FINDING   The cardholder is paid twice and the merchant pays the dispute fee on top. The highest
+          single-event loss in this example.
+WHY       The strings "dispute" and "chargeback" appear nowhere in the endpoint. Stripe: *"You can't issue
+          a refund outside the dispute process while the dispute is open."* On bank-debit rails Stripe
+          warns of *"a risk of double refund … the customer might receive two credits for the same
+          transaction."*
+EVIDENCE  app/refunds.py create_refund(), the path from the ceiling check straight to Refund.create
+FIX       Expand `latest_charge.dispute` on the retrieve and refuse while the dispute status is not one of
+          the three closed states: app/refunds.py CLOSED_DISPUTE, applied in create_refund(). An unknown
+          status counts as open, so the check fails closed.
+TEST      An open dispute on the charge refuses the refund; a status the code has never seen refuses it
+          too.
+
+FINDING   An order can be over-refunded up to its whole total, repeatably.
+WHY       The ceiling is `order.amount_cents`, which is not the captured amount once a partial capture, an
+          incremental authorization or an application fee exists, and only `succeeded` refunds are
+          subtracted. In-flight money reserves nothing, so two concurrent partial refunds both pass a
+          check neither would pass alone.
+EVIDENCE  app/refunds.py create_refund(), the `already + amount_cents > order.amount_cents` comparison
+FIX       Compute the ceiling from Stripe's own numbers, `amount_captured - amount_refunded`, minus the
+          local pending and requires_action attempts on that charge: app/refunds.py create_refund(), with
+          the partial index on refund_attempts (charge_id) supporting it.
+TEST      test_ceiling_counts_inflight_refunds.
+
+FINDING   A refund either never books and sits `pending` forever, or books twice. Both silent until the
+          settlement report.
+WHY       Stripe's `created` is second-granularity, and `refund.created` and `refund.updated` on the same
+          `re_…` routinely share a second, so a bare `>=` discards the `succeeded` event. The guard is
+          also a TOCTOU: two concurrent redeliveries both read, both pass, both write. Event-id dedupe
+          cannot substitute, because a late `refund.created` carries a fresh `event.id` the table has
+          never seen and re-arms the money branch.
+EVIDENCE  app/refunds.py stripe_webhook(), the `refund.last_event_created >= obj["created"]` comparison
+FIX       Make the guard the write: a conditional INSERT ... ON CONFLICT ... WHERE on refund_watermarks
+          whose rowcount is the decision, with the watermark carrying `(created, applied_event_ids)` so an
+          unseen identity at the same second is still admitted: app/refunds.py stripe_webhook() and
+          migrations refund_watermarks.
+TEST      test_same_second_created_both_apply.
+
+FINDING   An event that cannot be resolved is lost permanently, with no error, no retry and no log line
+          anyone reads.
+WHY       The unresolvable event is committed to `processed_stripe_events` anyway, so Stripe stops
+          redelivering. The dedupe mechanism works against recovery: the miss is a hole in local state,
+          not a processed event.
+EVIDENCE  app/refunds.py stripe_webhook(), the `refund is None` branch that inserts ProcessedStripeEvent
+FIX       Dead-letter it, alert, and leave it undeduped so redelivery continues: app/refunds.py
+          stripe_webhook(), the DeadLetter insert. `processed_stripe_events` is written only in the same
+          transaction as the effect.
+TEST      test_unknown_refund_is_not_marked_processed.
+
+UNRESOLVED: scheduled settlement-report reconciliation (no balance-transaction importer exists yet; the
+alert destination is present at app/refunds.py ALERT_SINK and nothing reads the report)
+UNRESOLVED: the balanced refund group is called and not implemented here (app/refunds.py
+post_refund_to_ledger; it lives in examples/ledger)
+
+VERDICT   NO-SHIP: scheduled settlement-report reconciliation
 ```
 
-| risk | implemented at file:line | test name |
-|---|---|---|
-| refund ceiling from `amount_captured`, net of `pending` refunds and open disputes | `app/refunds.py` `create_refund()` | `test_ceiling_counts_inflight_refunds` |
-| `retrieve` of the named object from the processor API inside the handler | `app/refunds.py` `stripe_webhook()` | `test_webhook_reads_from_api_not_payload` |
-| per-object `(created, applied_event_ids)` watermark, applied as the write | `app/refunds.py` `stripe_webhook()` | `test_same_second_created_both_apply` |
-| unresolvable event dead-lettered and alerted, not marked processed | `app/refunds.py` `stripe_webhook()` | `test_unknown_refund_is_not_marked_processed` |
-| refund ledger group reverses principal and leaves the fee expensed | ABSENT, called as `post_refund_to_ledger` | see `examples/ledger` |
-| scheduled settlement-report reconciliation, alert destination a config key with no default | ABSENT (sink present at `ALERT_SINK`) | none |
-| transfer reversal in the same unit of work | n/a, this charge carries no `transfer_data` | none |
-| destination verification | n/a, card rail, not wire, RTP or FedNow | none |
-
-Two ABSENT rows, so the verdict on this endpoint is **NO-SHIP until the settlement reconciliation exists**.
 That is the honest reading: everything upstream of the money moving is now correct, and nothing yet
 compares what Stripe says it paid out against what this service believes it refunded.
+
+Two rows the retired block carried as `n/a` are simply gone: the transfer reversal named out of scope
+above, and destination verification, which belongs to wire, RTP and FedNow under *Finality is a property of
+the rail, not of your API surface* rather than to a card refund. A concept the change does not touch gets
+no slot at all.
