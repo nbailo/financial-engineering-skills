@@ -610,7 +610,7 @@ a job that looks for one is checking that Postgres works.
 function is the stronger form of `fin-ledger`'s *One entrypoint, and the solvency check lives inside it*, and
 it is not implemented here; the application role still writes `accounts.balance_cents` directly, and axis 1
 is what makes that survivable. Bitemporality, which `fin-ledger` carries in
-[corrections-and-bitemporality.md](../../skills/fin-ledger/references/corrections-and-bitemporality.md), is
+[bitemporality-and-close.md](../../skills/fin-ledger/references/bitemporality-and-close.md), is
 absent because this ledger has no reporting period and no back-dating. Both become required the moment
 this system has an accounting close.
 
@@ -618,24 +618,29 @@ this system has an accounting close.
 
 ## The output the review ends with
 
-This ledger is the system of record. It assigns the transaction ids other systems consume, it decides what
-a customer's balance is, and no external oracle holds the same numbers, so nothing outside it can tell it
-that it is wrong. The custodian statement covers one axis, the aggregate customer position, and nothing
-covers the rest. Authority is therefore SELF, which is what makes `fin-verification`'s *When authority is
-SELF there is nothing to reconcile against* the rule that sets the evidence here: replay, conservation and
-a planted break rather than a comparison against somebody else's copy. Exposure is `customer`, because the
-money at risk is the customer's, and this ledger is also the record other systems consume, which raises the
-bar rather than lowering it.
+This ledger is the system of record for almost everything it holds. It assigns the transaction ids other
+systems consume, it decides what a customer's balance is, and no external oracle holds the same numbers,
+so nothing outside it can tell it that it is wrong. One quantity is different: the aggregate customer
+position, which the custodian also holds and which axis 3 compares against. Authority is a property of a
+quantity rather than of the codebase, so the line says MIXED and qualifies the one that differs.
 
-`fin-ledger` asks for its per-verb contract table only when authority is SELF **and** the change adds,
-routes or reshapes a write to the entries. This change does exactly that, so the evidence anchors below are
-the ones that table would have carried.
+For the SELF quantities `fin-verification`'s *When authority is SELF there is nothing to reconcile
+against* sets the evidence: replay, conservation and a planted break rather than a comparison against
+somebody else's copy. For the aggregate the custodian statement is a real oracle and the evidence is the
+comparison. Exposure is `customer`, because the money at risk is the customer's, and this ledger is also
+the record other systems consume, which raises the bar rather than lowering it.
+
+`fin-ledger` asks for its per-verb contract table only when a quantity in scope is SELF **and** the change
+adds, routes or reshapes a write to the entries. This change does exactly that, so the evidence anchors
+below are the ones that table would have carried.
 
 `EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
 real response every one of them is a `file:line`.
 
 ```
-authority: SELF · exposure: customer
+authority: MIXED · exposure: customer
+  balances, postings and transaction ids  SELF
+  aggregate customer position             EXTERNAL (custodian statement)
 
 FINDING   Every transfer debits a fee from the sender and credits it to nobody. The trial balance is off by
           the cumulative fee take from the first transfer onwards, and the discrepancy grows with volume.

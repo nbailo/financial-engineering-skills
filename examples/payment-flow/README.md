@@ -150,7 +150,7 @@ class OrderRefund(db.Model):
 | No dispute or chargeback check before `Refund.create` | `fin-payments`: *The refund ceiling is the processor's number, net of everything in flight* | The strings "dispute" and "chargeback" appear **nowhere** in the endpoint. Stripe: *"You can't issue a refund outside the dispute process while the dispute is open."* On bank-debit rails the failure is worse: Stripe warns of *"a risk of double refund … the customer might receive two credits for the same transaction."* | **The customer is paid twice, plus the dispute fee.** The highest single-event loss in this example. |
 | The ceiling is `order.amount_cents`, counting only `succeeded` | `fin-payments`: *The refund ceiling is the processor's number, net of everything in flight* | The order total is not the captured amount: a partial capture, an incremental authorization or an application fee all break the equality. Counting only `succeeded` refunds means in-flight money reserves nothing, so two concurrent partial refunds both pass the check. | Over-refund up to the whole order, repeatable. |
 | `refund.last_event_created >= obj["created"]` | `fin-payments`: *Ordering is per object, on the authority's own sequence, and the guard is the write*. `fin-money-core`: *concurrency on authoritative state* | Stripe's `created` is **second-granularity**, and `refund.created` and `refund.updated` on the same `re_…` routinely share a second. A bare `>=` discards the `succeeded` event and the refund stays `pending` forever. The guard is also a TOCTOU: two concurrent redeliveries both read, both pass, both write. Event-id dedupe cannot substitute: a late `refund.created` carries a fresh `event.id` the table has never seen and re-arms the money branch. | Refund never books, or books twice. Both silent until the settlement report. |
-| Unresolvable event still inserted into `processed_stripe_events` | `fin-payments`: *Record durably what you applied, never that you saw it* | The signature verification and the unique index are both correct, and the unresolvable event is committed to the dedupe table anyway. Stripe then stops redelivering and the miss is permanent. The dedupe mechanism works **against** recovery. | Total, permanent loss of that event. No error, no retry, no log line anyone reads. |
+| Unresolvable event still inserted into `processed_stripe_events` | `fin-payments`: *The event identity dedupes the delivery; the object and the transition dedupe the effect* | The signature verification and the unique index are both correct, and the unresolvable event is committed to the dedupe table anyway. Stripe then stops redelivering and the miss is permanent. The dedupe mechanism works **against** recovery. | Total, permanent loss of that event. No error, no retry, no log line anyone reads. |
 
 ---
 
@@ -467,13 +467,16 @@ The `with_for_update()` on the order row was **removed**, not tightened. The cei
 Stripe's own captured figure and enforced by a unique constraint on `client_key`, so the row lock was
 protecting nothing that still needed protecting.
 
-**Not changed, and named as out of scope.** `post_refund_to_ledger` is a call, not an implementation.
-The balanced group it must write, including the fact that Stripe's original processing fee is **not**
-returned and so the refund group is not the mirror image of the charge group, is *The processing fee is not
-returned by a reversal* in `fin-payments`, and it lives in `examples/ledger`. Marketplace transfer
-reversal, the other half of that same rule, is absent because this charge is single-party; if a
-`transfer_data` ever appears on the intent, the reversal has to land in the same unit of work as the
-refund.
+**Not changed, and named as out of scope.** `post_refund_to_ledger` is a call, not an implementation. The
+balanced group it must write is *Reversal fee treatment is a term of the contract, confirmed against
+settlement* in `fin-payments`, and it lives in `examples/ledger`. Whether the original processing cost
+comes back, whether the reversal carries a fee of its own, and how a split reverses are properties of the
+provider, the rail and the merchant agreement, so the group is not written as the mirror image of the
+charge group and it is not written from an assumption in either direction. It is taken from the contract
+and confirmed against the settlement lines for that reversal, which is the only place the gap shows.
+Marketplace transfer reversal, the other half of that same rule, is absent because this charge is
+single-party; if a `transfer_data` ever appears on the intent, the reversal has to land in the same unit of
+work as the refund.
 
 ---
 
@@ -481,11 +484,14 @@ refund.
 
 A customer is on the other side of the money: the refund credits someone else's card, the crediting path is
 driven by a webhook this service does not control, and the loss lands on the merchant and the cardholder
-rather than on the account that wrote the code. Stripe holds the record and answers questions about it, so
-authority is EXTERNAL and comparison against its settlement report is the primary proof.
+rather than on the account that wrote the code. Stripe holds the record of the refund itself, so for that
+quantity authority is EXTERNAL and comparison against its settlement report is the primary proof. The
+in-flight reserve is different: an attempt that has been committed but not yet answered exists only here,
+and it is what the refund ceiling subtracts. No external party can confirm it, so that quantity is SELF and
+its evidence is replay and concurrency rather than comparison.
 
 `fin-payments` asks for its fuller control table when exposure is `record`, when a payout, withdrawal or
-crediting path changes, when two or more processors are in scope, or when the change touches three or more
+crediting path changes, when two or more processors or rails are in scope, or when the change touches three
 of its invariants at once. This change touches six, so the test names below are the ones that table would
 have carried.
 
@@ -493,7 +499,9 @@ have carried.
 real response every one of them is a `file:line`.
 
 ```
-authority: EXTERNAL (Stripe) · exposure: customer
+authority: MIXED · exposure: customer
+  refund, dispute and settlement state  EXTERNAL (Stripe)
+  in-flight refund reserve              SELF
 
 FINDING   A refund whose Stripe call times out is refunded a second time in full, and the local table
           shows one refund because the first row was rolled away. Duplicate principal, silent.

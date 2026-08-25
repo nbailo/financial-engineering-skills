@@ -3,7 +3,7 @@
 Two hundred lines that buy a fixed notional of a symbol at the touch and rest a limit sell one percent above
 the entry. This is the shape of code that gets written on a Thursday afternoon by someone who has read the
 Binance docs once and is shipping under time pressure. That is the point: the code is mostly right, and
-the four things wrong with it are the four that cost money.
+the six defects below are the six that cost money.
 
 ---
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
 |---|---|---|---|
 | `except Timeout: ... retry` around `new_order` | `fin-money-core`: *operation identity*, *ambiguous outcomes*. `fin-exchange-integration`: *A response that does not prove the outcome is UNKNOWN, and the answer is a query* | A timeout means the request may have reached the matching engine and the response was lost. It is `UNKNOWN`, not "did not happen". The retry sends a second, unconditioned buy. | Double position at double notional, one leg invisible to the bot's own sizing. Unbounded if the loop is longer than one retry. |
 | `cid = resp["clientOrderId"]`, read *after* the send | `fin-money-core`: *operation identity*. `fin-exchange-integration`: *A client order ID correlates; it deduplicates only where the venue documents that* | The correlation key is minted by the venue and only exists once the response arrives. On the exact failure it is needed for, there is nothing to query by. Nothing durable is written before the first byte goes out. | Total loss of the recovery path: the bot cannot tell "never placed" from "placed and filled". |
-| Design note 2: "newClientOrderId is unique … retrying is safe" | `fin-exchange-integration`: *A client order ID correlates; it deduplicates only where the venue documents that*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | On Binance spot and futures the client order ID is unique **only among open orders**. Once the first order fills or is cancelled, the ID is free again and the resend creates a genuine second order. `-2010` never fires. The comment is what let this survive review. | The duplicate above, plus false confidence: the assertion is load-bearing for the retry and is false. |
+| Design note 2: "newClientOrderId is unique … retrying is safe" | `fin-exchange-integration`: *A client order ID correlates; it deduplicates only where the venue documents that*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | Wrong three times over. `req` never carries `newClientOrderId`, so Binance mints the id and no collision is possible. Where one is sent, Binance documents uniqueness **only among open orders**, so once the first order fills or is cancelled the id is free and the resend creates a genuine second order. And `-2010 "Duplicate order sent."` is not the safe rejection the note assumes: it is *evidence that the first order is open*, so the answer to it is to query that order. The comment is what let this survive review. | The duplicate above, plus false confidence: the assertion is load-bearing for the retry and is false. |
 | `snap()` runs `value % increment` on floats | `fin-money-core`: *exact representation* | `0.29 % 0.01 == 0.009999999999999974`, so `snap(0.29, 0.01)` returns **0.28**, a whole step below the intended value. `int(0.29/0.01) == 28` fails identically. Rounding "down to the nearest tick" silently drops a full tick whenever the value is not exactly representable in binary. | One tick or one step per order, always in the same direction. On quantity it also risks tripping `minNotional` and being rejected outright. |
 | `entry = float(buy["price"])` for the take-profit | `fin-exchange-integration`: *The round-trip gross-up, and the quantization direction* | The target is computed from the price the bot *asked for*, not from `cummulativeQuoteQty / executedQty`, and it is never grossed up for the round-trip commission. A `+1%` target at 0.1% taker fees per side realises **+0.798%**. The sell quantity is separately shaved by the base-asset commission with no compensating price increase. | Persistent bleed: ~20% of the intended edge, on 100% of round trips, always understating cost. |
 | `# TODO: on startup, reconcile our open orders …` | `fin-money-core`: *Implemented, not described* | A named risk written as a comment is the same defect as the missing control: the right control is identified and described accurately, then written as prose instead of built. | Whatever the un-built control was worth. Here: an orphan resting order that keeps filling. |
@@ -188,7 +188,9 @@ price covers the round-trip commission.
 
 Three phases per external call: COMMIT the intent, make the call, record the outcome.
 A timeout is UNKNOWN and is resolved by querying the client order ID we minted, never
-by resending. Every price and quantity is an obligation and is held in Decimal.
+by resending. An unknown outcome reserves the worst case, gates the instrument, cancels
+by the identity we sent, and then asks the venue; nothing flattens on a timer. Every
+price and quantity is an obligation and is held in Decimal.
 """
 import argparse
 import json
@@ -209,15 +211,30 @@ log = logging.getLogger("scalper")
 # including every transport failure, is UNKNOWN. Every failure signal carries a class:
 # a path is DEFINITE-NO only where the venue documents, for that exact code, that the
 # request was not enqueued.
-DEFINITE_NO = {-1013, -1021, -1100, -1102, -1111, -2010}
+DEFINITE_NO = {-1013, -1021, -1100, -1102, -1111}
 
-# A ceiling that warns is not a control: the risk gate is a config key with no
-# default. Import fails if unset.
+# -2010 NEW_ORDER_REJECTED is a message table, not one condition, so the branch is on
+# the message and never on the code alone. "Account has insufficient balance for
+# requested action." and "Order would immediately match and take." are rejections.
+# "Duplicate order sent." is EVIDENCE: it proves an order carrying this client order ID
+# is open. Filing it as a rejection abandons a live order. Query it instead.
+DUPLICATE_CLIENT_ID = "Duplicate order sent."
+
+# The alert destination is a config key with no default. Import fails if unset.
 ALERT_SINK = os.environ["SCALPER_ALERT_SINK"]
+
+# An unresolved instruction carries a wall-clock budget, declared as config. Expiry
+# escalates and leaves the gate closed. It fires no action, because a clock expiring
+# into something that can invert the position is worse than the wait.
+UNRESOLVED_BUDGET_S = float(os.environ["SCALPER_UNRESOLVED_BUDGET_S"])
 
 
 class Unresolved(Exception):
     """Submit outcome is UNKNOWN after the full query ladder. Do not resubmit."""
+
+
+class RiskGateClosed(Exception):
+    """The instrument is gated. Nothing may increase exposure while it is."""
 
 
 class NothingFilled(Exception):
@@ -240,8 +257,44 @@ db.executescript(
         cum_quote_qty   TEXT,
         sent_at         REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS risk_gates (
+        symbol    TEXT PRIMARY KEY,
+        closed_at REAL NOT NULL,
+        reason    TEXT NOT NULL
+    );
     """
 )
+
+
+def close_risk_gate(symbol, reason):
+    """Reserve the worst case while the outcome is unknown.
+
+    The gate blocks new sends and size-increasing amends only. Cancel, query, position
+    and PnL stay callable while it is closed, and it reopens only on a successful
+    comparison against the venue, never on a timer.
+    """
+    db.execute("BEGIN IMMEDIATE")
+    db.execute("INSERT OR IGNORE INTO risk_gates (symbol, closed_at, reason)"
+               " VALUES (?,?,?)", (symbol, time.time(), reason))
+    db.execute("COMMIT")
+
+
+def gate_closed(symbol):
+    return db.execute("SELECT 1 FROM risk_gates WHERE symbol=?",
+                      (symbol,)).fetchone() is not None
+
+
+def reserved_notional(symbol):
+    """An unresolved instruction is held at FULL notional, as though it filled, until
+    the venue says otherwise. Releasing the reserve on a guess is the error."""
+    total = Decimal(0)
+    for (blob,) in db.execute(
+        "SELECT request_json FROM order_intents WHERE symbol=?"
+        " AND state IN ('INFLIGHT','INFLIGHT_UNKNOWN')", (symbol,)
+    ):
+        body = json.loads(blob)
+        total += Decimal(body["quantity"]) * Decimal(body["price"])
+    return total
 
 
 def commit_intent(cid, symbol, side, body):
@@ -296,8 +349,16 @@ def wire(d: Decimal) -> str:
 # ---------------------------------------------------------------------- the send path
 
 
-def submit(client, symbol, side, qty: Decimal, price: Decimal):
+def submit(client, symbol, side, qty: Decimal, price: Decimal, reduces_exposure=False):
     """Durable intent before the external effect: commit, call, record the outcome."""
+    # The refusal that protects us runs inside the function that sends, not in a
+    # sibling module and not in a monitor reading a metric. A closed gate blocks
+    # size-increasing sends only: selling a quantity the venue confirms we hold is
+    # risk-reducing and stays callable, which is what stops the gate from trapping a
+    # position it cannot protect.
+    if gate_closed(symbol) and not reduces_exposure:
+        raise RiskGateClosed(symbol)
+
     cid = "fes-" + uuid.uuid4().hex[:28]  # <= 36 chars, matches Binance's charset
     body = dict(
         symbol=symbol,
@@ -313,12 +374,17 @@ def submit(client, symbol, side, qty: Decimal, price: Decimal):
     try:
         resp = client.new_order(**body)
     except ClientError as e:
-        if e.error_code in DEFINITE_NO:
+        message = e.error_message or ""
+        if e.error_code == -2010 and DUPLICATE_CLIENT_ID in message:
+            # Evidence, not a rejection: an order carrying this id is open. The venue
+            # has told us the state, so the blind rung is skipped and we query it.
+            return resolve(client, symbol, cid, cancel_first=False)
+        if e.error_code == -2010 or e.error_code in DEFINITE_NO:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "UPDATE order_intents SET state='REJECTED', venue_status=?"
                 " WHERE client_order_id=?",
-                (str(e.error_code), cid),
+                (f"{e.error_code} {message}", cid),
             )
             db.execute("COMMIT")
             raise
@@ -330,14 +396,76 @@ def submit(client, symbol, side, qty: Decimal, price: Decimal):
     return resp
 
 
-def resolve(client, symbol, cid, rungs=6):
-    """The ambiguous-response ladder. Query by the identity we minted. Never resend.
+def cancel_by_identity(client, symbol, cid):
+    """Always safe, so it runs first.
+
+    A cancel can only remove a resting instruction. It can never open a position, in
+    any of the states the unresolved instruction might be in. Cancelling one that does
+    not exist is a no-op; cancelling one that rests removes exposure we cannot account
+    for. -2011 CANCEL_REJECTED "Unknown order sent." is the expected answer in normal
+    operation, not an error to retry: the order filled between the decision and the
+    cancel, and its terminal state is read below.
+    """
+    try:
+        client.cancel_order(symbol=symbol, origClientOrderId=cid)
+    except ClientError as e:
+        if e.error_code not in (-2011, -2013):
+            raise
+
+
+def paged_orders(client, symbol, start_ms):
+    """allOrders is Database-sourced and bounded: startTime and endTime can be no more
+    than 24 hours apart, `limit` is 1000, and a page of exactly 1000 rows is a hole
+    rather than the end. Page until one comes back short.
+    """
+    now_ms = int(time.time() * 1000)
+    while start_ms < now_ms:
+        end_ms = min(start_ms + 24 * 3600 * 1000, now_ms)
+        page = client.get_orders(symbol=symbol, startTime=start_ms,
+                                 endTime=end_ms, limit=1000)
+        yield from page
+        start_ms = max(o["time"] for o in page) + 1 if len(page) >= 1000 else end_ms
+
+
+def resolve(client, symbol, cid, cancel_first=True):
+    """The ambiguous-response ladder, ordered by what is risk-reducing in EVERY state
+    the instruction might be in. It may have filled, partially filled, or never existed.
+
+    1. Reserve the worst case: the intent stays committed and is held at full notional,
+       and the risk gate for `symbol` closes, so nothing can increase exposure.
+    2. Always safe: stop sending, and cancel by the identity we minted. `cancel_first`
+       is False only where the venue has already named the state, which is what
+       -2010 "Duplicate order sent." does, so rung 3 applies directly.
+    3. Safe once authoritative state is known: query the venue for that identity, then
+       act on the difference between its number and ours.
+    4. Nothing here hedges or flattens. A flatten whose correctness depends on assuming
+       the instruction filled opens the opposite position in the case where it did not,
+       and an automatic action is admissible only where the venue has confirmed a
+       position or the exposure is bounded so the action cannot invert the sign.
 
     -2013 NO_SUCH_ORDER immediately after a submit is not proof of non-creation: Binance
     documents three data sources (Matching Engine / Memory / Database) with different
     staleness and asynchronous propagation between them.
+
+    The gate is not reopened here. Reopening belongs to resume(), which is a different
+    code path and reopens only after a comparison against the venue, never on a timer.
     """
-    for i in range(rungs):
+    db.execute("BEGIN IMMEDIATE")
+    db.execute("UPDATE order_intents SET state='INFLIGHT_UNKNOWN'"
+               " WHERE client_order_id=? AND state='INFLIGHT'", (cid,))
+    db.execute("COMMIT")
+    close_risk_gate(symbol, cid)
+    log.warning("%s unknown; %s gated, %s reserved at full notional",
+                cid, symbol, reserved_notional(symbol))
+
+    if cancel_first:
+        cancel_by_identity(client, symbol, cid)
+
+    deadline = time.time() + UNRESOLVED_BUDGET_S
+    sent_ms = int(db.execute("SELECT sent_at FROM order_intents WHERE client_order_id=?",
+                             (cid,)).fetchone()[0] * 1000)
+    backoff = 0.5
+    while time.time() < deadline:
         try:
             order = client.get_order(symbol=symbol, origClientOrderId=cid)
             record_outcome(cid, order)
@@ -346,28 +474,29 @@ def resolve(client, symbol, cid, rungs=6):
         except ClientError as e:
             if e.error_code != -2013:
                 raise
-        time.sleep(0.5 * 2**i)
+        # Next rungs: open orders, then history. Past 90 days a cancelled or expired
+        # order with no fills is archived and answers -2026, and this journal is the
+        # only record of it.
+        for order in list(client.get_open_orders(symbol=symbol)) + list(
+            paged_orders(client, symbol, sent_ms)
+        ):
+            if order["clientOrderId"] == cid:
+                record_outcome(cid, order)
+                return order
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
 
-    # Next rungs: open orders, then history. Binance's allOrders window is bounded,
-    # check references/venues/binance.md for the current bound before relying on it.
-    for order in client.get_open_orders(symbol=symbol) + client.get_orders(
-        symbol=symbol, limit=1000
-    ):
-        if order["clientOrderId"] == cid:
-            record_outcome(cid, order)
-            return order
-
-    db.execute("BEGIN IMMEDIATE")
-    db.execute(
-        "UPDATE order_intents SET state='INFLIGHT_UNKNOWN' WHERE client_order_id=?", (cid,)
-    )
-    db.execute("COMMIT")
-    alert(f"{cid} unresolved after full ladder; risk gate closed for {symbol}")
+    # Budget expired, and the ladder has nothing left. The always-safe rung ran at
+    # entry, the venue never answered so the query rung cannot fire, and the
+    # conditional rung is inadmissible because no position is confirmed. Escalate.
+    alert(f"{cid} unresolved after {UNRESOLVED_BUDGET_S}s; {symbol} stays gated with "
+          f"{reserved_notional(symbol)} reserved")
     raise Unresolved(cid)
 
 
 def resume(client):
-    """Every field written ahead of the effect is read by the recovery path.
+    """Every field written ahead of the effect is read by the recovery path, and the
+    gate is reopened here rather than by the code path that closed it.
 
     Called before anything is placed. Without this, the persisted client order ID is
     write-only and the journal is decoration.
@@ -381,9 +510,25 @@ def resume(client):
         try:
             resolve(client, symbol, cid)
         except Unresolved:
-            # The risk-reducing action for a bot that holds no other position is
-            # to refuse to start. It is not to place another order.
+            # Stop sending. For a bot holding no other position that means refusing to
+            # start. It never means placing another order, and it never means flattening
+            # a position the venue has not confirmed.
             raise SystemExit(f"{cid} unresolved; refusing to trade {symbol}")
+
+    for (symbol,) in db.execute("SELECT symbol FROM risk_gates").fetchall():
+        if reserved_notional(symbol) != 0:
+            continue
+        # The comparison that reopens the gate: every intent resolved, and no order
+        # resting at the venue that this journal cannot name.
+        theirs = {o["clientOrderId"] for o in client.get_open_orders(symbol=symbol)}
+        ours = {r[0] for r in db.execute(
+            "SELECT client_order_id FROM order_intents WHERE symbol=?", (symbol,))}
+        if theirs - ours:
+            alert(f"{symbol} rests orders this journal cannot name: {theirs - ours}")
+            continue
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM risk_gates WHERE symbol=?", (symbol,))
+        db.execute("COMMIT")
 
 
 def alert(message):
@@ -456,18 +601,26 @@ def main():
     # so read them from the venue rather than inferring a fee we did not observe.
     buy["fills"] = client.my_trades(symbol=args.symbol, orderId=buy["orderId"])
 
+    # reduces_exposure: this sells a quantity the venue confirms we hold, so a gate
+    # closed while the buy was unknown does not trap the position it was protecting.
     qty, price = take_profit_order(buy, args.take_profit, args.fee, args.fee, filters)
-    submit(client, args.symbol, "SELL", qty, price)
+    sell = submit(client, args.symbol, "SELL", qty, price, reduces_exposure=True)
+    if sell["status"] == "CANCELED":
+        # Resolved, not unknown: the ladder cancelled an instruction it could not
+        # account for, and the venue then told us so. Re-deciding from a known state is
+        # a new intent under a new identity, never a retry of the old one.
+        submit(client, args.symbol, "SELL", qty, price, reduces_exposure=True)
 
 
 if __name__ == "__main__":
     main()
 ```
 
-And the test that makes the first defect a regression rather than an opinion. `fin-exchange-integration`
+And the tests that make the first defect a regression rather than an opinion. `fin-exchange-integration`
 requires the first of its five properties proved in the repository's own framework: an instruction whose
 response is lost creates no duplicate economic effect. A description or a pointer to a test plan is the
-missing control, not a plan for it.
+missing control, not a plan for it. The last two assert the venue's own semantics, which is where a
+plausible reading of the docs turns into a wrong branch.
 
 ```python
 # tests/test_ambiguous_submit.py
@@ -479,31 +632,68 @@ def test_timeout_that_already_filled(bot, venue):
     order = bot.place_buy("BTCUSDT", Decimal("200"), bot.filters)
 
     assert venue.post_count("/api/v3/order") == 1          # MUST NOT resubmit
+    assert venue.cancelled_by_client_id(order["clientOrderId"])  # always-safe rung ran
     assert venue.queried_by_client_id(order["clientOrderId"])  # MUST query the minted id
     assert len(venue.orders("BTCUSDT")) == 1               # exactly one order exists
 
 
 def test_timeout_that_did_not_arrive(bot, venue):
     """The mirror case: the request never reached the venue. Only the harness knows
-    that, so the production path still ends UNKNOWN, closes the gate and resends
-    nothing. Harness knowledge is not a licence to retry."""
+    that, so the production path still ends UNKNOWN, reserves the worst case and
+    resends nothing. Harness knowledge is not a licence to retry.
+
+    The last two assertions are the ladder: the budget expires into escalation, not
+    into an action. A flatten here would sell a position the bot does not hold."""
     venue.drop_before_delivery("POST /api/v3/order")
 
     with pytest.raises(Unresolved):
         bot.place_buy("BTCUSDT", Decimal("200"), bot.filters)
     assert venue.post_count("/api/v3/order") == 1          # still no resubmit
-    assert bot.intent_state_is("INFLIGHT_UNKNOWN")         # and the gate is closed
+    assert bot.intent_state_is("INFLIGHT_UNKNOWN")
+    assert bot.gate_closed("BTCUSDT")                      # reserved at full notional
+    assert bot.reserved_notional("BTCUSDT") == Decimal("200")
+    assert venue.orders("BTCUSDT") == []                   # nothing was placed to hedge
+
+
+def test_duplicate_order_sent_resolves_to_the_open_order(bot, venue):
+    """-2010 is a message table, so the branch is on the message. "Duplicate order
+    sent." proves an order carrying this client order ID is open, which is evidence and
+    not a rejection. Branching on the code alone files a live order as REJECTED."""
+    venue.answer_next_order(code=-2010, message="Duplicate order sent.",
+                            leaving_it_resting=True)
+
+    order = bot.place_buy("BTCUSDT", Decimal("200"), bot.filters)
+
+    assert venue.post_count("/api/v3/order") == 1
+    assert venue.queried_by_client_id(order["clientOrderId"])
+    assert bot.intent_state_is("ACCEPTED")                 # never REJECTED
+    assert len(venue.orders("BTCUSDT")) == 1               # and it was not cancelled
+
+
+def test_no_such_order_right_after_placement_is_not_non_creation(bot, venue):
+    """-2013 answered by a stale replica is not proof the order does not exist. The
+    ladder re-queries across the propagation window instead of concluding."""
+    venue.deliver_upstream_then_fail("POST /api/v3/order", after_ms=50)
+    venue.answer_get_order(code=-2013, times=3)            # then the real state
+
+    order = bot.place_buy("BTCUSDT", Decimal("200"), bot.filters)
+
+    assert venue.post_count("/api/v3/order") == 1
+    assert order["status"] in ("NEW", "CANCELED", "FILLED")
 ```
 
 ---
 
 ## What changed, and what did not
 
-**Changed.** Six things: the intent row and its client order ID are committed before the socket write; the
-timeout branch queries instead of resending; the recovery path reads the field the send path wrote;
-`Decimal` replaces float in the two functions that produce numbers the venue sees; the take-profit basis
-moves from the requested price to the executed VWAP and is grossed up for both commission legs before
-quantization; and the reconciliation TODO becomes `resume()`.
+**Changed.** Seven things: the intent row and its client order ID are committed before the socket write;
+the timeout branch queries instead of resending; the failure classifier branches on the `-2010` message
+rather than the code, because "Duplicate order sent." is evidence the first order is open; an unknown
+outcome now reserves the worst case behind a real risk gate and cancels by the identity it sent before it
+asks; the recovery path reads the field the send path wrote; `Decimal` replaces float in the two functions
+that produce numbers the venue sees; and the take-profit basis moves from the requested price to the
+executed VWAP, grossed up for both commission legs before quantization. The reconciliation TODO became
+`resume()`, which is also the only path that reopens the gate.
 
 **Not changed, deliberately.** The strategy is untouched: buy the bid, rest a target above it. The
 polling fill loop was not replaced with a user-data websocket; the bot still holds one position at a time
@@ -514,6 +704,12 @@ ceremony. `minNotional` handling, the `PARTIALLY_FILLED` branch, `recvWindow` sk
 backoff were already correct in the original and were left alone, which is why the suite spends no words
 on them.
 
+**Considered and refused.** Expiring the unresolved budget into an automatic flatten. An unresolved buy
+may have filled, partially filled or never existed, so a sell sized to the full quantity is risk-reducing
+in one of those states and opens the opposite position in another. The budget expires into escalation
+with the gate held closed, and the only automatic actions on the page are the two that cannot invert the
+sign: the cancel by identity, and the take-profit against a quantity the venue has confirmed.
+
 **Not changed, and it should worry you.** There is still no scheduled reconciliation of position and
 realized PnL against the venue, and no funding, ADL or settlement ingestion, because spot has none. If
 this bot grows a position store, *The venue's number is the record; yours is a hypothesis until it is
@@ -523,18 +719,26 @@ compared* becomes the most important rule on this page and the `resume()` call i
 
 ## The output the review ends with
 
-Binance holds the record and answers any question about it, so authority is EXTERNAL and reconciliation
-against the venue is the primary proof. There is no customer on a position row, no payout path and one
-venue adapter, so exposure stays `own`. At `own`, `fin-verification`'s *At exposure `own`, five tests and
-one scheduled comparison carry the risk* sets the whole evidence bar, and no fuller venue contract is
-emitted: `fin-exchange-integration` asks for that only when exposure is `customer` or `record`, or when a
-second venue adapter appears.
+Binance holds the record of the orders, the fills and the position, and answers any question about them, so
+for those quantities comparison against the venue is the proof. The unresolved intent rows are the
+exception: an instruction committed but not yet answered exists only in `scalper.db`, nothing outside can
+confirm it, and it is what the reserve and the gate are computed from. Two authorities, so the line says
+MIXED and qualifies the one that differs.
+
+There is no customer on a position row, no payout path and one venue adapter, so exposure stays `own`.
+`fin-verification` is loaded because this diff adds tests, not because money is at stake, and its *A small
+live bot is carried by five tests and one scheduled comparison* is what sizes them. Nothing heavier is
+demanded: exposure sets how deep the proof goes, and the mechanism in scope decides the technique. No
+fuller venue contract is emitted either, because `fin-exchange-integration` asks for that only when
+exposure is `customer` or `record`, or when a second venue adapter appears.
 
 `EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
 real response every one of them is a `file:line`.
 
 ```
-authority: EXTERNAL (Binance) · exposure: own
+authority: MIXED · exposure: own
+  fills, position and PnL   EXTERNAL (Binance)
+  unresolved intent rows    SELF
 
 FINDING   A timed-out buy is sent a second time, leaving twice the intended position at twice the
           notional, with one leg invisible to the bot's own sizing. Unbounded if the retry loop is
@@ -545,11 +749,15 @@ WHY       The except clause treats a transport failure as "did not happen". The 
 EVIDENCE  scalper.py place_buy(), the bare retry inside the except clause; scalper.py
           place_take_profit(), the same shape on the sell
 FIX       Classify the signal, and resolve UNKNOWN by querying the identity already sent rather than by
-          sending again: scalper.py submit() and scalper.py resolve(), with DEFINITE_NO restricted to the
-          codes Binance documents as not enqueued.
+          sending again: scalper.py submit() and scalper.py resolve(). DEFINITE_NO holds only the codes
+          Binance documents as not enqueued; -2010 is branched on its message, because "Duplicate order
+          sent." proves the first order is open. The ladder reserves the worst case at full notional,
+          gates the instrument, cancels by the identity it sent, then reads authoritative venue state.
+          It never flattens: scalper.py close_risk_gate(), cancel_by_identity() and resolve().
 TEST      A submit whose request is delivered and whose response is then lost leaves exactly one order,
           one POST and a query by the minted client order ID: tests/test_ambiguous_submit.py
-          test_timeout_that_already_filled.
+          test_timeout_that_already_filled. A -2013 answered by a stale replica is re-queried rather than
+          read as non-creation: test_no_such_order_right_after_placement_is_not_non_creation.
 
 FINDING   On the exact failure the recovery path exists for, the bot cannot tell "never placed" from
           "placed and filled", so the recovery path is not merely broken but absent.
@@ -566,15 +774,21 @@ TEST      Every field written ahead of the effect is read back by the recovery p
 
 FINDING   The retry above was approved because a design note asserts Binance deduplicates on
           `newClientOrderId`, and the assertion is false.
-WHY       On Binance spot and futures the client order ID is unique only among *open* orders. Once the
-          first order fills or is cancelled the ID is free again and the resend creates a genuine second
+WHY       The request never carries `newClientOrderId`, so Binance mints the id and no collision is
+          possible. Where one is sent, Binance documents uniqueness only among *open* orders: once the
+          first order fills or is cancelled the id is free again and the resend creates a genuine second
           order, so `-2010` never fires. The reuse window is zero seconds after a fill, which is exactly
-          the marketable-limit case where a lost response is most likely.
+          the marketable-limit case where a lost response is most likely. And the note reads
+          `-2010 "Duplicate order sent."` as a harmless rejection when it is evidence that the first
+          order is open, which is the answer to a lost response rather than a reason to stop.
 EVIDENCE  scalper.py module docstring, design note 2
 FIX       Treat the identity as a correlation key, delete the sentence, and put the venue's documented
-          semantics beside the code that depends on them: scalper.py submit() and scalper.py resolve().
+          semantics beside the code that depends on them: scalper.py submit(), DUPLICATE_CLIENT_ID and
+          scalper.py resolve().
 TEST      Each numbered design note is bound to a test name or deleted; note 2 has no test and does not
-          survive the pass.
+          survive the pass. The semantics that replace it are asserted by
+          tests/test_ambiguous_submit.py test_duplicate_order_sent_resolves_to_the_open_order, which
+          fails if the branch is on the code rather than the message.
 
 FINDING   Every order leaves one tick low on price and one step low on quantity, always in the same
           direction, and a quantity shaved this way can drop under `minNotional` and be rejected outright.
@@ -624,6 +838,6 @@ VERDICT   SHIP
 `SHIP` is honest only because this script places one order and exits. Two things carry that verdict and
 neither appears as a finding, because the diff fixed them rather than leaving them open: `scalper.py`
 `ALERT_SINK` is a config key with no default, so import fails rather than alerting into a void, and an
-unresolved intent closes the risk gate instead of placing anything else. The unresolved comparison stays on
-the page rather than being deleted from it, which is what makes it blocking the day a position store
-appears.
+unresolved intent closes a real gate, in `scalper.py` `close_risk_gate()`, that `scalper.py` `submit()`
+reads before every size-increasing send. The unresolved comparison stays on the page rather than being
+deleted from it, which is what makes it blocking the day a position store appears.

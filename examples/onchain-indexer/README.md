@@ -141,7 +141,7 @@ void main();
 | `catch { ROLLBACK; log.error("moving on") }` then `fromBlock = toBlock + 1n` | `fin-money-core`: *durable dedupe*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | The rollback correctly leaves the cursor where it was, and then the loop advances anyway, so the *next* successful range writes a `last_block` past the failed one. The skipped range is never revisited. | Same as above, but triggered by any transient RPC failure, which is a daily event. |
 | `if (addresses.size > 0)` guards the query; the advance runs unconditionally | `fin-money-core`: *durable dedupe*. `fin-onchain`: *A range of external history is covered only when you can prove it, and the cursor advances inside the proof* | On a fresh deploy with an empty `deposit_addresses` table, the cursor sprints from genesis to the safe head in a few minutes. With no backfill job, **every address registered afterwards can never see a deposit in a passed block.** The same shape sits one line up: `addresses` is snapshotted once per outer tick while the inner drain runs for hours, so an address registered mid-drain is invisible for the rest of it. | Total, permanent, and it lands on day one of production, the day the address table is empty. |
 | `UNIQUE (tx_hash, log_index)` | `fin-onchain`: *The dedupe key separates the same event twice from the same event on a different branch* | This has a real unique constraint and is above the bad bar, and it deliberately excludes block identity, which is what makes re-crediting after a reorg impossible: the re-included log collides with the orphaned row and `ON CONFLICT DO NOTHING` refuses to replace it. In the other direction, a transaction re-included in a different block at a different `logIndex` passes the constraint and credits twice. | Under-credit on re-inclusion at the same index; double-credit on re-inclusion at a different one. Both silent. |
-| `Number(l.args.value!) / 1e18` | `fin-onchain`: *Credit the delta you measured at the asset's authority, not the number in the notification*. `fin-money-core`: *exact representation* | USDC has **6** decimals. The constant is 18 because it was copied from an ETH indexer, and the comment says "wei", which is the tell. A 1,000 USDC deposit credits `0.000000001`. `Number()` on a `bigint` separately loses precision above 2^53. The token address is `process.env.USDC_ADDRESS ?? …`, so the asset can change without the exponent changing. | Every deposit under-credited by a factor of 10^12, on 100% of events, until someone opens a support ticket. |
+| `Number(l.args.value!) / 1e18` | `fin-onchain`: *The credited amount comes from the asset's own accounting, not from the notification that announced it*. `fin-money-core`: *exact representation* | USDC has **6** decimals. The constant is 18 because it was copied from an ETH indexer, and the comment says "wei", which is the tell. A 1,000 USDC deposit credits `0.000000001`. `Number()` on a `bigint` separately loses precision above 2^53. The token address is `process.env.USDC_ADDRESS ?? …`, so the asset can change without the exponent changing. | Every deposit under-credited by a factor of 10^12, on 100% of events, until someone opens a support ticket. |
 | `if (l.removed) continue` | `fin-onchain`: *A history that can be rewritten does not reliably tell you it was rewritten*. `fin-money-core`: *A comment is a claim*. `fin-verification`: *The design notes are a numbered list of claims, each bound to a test or deleted* | `eth_getLogs` **never** sets `removed`. In go-ethereum that field is set only inside the reorg path feeding `core.RemovedLogsEvent`, which serves subscriptions and `eth_getFilterChanges`; `FilterAPI.GetLogs` never sets it. A polling indexer receives no reorg signal at all. The line is dead code that reads as reorg handling, and no `block_hash` is stored anywhere, so a reorg deeper than the confirmation lag is undetectable forever. | Whatever a reorg does, undetected. The line's real cost is that it stops anyone from writing the code that would work. |
 
 ---
@@ -252,10 +252,20 @@ const TOKENS = new Map<Address, { symbol: string; decimals: number }>();
 
 /** Scale is read from the contract at runtime and cached per (chainId, address).
  *  An env-overridable token address plus a hardcoded exponent is exactly how a
- *  6-decimal token gets credited on an 18-decimal assumption. */
+ *  6-decimal token gets credited on an 18-decimal assumption.
+ *
+ *  DEPOSIT_TOKENS is a record, not a list of addresses:
+ *    [{"address":"0x…","feeOnTransfer":false,"rebasing":false}]
+ *  Those two flags are not discoverable from the contract, so they are a human entry
+ *  made at onboarding. They are load-bearing: `Transfer.value` is the asset's own
+ *  accounting for that transfer only where the asset neither rebases nor takes a fee
+ *  inside the transfer. An unrecorded token does not credit. */
 async function pinTokens(): Promise<void> {
-  for (const raw of requireEnv("DEPOSIT_TOKENS").split(",")) {
-    const address = getAddress(raw.trim());
+  for (const t of JSON.parse(requireEnv("DEPOSIT_TOKENS"))) {
+    const address = getAddress(t.address);
+    if (t.feeOnTransfer !== false || t.rebasing !== false) {
+      throw new Error(`${address}: Transfer.value is not this asset's own accounting`);
+    }
     const [symbol, decimals] = await Promise.all([
       client.readContract({ address, abi: erc20Abi, functionName: "symbol" }),
       client.readContract({ address, abi: erc20Abi, functionName: "decimals" }),
@@ -538,8 +548,14 @@ export async function reconcile(): Promise<Break[]> {
       );
       const credited = BigInt(rows[0].credited);
       const swept = await sweptOut(userId, token, finalized.number!);
-      if (credited - swept !== onChain) {
-        breaks.push({ userId, token, ours: credited - swept, chain: onChain });
+      // Transfers this service deliberately did not credit still move the chain
+      // balance. Leaving house and internal inflows out of the comparison manufactures
+      // a break on every sweep-back, and a reconciliation that cries wolf gets muted,
+      // which costs more than the breaks it was built to find.
+      const internal = await internalIn(userId, token, finalized.number!);
+      const ours = credited + internal - swept;
+      if (ours !== onChain) {
+        breaks.push({ userId, token, ours, chain: onChain });
       }
     }
   }
@@ -560,7 +576,10 @@ address set now returns without advancing, and the address map is re-read every 
 identity became `(chainId, blockHash, txHash, logIndex)` with an unreversed-twin assertion on the credit
 path. Amounts are stored as the token's own base-unit integers with the `decimals()` read from the
 contract at startup. `if (l.removed)` was deleted and replaced with stored block identity, a fork-point
-search, and a reversing unwind.
+search, and a reversing unwind, which is *An unwind is a reversing entry keyed on what it reverses, never
+an erasure*. A transfer whose sender is an address the house controls no longer credits, under *Value
+arriving from an address you control is not income*, and `reconcile.ts` counts those inflows so a
+sweep-back does not manufacture a break on every comparison.
 
 **Not changed, deliberately.** The confirmation-depth gate was already correct and stayed. It gained a
 recorded budget, not a new mechanism. Credit and cursor already committed in one transaction; that was
@@ -569,16 +588,24 @@ was added, because subscription-delivered `removed` logs are lost by a reconnect
 node restart, and web3.js #1766 documents the same removal delivered twice. The
 service is still one process with one cursor; no sharding, no queue.
 
-**Deliberately not implemented, with the reason stated in code.** The `balanceOf`-delta clause of
-*Credit the delta you measured at the asset's authority, not the number in the notification* is **not**
-implemented
-on the ingest path. The reason
-is that `DEPOSIT_TOKENS` is a pinned list whose `symbol()` and `decimals()` are asserted at startup, and
-neither pinned token is fee-on-transfer or rebasing. That is a closure, not a deferral: the moment a token
-is added to that list the assertion is the thing that has to be revisited, and `reconcile.ts` measures the
-on-chain balance independently every hour, which is where a fee-on-transfer discrepancy would surface as a
-break rather than as silence. If the list ever accepts an arbitrary token, the delta measurement becomes
-mandatory and the pin is what stops that from happening by accident.
+**Closed by the asset's own semantics, not by a measurement.** The ingest path credits `Transfer.value`
+and never measures a `balanceOf` delta. Under *The credited amount comes from the asset's own accounting,
+not from the notification that announced it* that is the correct source rather than a shortcut: for an
+ERC-20 that neither rebases nor takes a fee inside the transfer, `value` **is** the protocol's accounting
+for that transfer. A measured delta is the other mechanism, and off-chain it attributes correctly only
+where the movement is isolated in the window measured. `balanceOf` is a state read at a block boundary, so
+an indexer crediting one `Transfer` out of a block containing three cannot attribute a per-log delta from
+state reads at all.
+
+What the two flags in `DEPOSIT_TOKENS` buy is exactly that reading, and they are a human entry rather than
+a discovery: `symbol()` and `decimals()` come off the contract, transfer semantics do not. An unrecorded
+token throws at startup instead of crediting. `reconcile.ts` is the cross-check that would surface a
+mistake in that entry as a break rather than as silence.
+
+**Not implemented, and named.** The per-block assertion that `Σ credited == balanceOf(addr)` delta across
+that block, both reads pinned by block hash, quarantining the address on a mismatch. That is the layer
+that would *prevent* a bad credit rather than detect it an hour later, and `reconcile.ts` is an hourly,
+detect-only substitute for it.
 
 **Still absent.** There is no handling for contract-originated native transfers, which *Inclusion is not
 effect* covers, because this service indexes ERC-20 logs only and native deposits go through a different
@@ -591,20 +618,26 @@ tag-addressed chain added.
 ## The output the review ends with
 
 Every credit lands on a `user_id` and a customer eats the error: an under-credit is their deposit that
-never arrived, and a double-credit is house money they can withdraw. The chain holds the record and answers
-questions about it, so authority is EXTERNAL and `balanceOf` at the finalized height is what this service
-is compared against. The stakes rise again the moment this service feeds a withdrawal path, which is what
-the PENDING to AVAILABLE staging exists to gate.
+never arrived, and a double-credit is house money they can withdraw. The chain holds the record of what
+moved and answers questions about it, so for inclusion, the branch and the value that arrived authority is
+EXTERNAL and `balanceOf` at the finalized height is what this service is compared against. Two quantities
+are not on the chain: the liability the books carry for each customer, and which customer owns a deposit
+address at all. No oracle holds either, so both are SELF, and their evidence is replay over this service's
+own history rather than a comparison with anybody. The stakes rise again the moment this service feeds a
+withdrawal path, which is what the PENDING to AVAILABLE staging exists to gate.
 
-`fin-onchain` asks for its fuller crossing contract when authority is SELF, when exposure is `customer` on
-a crediting path, or when the change spans more than one of identity, coverage, finality and amount. This
-change spans all four, so the anchors below are the ones that contract would have carried.
+`fin-onchain` asks for its fuller crossing contract when you hold the signing keys, when exposure is
+`customer` on a crediting or broadcast path, or when the change spans more than one of identity, coverage,
+finality and amount. This service holds no keys and broadcasts nothing, and it spans all four, so the
+anchors below are the ones that contract would have carried.
 
 `EVIDENCE` names functions rather than lines, because the code under review is a listing in this file. In a
 real response every one of them is a `file:line`.
 
 ```
-authority: EXTERNAL (Ethereum mainnet) · exposure: customer
+authority: MIXED · exposure: customer
+  inclusion, branch and arrived value    EXTERNAL (Ethereum mainnet)
+  customer liabilities, address mapping  SELF
 
 FINDING   A customer's deposit vanishes with no error and no log line, and nothing will ever look at that
           range again. Permanent silent under-crediting.
@@ -669,8 +702,8 @@ FIX       Store the token's own base units as an exact integer and never divide 
           migrations/002_deposit_credits.sql amount_raw numeric(78,0), with `decimals()` and `symbol()`
           read from the contract at startup and cached per (chainId, address) in indexer.ts pinTokens().
           Display scaling happens at the edge, from the recorded token_decimals.
-TEST      A 1,000 USDC deposit credits 1_000_000_000 base units, and a token whose decimals differ from the
-          pinned assumption fails startup rather than crediting.
+TEST      A 1,000 USDC deposit credits 1_000_000_000 base units, and a token entered without both
+          semantics flags recorded false fails startup rather than crediting.
 
 FINDING   A reorg deeper than the confirmation lag is undetectable forever, and the line that looks like
           reorg handling is what stops anyone writing the code that would work.
@@ -690,8 +723,10 @@ TEST      A fork below the last processed block is detected by stored block iden
 
 UNRESOLVED: planted-break test proving reconcile.ts detects a discrepancy (it is scheduled and has never
 been shown to fire; a detector that has never detected is not known to detect)
-UNRESOLVED: balanceOf-delta measurement on the ingest path (closed by the pinned token list rather than
-implemented, and mandatory the moment that list accepts an arbitrary token)
+UNRESOLVED: the per-block assertion that credited value equals the balanceOf delta for that address across
+that block, both reads pinned by block hash, quarantining on mismatch (the recorded fee-on-transfer and
+rebasing flags are what make Transfer.value the asset's own accounting, and nothing verifies the entry at
+run time; reconcile.ts detects the consequence an hour later rather than preventing the credit)
 
 VERDICT   NO-SHIP: planted-break test proving reconcile.ts detects a discrepancy
 ```
