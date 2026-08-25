@@ -1,213 +1,336 @@
 ---
 name: fin-verification
 description: >-
-  Use when a money-path diff touches tests, fixtures or assertions (pytest, hypothesis/@given, fast-check,
-  proptest, vcr record_mode, Toxiproxy, a testnet/sandbox base URL), adds any symbol matching
-  reconcile|break|drift|halt|kill_switch, or the inferred tier is T2+, or the ask is "is this ready",
-  "prove it", "write tests". Load it ALONGSIDE the domain skill, never instead. Skip only if nothing
-  asserted is an amount.
+  Proof that a money path is correct: reconciliation design, executable invariants, fault
+  injection at crash boundaries, event replay and permutation, property and model-based testing,
+  and the evidence each risk tier requires before shipping. Use alongside a domain skill when a
+  money-path change touches tests or assertions, when a reconciliation or kill switch is
+  involved, or when the ask is whether this is ready to ship.
 license: MIT
 ---
 
 # Proving a Money Path
 
-Every control in this suite can be written down and still not exist. This skill owns the proof: that the
-control is wired to something a human reads, that it detects a discrepancy you plant in it, and that it holds
-under generated sequences. The domain skills own *designing* the control. `fin-ledger` owns what a posting
-is, `fin-exchange-integration` owns what a reconnect must re-fetch; you own whether any of it runs. Ask of
-every control in the diff: **if this were silently removed tomorrow, which test goes red?** If the answer is
-"none", the control is already absent.
+This skill is loaded **alongside a domain skill, never instead of one**. The domain skill owns what a
+posting is, what a reconnect must re-fetch, what a settlement batch owes. This skill owns whether any of
+it runs in production, detects a discrepancy planted in it, and survives a restart. Ask of every control
+in the diff: if it were silently deleted tomorrow, which test goes red? If the answer is none, the
+control is already absent.
 
-Several failures that look like design failures are verification failures: a write-ahead field the recovery
-path never reads back; a dedupe set that evaporates on restart, exactly when the double-count happens; a
-journal that is written and does not balance. Knight emitted 97 "Power Peg disabled" emails in the 89 minutes
-before the open and nobody read them: the signal existed, and nothing proved it reached a reader.
+## Workflow
 
-> **`G1`–`G7`** are the always-on financial guardrails: **G1** economic-diff gate · **G2** a named risk is implemented or the process refuses to start · **G3** every comment claim checked against the code · **G4** an ambiguous external call has three phases and the first one COMMITs · **G5** enumerate legal `(state, event)` pairs, guard the version on the entity id, re-read from the authority · **G6** a watermark advances only past a verifiably covered range · **G7** the reconciliation runs in production or it does not exist. Install them with `scripts/install-guardrails.sh`; every rule below stands on its own without them.
+1. Name the economic claim this change makes, and name who eats the loss if the claim is false.
+2. Establish the tier, and therefore the evidence this change owes. Load only the references that tier
+   and this implementation need, and read each in order rather than summarising it.
+3. Name the external authority and the join key for every economic quantity the system reports.
+4. Ship the comparison against that authority as a scheduled entrypoint. At T1 that is the daily
+   comparison below; at T2 and above it reads through a path independent of the writer.
+5. Prove the comparison detects a real break, by injecting one. At T1 this is the daily comparison's
+   detect-test; at T2 and above, one detect-test per reconciliation.
+6. Kill the process at a phase boundary, restart, and assert the recovery converges to exactly one
+   effect. At T1 that is the one boundary you have actually executed (request sent, not yet persisted
+   locally); at T2 and above, every boundary of the path.
+7. At T2 and above, replay and permute every event consumer, including redelivery and reordering. At T3
+   the permutation is exhaustive and generator coverage is asserted.
+8. Read the design notes as a list of claims: each is proven by a named test or deleted. Implement every
+   control you name, with its test, before you call the path complete, then issue the verdict.
 
 ## When this applies
 
-Load this skill **in addition to** the domain skill, never instead of it, when any of these is observable:
+Load this skill whenever someone is being asked to believe a money path is correct. That happens when a
+change adds or edits the tests, fixtures or assertions standing behind an economic quantity; when it
+adds, moves or removes a comparison against an external record; when it adds a way to stop trading,
+paying or posting because something looks wrong; or when the tier is T2 or above, whatever the diff says
+about tests. Above T1 the trigger is structural, not lexical: a live multi-venue team asked to "add a
+third venue" never says the word test, and is exactly the team with no reconciliation.
 
-- the diff adds or edits `tests/`, `test_*.py`, `*_test.go`, `*.spec.ts`, `conftest.py`, a fixture or a cassette;
-- it contains `hypothesis`, `@given`, `@rule`, `RuleBasedStateMachine`, `fast-check`, `fc.commands`, `proptest`,
-  `jqwik`, `vcr`, `record_mode`, `toxiproxy`, `madsim`, `loom`, `jcstress`, `-race`, `mutmut`, `cargo-mutants`;
-- any symbol matches `reconcil|recon_|break|drift|suspense|clearing|kill_switch|halt|dead_man`, or a base URL
-  contains `testnet`, `sandbox`, `paper`, `-uat`, `-sim`;
-- the task text is "is this ready", "prove it", "how do I verify", "reconciliation", "review before ship",
-  "roll back", "write tests";
-- **or** the tier is T2 or above, though nobody said the word "test". A live multi-venue team asked to "add a
-  third venue" never says it, and is exactly the team with no reconciliation.
+Literals that usually mean this skill applies, as routing hints and not as the definition: `tests/`,
+`test_*.py`, `*_test.go`, `*.spec.ts`, `conftest.py`, a fixture or a cassette; `hypothesis`, `@given`,
+`@rule`, `RuleBasedStateMachine`, `fast-check`, `fc.commands`, `proptest`, `jqwik`, `vcr`,
+`record_mode`, `toxiproxy`, `madsim`, `loom`, `jcstress`, `-race`, `mutmut`, `cargo-mutants`; a symbol
+matching `reconcil|recon_|break|drift|suspense|clearing|kill_switch|halt|dead_man`; a base URL
+containing `testnet`, `sandbox`, `paper`, `-uat`, `-sim`; task text such as "is this ready", "prove it",
+"how do I verify", "review before ship", "roll back", "write tests".
 
-**Skip** when the asserted values are analytics that never become an obligation (backtest statistics, greeks,
-implied vol, Monte Carlo) and no balance, order, payment or transfer is written.
+Skip when the asserted values are analytics that never become an obligation (backtest statistics,
+greeks, implied vol, Monte Carlo) and no balance, order, payment or transfer is written. This skill also
+never stands alone: load `fin-ledger` for what a balance is, `fin-exchange-integration` for a venue
+client, `fin-matching-and-settlement` when you are the venue, `fin-payments` for a processor,
+`fin-onchain` for a chain boundary, `fin-money-core` for amounts, identity and retries. They design the
+control; you prove it.
 
-## The seven non-negotiables
+## Core rules
 
-### 1. The reconciliation's contents are a contract (*specialises G7*)
+Several failures that look like design failures are verification failures: a write-ahead field the
+recovery path never reads back, a dedupe set that evaporates on restart exactly when the double-count
+happens, a journal that is written and does not balance.
 
-G7 gets you a scheduled entrypoint with an alert destination read from a config key with no default. Here is
-what that job must contain, or it ships green and finds nothing:
+### Comparing two numbers proves nothing until you name which one is the authority
 
-- **Authority and join key, named per quantity.** Join on the **counterparty's own identifier**:
-  `pspReference`, the venue's `tradeId`/`orderId`, the chain's `(blockHash, txHash, logIndex)`. **Never on
-  yours.** `merchantReference` and `clientOrderId` are assigned by you and are not unique: one retried attempt
-  produces two `pspReference`s under one `merchantReference`, and the join silently drops a row.
-- **A read path independent of the writer.** A job that re-reads the cache the writer populated finds
-  arithmetic bugs and can never find a missing write. A reconciliation that compares the cache to itself is
-  the usual shape of this mistake, and it passes forever.
-- **A cadence stated against the authority's documented lag** (report availability, statement cutover,
-  replication lag), not a round number.
-- **A tolerance in the instrument's own unit.** nautilus pairs `DEFAULT_TOLERANCE = 0.0001` with a
-  *single-unit* tolerance keyed on the instrument's size precision (`reconciliation/positions.rs:40`, `:423`).
-  A fixed epsilon is wrong for both a 0-decimal and an 18-decimal asset.
-- **A `break` row** (`detected_at, source_a, source_b, amount, currency, status`) in an **aged bucket** with
-  a hard escalation threshold and a fixed sweep. The Fed's Difference account is swept monthly and expensed.
-- **A first run that survives un-backfilled history.** A per-account reconciliation is routinely broken on day
-  one by opening balances nobody backfilled, which guarantees the alert gets muted.
+A scheduled comparison is a control only if every quantity it reports has a named external authority, a
+join key that authority minted, a read path independent of the writer, a cadence stated against the
+authority's documented lag, a tolerance in the instrument's own unit, and a durable break record with an
+escalation clock. This specialises *reconciliation runs in production*.
 
-This is the step most integrations skip, in every domain: nothing queries the venue's position endpoint,
-nothing asserts `sum(signed fills) == size`, and the venue's own realized-PnL field arrives on every event and
-is never cross-checked. The best open-source trading platform computes the continuous check and discards it
-with `let _ =` (`execution/src/engine/mod.rs:1737`), under a docstring calling it "the core invariant
-maintained here".
+**Shape**
 
-### 2. Prove the reconciliation detects
+```
+authority   := the external system that owns the quantity
+join key    := an identifier the authority minted, never one you minted
+read path   := independent of the writer, not the writer's own cache
+cadence     := the authority's stated publication lag, not a round number
+tolerance   := one unit of the instrument's own precision, not a fixed epsilon
+compare -> break record (aged bucket, hard threshold, fixed sweep) -> alert sink
+```
 
-**Feed the reconciliation a known discrepancy and assert it produces the break record and fires the alert to
-the routed channel.** Rule 1 requires the job to run; nothing else requires it to *detect*.
+Your own reference is not unique across retries: one retried attempt produces two counterparty
+identifiers under one of yours, and the join silently drops a row instead of raising one. A job that
+re-reads the store the writer populated finds arithmetic bugs and can never find a missing write, which
+is why a reconciliation comparing a cache to itself passes forever. A per-entity comparison is routinely
+broken on day one by opening balances nobody backfilled, which guarantees the alert gets muted.
 
-The test seeds a mismatch of a known amount on a known account against a **freshly-migrated** database, runs
-the job, and asserts four things: a `break` row exists with the right `amount`, `currency`, `source_a`,
-`source_b`; the suspense posting leaves the trial balance balanced; the alert sink received **exactly one**
-message; and a clean run produces **zero** breaks. Running it against a fresh migration is what makes an
-un-backfilled opening balance fail the test instead of muting production. This is the cheapest test in the
-suite and it protects every reconciliation in every other skill at once.
+**How it appears**
 
-### 3. Kill the process at every phase boundary
+| Layer | Instantiation |
+|---|---|
+| Join on the counterparty's key | `pspReference`, the venue's `tradeId`/`orderId`, the chain's `(blockHash, txHash, logIndex)`. Never `merchantReference` or `clientOrderId`: you assigned those. |
+| Tolerance in the instrument's unit | nautilus pairs `DEFAULT_TOLERANCE = 0.0001` with a single-unit tolerance keyed on the instrument's size precision (`reconciliation/positions.rs:40`, `:423`). A fixed epsilon is wrong for both a 0-decimal and an 18-decimal asset. |
+| Break record and sweep | `detected_at, source_a, source_b, amount, currency, status`. The Fed's Difference account is swept monthly and expensed. |
+| The check that is computed and discarded | The best open-source trading platform computes the continuous check and throws it away with `let _ =` (`execution/src/engine/mod.rs:1737`), under a docstring calling it "the core invariant maintained here". |
+| The check nobody wrote | Nothing queries the venue's position endpoint, nothing asserts `sum(signed fills) == size`, and the venue's own realized-PnL field arrives on every event and is never cross-checked. |
 
-An **atomic phase** is the set of local mutations between two foreign mutations, so there are exactly three
-boundaries: **after the intent COMMIT and before the call**; **after the call and before the outcome write**;
-**after the outcome write and before the publish**. At each one: `kill -9`, restart, run the recovery path,
-assert **exactly one external effect and exactly one local record**.
+### A detector that has never detected is not known to detect
 
-**Every field written ahead of the effect MUST be read back by that test's recovery path.** Persisting the
-write-ahead client id is the easy half and the half that gets done; consuming it on recovery is the half that
-gets skipped, leaving a `resume()` that calls `get_order(None)` and raises `ValueError` on exactly the crash
-the journal exists for.
+Feed the comparison a discrepancy of a known size on a known entity and assert it produces the break
+record and delivers the alert to the routed destination. Running the job proves it runs; only a planted
+break proves it detects.
 
-### 4. The ambiguous-response test uses a delivered-then-failed request
+**Shape**
 
-**A test that stubs the call to raise before delivery tests nothing.** The failure mode is the request that
-*arrived*. Use a Toxiproxy `timeout` toxic ("stops all data from getting through, and closes the connection
-after timeout") or a stub that writes the request upstream and then closes.
+```
+fresh migration (no backfill) -> seed a known discrepancy -> run the job
+assert break row exists with the right amount, unit and both source names
+assert the corrective posting leaves the books balanced
+assert the alert sink received exactly one message
+assert a clean run produces zero breaks
+```
 
-Assert three things: **no resubmission occurs**; the code **queries by the identity it minted**; **exactly one
-effect exists** afterwards. Then run the mirror case where the effect genuinely did not happen and assert the
-retry **does** fire. CCXT re-POSTs a create-order on `RequestTimeout` because `RequestTimeout extends
-NetworkError extends OperationFailed` and the single funnel's retry predicate is `e instanceof
-OperationFailed` (`ts/src/base/Exchange.ts:6435`) with no HTTP-method discrimination, and the re-sent request
-carries the identical `newClientOrderId`.
+Running against a freshly migrated store is what makes an un-backfilled opening balance fail the test
+instead of muting production. The alert also has to arrive somewhere a human reads: Knight emitted 97
+"Power Peg disabled" emails in the 89 minutes before the open and nobody read them, so the signal
+existed and nothing proved it reached a reader. This is the cheapest test in the suite and it protects
+every reconciliation in every other skill at once.
 
-### 5. Replay and permute every event consumer
+**How it appears** Assert on a `break` row (`amount`, `currency`, `source_a`, `source_b`), on a
+suspense posting that keeps the trial balance balanced, on a fake alert sink's message count, and on a
+zero-break clean run.
 
-Take a recorded event stream, apply it in the recorded order, then apply **shuffled permutations of it with
-duplicates and with a restart in the middle**, and assert final state is **byte-identical every time**.
+### A crash between two foreign mutations is only survivable if you have executed it
 
-Assert conservation and idempotence **after every step, not only at the end**. That is what catches an
-in-memory dedupe set (a `_seen_trade_ids` set that lives only in the process, so a restart re-applies every
-counted fill), a watermark stored on the live object, and an illegal transition, in one pass. Then assert
-**generator coverage explicitly**: does the generator ever emit a duplicate at a terminal state, or a
-restart between the effect and the outcome write? jqwik's `injectDuplicates()` and `Statistics.coverage` are
-the mechanism; nautilus ships the order-invariance form as `test_avg_px_invariant_to_fill_arrival_order`.
+An atomic phase is the set of local mutations between two foreign mutations, so a value-moving path has
+exactly three boundaries. At each one, kill the process, restart, run the recovery path, and assert
+exactly one external effect and exactly one local record. Every field written ahead of the effect must
+be read back by that test's recovery path.
 
-### 6. Name the provenance before you assert
+**Shape**
 
-**Before writing an `assert`, `panic`, `abort`, `process::exit` or unhandled throw on a money path, name the
-provenance of every value in the asserted relation. If any of them crossed a network, a file, a config or a
-clock, it is an operating error and needs a fail-closed guard, not an assertion.**
+```
+local mutations -> COMMIT intent
+    | boundary 1: after the intent commit, before the call
+external effect
+    | boundary 2: after the call, before the outcome write
+persist outcome
+    | boundary 3: after the outcome write, before the publish
+publish
+at each boundary: kill -> restart -> recover -> assert exactly one effect, one record
+```
 
-A ledger at rest loses nothing; a position at rest loses money and an unattended resting order keeps filling.
-TigerBeetle asserts in production at ~1 per 10.6 lines (487 in 5,166): *"assertions downgrade catastrophic
-correctness bugs into liveness bugs"*, asserting "the positive space that you do expect AND the negative space
-that you do not expect", on six replicas with state in a replicated WAL. nautilus compiles its three
-`debug_assert!`s out of release. Both are correct; the difference is deployment topology, not rigour. The
-Polymarket overfill assertion looked like a programmer error and was an operating error: the violating
-`last_qty=5.012345` against `quantity=5.000000` came from the venue.
+Persisting the write-ahead identifier is the easy half and the half that gets done. Consuming it on
+recovery is the half that gets skipped, leaving a resume path that looks up the intent with a null
+identity and raises on exactly the crash the journal exists for.
 
-### 7. The design-notes section is a list of claims (*specialises G3*)
+**How it appears** `kill -9` or `SIGKILL` between phases; a `resume()` that calls `get_order(None)`
+and raises `ValueError`; `madsim` or `turmoil` for the deterministic form.
 
-G3 says check each asserted property against the code. The mechanism: **enumerate the design-notes and
-docstring block as a numbered claim list before you read the implementation**, then bind each number to a test
-name or delete the sentence. Two shapes recur. The **ordering claim**: "the flush guarantees the row exists
-before the call", documented at line 288 and performed at line 248. The **exactly-once claim**: "move money
-into `refunded_cents` exactly once", over a branch whose body is `pass`. The asserted invariant is
-repeatedly exactly where the bug lives, because the assertion is what let it survive review.
+### The ambiguity worth testing is the request that arrived
+
+A test that stubs the call to raise before delivery tests nothing, because the failure mode is the
+request the counterparty received and then failed to acknowledge. Deliver the request, then break the
+connection. This specialises *durable intent before the external effect*.
+
+**Shape**
+
+```
+stub writes the request upstream, then closes   (NOT: raises before delivery)
+assert no resubmission occurs
+assert the code queries the counterparty by the identity it minted
+assert exactly one effect exists afterwards
+mirror case: the effect genuinely did not happen -> assert the retry does fire
+```
+
+Without the mirror case you have proved only that the code gave up, not that it distinguishes UNKNOWN
+from "did not happen".
+
+**How it appears** A Toxiproxy `timeout` toxic ("stops all data from getting through, and closes the
+connection after timeout"), or a stub that delivers then hangs. The defect this catches in the wild:
+CCXT re-POSTs a create-order on `RequestTimeout`, because `RequestTimeout extends NetworkError extends
+OperationFailed` and the single funnel's retry predicate is `e instanceof OperationFailed`
+(`ts/src/base/Exchange.ts:6435`) with no HTTP-method discrimination, and the re-sent request carries the
+identical `newClientOrderId`.
+
+### An event consumer is correct only if every arrival order produces the same state
+
+Take a recorded event stream, apply it in the recorded order, then apply shuffled permutations of it
+with duplicates and with a restart in the middle, and assert the final state is byte-identical every
+time. This specialises *arrival order is not occurrence order*.
+
+**Shape**
+
+```
+recorded stream -> apply in order -> snapshot A
+same stream -> shuffle + duplicate + restart mid-stream -> apply -> snapshot B
+assert A == B
+assert conservation and idempotence after every step, not only at the end
+assert generator coverage: does it ever emit a duplicate at a terminal state,
+       or a restart between the effect and the outcome write?
+```
+
+Asserting after every step is what catches, in one pass, an in-memory dedupe set that lives only in the
+process (so a restart re-applies every counted fill), a version watermark stored on the live object
+instead of independently, and an illegal transition. Assert coverage explicitly, or the generator
+quietly never produces the case the bug lives in.
+
+**How it appears** A `_seen_trade_ids` set held in process memory; jqwik's `injectDuplicates()` and
+`Statistics.coverage` for the coverage assertion; nautilus ships the order-invariance form as
+`test_avg_px_invariant_to_fill_arrival_order`.
+
+### An assertion is a claim about values you produced, not values you received
+
+Before writing an assert, panic, abort, process exit or unhandled throw on a money path, name the
+provenance of every value in the asserted relation. If any of them crossed a network, a file, a config
+or a clock, it is an operating error and needs a typed, fail-closed guard, not an assertion.
+
+**Shape**
+
+```
+provenance of every term is this process only     -> assertion is legitimate
+provenance includes network | file | config | clock -> typed rejection, fail-closed
+crash only when abandoning obligations costs less than continuing
+```
+
+A ledger at rest loses nothing. A position at rest loses money, and an unattended resting order keeps
+filling, so the correct level depends on deployment topology and on what the process is holding.
+
+**How it appears** TigerBeetle asserts in production at about 1 per 10.6 lines (487 in 5,166):
+*"assertions downgrade catastrophic correctness bugs into liveness bugs"*, asserting "the positive space
+that you do expect AND the negative space that you do not expect", on six replicas with state in a
+replicated WAL. nautilus compiles its three `debug_assert!`s out of release. Both are correct; the
+difference is topology, not rigour. The Polymarket overfill assertion looked like a programmer error and
+was an operating error: the violating `last_qty=5.012345` against `quantity=5.000000` came from the
+venue.
+
+### The design notes are a numbered list of claims, each bound to a test or deleted
+
+Enumerate the design-notes and docstring block as a numbered claim list before you read the
+implementation, then bind each number to a test name or delete the sentence. This specialises *a comment
+is a claim*.
+
+**Shape**
+
+```
+read comments and docstrings first -> claim 1, claim 2, ... claim n
+for each claim: name the test that proves it, or delete the sentence
+never: a claim whose evidence is the implementation you are about to read
+```
+
+The asserted invariant is repeatedly exactly where the bug lives, because the assertion is what let it
+survive review.
+
+**How it appears** Two shapes recur. The ordering claim: "the flush guarantees the row exists before
+the call", documented at line 288 and performed at line 248. The exactly-once claim: "move money into
+`refunded_cents` exactly once", over a branch whose body is `pass`.
 
 ## The minimum viable test set for a small live bot (T1)
 
-Five tests and one scheduled job. Demanding deterministic simulation from someone writing a 300-line bot buys
-nothing. Its dominant risk is a duplicate order after a timeout, not consensus divergence. Write these, stop.
+**This is the proportionality proof: at this size, five tests and one scheduled job carry the risk.**
+Demanding deterministic simulation from someone writing a 300-line bot buys nothing. Its dominant risk is a
+duplicate order after a timeout, not consensus divergence. These five plus the daily comparison are the
+core of the T1 set, and the tier matrix carries the full eleven required rows: the only rows they do not
+name are the money-math and exact-arithmetic unit tests (including the ORM column type and the JSON
+round-trip) that every tier from T0 up already owes, and the daily comparison's own detect-test. Nothing
+above T1 is added to either list. Two of the five ship as executable code in `fin-exchange-integration`:
+test 1 (`test_timeout_that_already_filled` with its mirror `test_timeout_that_never_arrived`) and test 2
+(`test_normalize_satisfies_every_filter_simultaneously`). The remaining three and the daily comparison
+are specified here, in this form, and are the same set, not an additional demand.
 
-1. **`test_timeout_that_already_filled`**: rule 4 applied to `POST /order`. Toxiproxy `timeout` toxic, or a
-   stub that delivers then hangs. Assert: no resubmit; the bot calls its query-by-`clientOrderId` path; exactly
-   one order exists. Run the mirror case where the order genuinely does not exist and assert the retry fires.
-2. **`test_generated_order_satisfies_every_filter`**: a property test over `(price, qty)`, including values
-   near `minQty`, near `minNotional`, and with more decimals than `tickSize`/`stepSize` allow. Assert every
-   filter simultaneously (`price % tickSize == 0`, `qty % stepSize == 0`, `price*qty >= minNotional`,
-   `qty <= maxQty`), that normalisation never returns `qty == 0` without an explicit skip signal, and that
-   rounding is always *toward* validity and never increases size beyond available balance. Parameterise LIMIT
-   vs MARKET so `MARKET_LOT_SIZE` is exercised. Drive filter values from a **production** `exchangeInfo` fixture.
-3. **`test_fill_stream_replayed_shuffled_and_duplicated`**: rule 5 on one recorded session: place, partial,
-   partial, amend/cancel, reject, disconnect, reconnect-with-replay. Assert `position == sum(signed filled
-   qty)` and `cash == -sum(price*qty) - sum(fees)` computed **independently of the bot's own accumulators**,
-   and that its fee equals the venue's reported fee per fill. Then feed the same stream with duplicates and one
-   swapped pair and assert identical terminal state.
-4. **`test_kill_after_send_places_no_second_order`**: rule 3's first boundary only. `SIGKILL` between "request
-   sent" and "order persisted locally"; restart; assert startup reconciliation converges to exactly one order
-   and the correct position. If the bot has no startup reconciliation, this test is what forces you to write one.
-5. **`test_limits_hold_and_ambiguity_halts`**: a property test over generated sequences of fills, rejects and
-   reconnects. Assert that at no point does position exceed `max_position`, notional exceed `max_notional`, or
-   orders-per-minute exceed the cap; and that an ambiguous reconciliation result puts the bot in a state that
-   places no new orders **while cancels still work**.
+1. **`test_timeout_that_already_filled`**: *the ambiguity worth testing is the request that arrived*,
+   applied to order submission. Toxiproxy `timeout` toxic, or a stub that delivers then hangs. Assert:
+   no resubmit; the bot calls its query-by-`clientOrderId` path; exactly one order exists. Run the
+   mirror case where the order genuinely does not exist and assert the retry fires.
+2. **`test_normalize_satisfies_every_filter_simultaneously`**: a normalised instruction is legal
+   against every venue constraint at once, or is an explicit skip, and is never larger than what was
+   asked for. This is *every refusal that protects you runs inside the function that sends*, proven as a
+   property test over generated (price, size) in the boundary region of the real constraint set, one run
+   per instruction type. Assert all constraints in one pass, that normalisation never returns zero
+   without an explicit skip signal, and that rounding moves toward validity and never increases size
+   beyond available balance. Drive the constraint values from a **production** fixture, never a
+   hand-written or testnet one. On one venue that reads: `price % tickSize == 0`, `qty % stepSize == 0`,
+   `price*qty >= minNotional`, `minQty <= qty <= maxQty`, a LIMIT/MARKET parameterisation to exercise
+   `MARKET_LOT_SIZE`, and filter values loaded from `exchangeInfo`.
+3. **`test_fill_stream_replayed_shuffled_and_duplicated`**: *every arrival order produces the same
+   state*, on one recorded session: place, partial, partial, amend/cancel, reject, disconnect,
+   reconnect-with-replay. Assert `position == sum(signed filled qty)` and
+   `cash == -sum(price*qty) - sum(fees)` computed **independently of the bot's own accumulators**, and
+   that its fee equals the venue's reported fee per fill. Then feed the same stream with duplicates and
+   one swapped pair and assert identical terminal state.
+4. **`test_kill_after_send_places_no_second_order`**: the first boundary of *a crash you have executed*,
+   only. `SIGKILL` between "request sent" and "order persisted locally"; restart; assert startup
+   reconciliation converges to exactly one order and the correct position. If the bot has no startup
+   reconciliation, this test is what forces you to write one.
+5. **`test_limits_hold_and_ambiguity_halts`**: a property test over generated sequences of fills,
+   rejects and reconnects. Assert that at no point does position exceed `max_position`, notional exceed
+   `max_notional`, or orders-per-minute exceed the cap; and that an ambiguous reconciliation result puts
+   the bot in a state that places no new orders **while cancels still work**.
 
-**Plus the daily comparison**, which is rule 1 at T1 cadence and is not optional: one scheduled entrypoint
-asserting `sum(signed fills) == venue position` and `local free balance == venue balance` per asset, joined on
-the venue's `tradeId`, alerting to a config key with no default.
+**Plus the daily comparison**, which is the authority-and-join-key rule at T1 cadence and is not
+optional: one scheduled entrypoint asserting `sum(signed fills) == venue position` and
+`local free balance == venue balance` per asset, joined on the venue's `tradeId`, alerting to a config
+key with no default.
 
-**Deliberately excluded at this size:** model-based testing, deterministic simulation, race detectors, mutation
-testing, Jepsen, loom. A 300-line bot with these five tests and the daily comparison is in far better shape
-than one with 95% line coverage of its indicator math.
+**Deliberately excluded at this size:** model-based testing, deterministic simulation, race detectors,
+mutation testing, Jepsen, loom. A 300-line bot with these five tests and the daily comparison is in far
+better shape than one with 95% line coverage of its indicator math.
 
 ## Properties that actually matter for money
 
 Five, and the rest are decoration:
 
 - **Conservation**: `sum(all account deltas) == 0` after **every** step, and globally
-  `Σ balances + fees == Σ deposits − Σ withdrawals`, not only per entity.
+  `sum(balances) + fees == sum(deposits) - sum(withdrawals)`, not only per entity.
 - **Idempotence**: `f(f(x)) == f(x)` for every operation a retry can repeat.
-- **Permutation-invariance**: only for operation sets your design *claims* are order-independent. If it is not
-  claimed, do not assert it: find out which order the design depends on and test that order.
-- **Reservation-implies-postable**: no reachable state holds a committed reservation that cannot be posted.
+- **Permutation-invariance**: only for operation sets your design *claims* are order-independent. If it
+  is not claimed, do not assert it: find out which order the design depends on and test that order.
+- **Reservation-implies-postable**: no reachable state holds a committed reservation that cannot be
+  posted.
 - **Allocation totality**: `sum(allocate(total, weights)) == total` over generated totals and degenerate
   weight vectors.
 
-**Model-based testing** drives the implementation and an independently written, deliberately **naive reference
-model** from one generated command sequence. Derive the model from the specification or the venue's docs,
-**never from the implementation**, and keep it in a separate module, or you are testing code against
-itself. `fc.commands`/`fc.asyncModelRun`, `RuleBasedStateMachine` with `@invariant()`,
+**Model-based testing** drives the implementation and an independently written, deliberately naive
+reference model from one generated command sequence. Derive the model from the specification or the
+venue's docs, **never from the implementation**, and keep it in a separate module, or you are testing
+code against itself. `fc.commands`/`fc.asyncModelRun`, `RuleBasedStateMachine` with `@invariant()`,
 `proptest-state-machine`, jqwik `ActionSequenceArbitrary`.
 
-**Concurrency.** Write the double-spend reproduction as a two-connection **barrier** test (both transactions
-read, both block on a barrier, both write), never as a loop of threads hoping to hit the window. loom and
-jcstress exhaustively permute interleavings of hand-written lock-free structures under the C11 memory model,
-and loom cannot see a type that is not a loom replacement type: on a database transaction or a mutex they
-report nothing.
+**Concurrency.** Write the double-spend reproduction as a two-connection **barrier** test (both
+transactions read, both block on a barrier, both write), never as a loop of threads hoping to hit the
+window. loom and jcstress exhaustively permute interleavings of hand-written lock-free structures under
+the C11 memory model, and loom cannot see a type that is not a loom replacement type: on a database
+transaction or a mutex they report nothing.
 
 ## When an invariant fires at runtime: classify, then act
 
-**"Halt" names six different actions with wildly different blast radii. Name which one, in the code, at the
-call site.**
+**"Halt" names six different actions with wildly different blast radii. Name which one, in the code, at
+the call site.**
 
 | # | Halt level | What it does | Obligations |
 |---|---|---|---|
@@ -218,8 +341,8 @@ call site.**
 | 5 | Quiesce | stop accepting *and* producing; drain; deliver or explicitly void everything already produced | drained, then frozen |
 | 6 | Process abort | `panic` / `exit` | **abandoned** |
 
-Evaluate the predicates in order; first match wins. The last column names who designs the response. You prove
-it exists, is at the smallest scope that provably contains the breach, and is reachable by a test.
+Evaluate the predicates in order; first match wins. The last column names who designs the response. You
+prove it exists, is at the smallest scope that provably contains the breach, and is reachable by a test.
 
 | Observable predicate | Response | Designed in |
 |---|---|---|
@@ -229,91 +352,133 @@ it exists, is at the smallest scope that provably contains the breach, and is re
 | A position, working order or obligation exists whose value moves without you acting | **Level 3.** Record the true value, alert, close the risk gate for that scope. `cancel_all` and `flatten` MUST work while it is closed, with a test proving it. Reopen only on a successful reconcile, never on a timer, never by the code path that closed it | `fin-exchange-integration` |
 | Own output exceeded its bound relative to its input (`orders_out` vs `orders_in`, `shares_issued` vs authorised, `payouts` vs instructions) | **Level 4**, automatic. The bound is checked **on the emit path before the send**, not by a monitor, and the flag must not be resettable by the component that tripped it | `fin-matching-and-settlement` |
 | Recomputable from an append-only log that passes its own checksums | Mark the view stale; return a typed `Stale{as_of}`, never a stale number, never zero; rebuild | `fin-ledger` |
-| Every value in the relation was produced by this process, with no network, file, config or clock (rule 6) | **Level 6.** Crash | — |
+| Every value in the relation was produced by this process, with no network, file, config or clock (see *an assertion is a claim about values you produced*) | **Level 6.** Crash | (this skill) |
 
 Six prohibitions, each traceable to an incident, and each a discipline failure, not an ignorance one:
 
 - **Never abort a process holding unmanaged obligations.** Ariane 501: *"It was the decision to cease the
   processor operation which finally proved fatal."*
-- **Never let the failure path create state while the system is live and aberrant**: no retry, no resubmit,
-  no hot rollback. Knight ¶27: *"This action worsened the problem."*
+- **Never let the failure path create state while the system is live and aberrant**: no retry, no
+  resubmit, no hot rollback. Knight ¶27: *"This action worsened the problem."*
 - **Never disable the failing check as the mitigation.** NASDAQ 2012 removed the validation code from the
   failover path to get the cross out, and that is what created the error position.
-- **Never silently drop the violating event, and never clamp a reported quantity into range.** The units were
-  really received. nautilus's `allow_overfills` defaults to `false`, which discards the fill report entirely.
+- **Never silently drop the violating event, and never clamp a reported quantity into range.** The units
+  were really received. nautilus's `allow_overfills` defaults to `false`, which discards the fill report
+  entirely.
 - **Never gate the risk-reducing path on the same flag that gates the risk-increasing path.**
-- **Never implement a halt by severing the transport.** `halt ⇒ engine quiesced ∧ everything already produced
-  delivered or explicitly voided.`
+- **Never implement a halt by severing the transport.** A halt means the engine is quiesced AND
+  everything already produced is delivered or explicitly voided.
 
-Where the invariant can be transiently false by design, give it a self-heal window before escalating. LULD
-waits 15 seconds in Limit State before pausing. A check that halts on a momentarily-inconsistent intermediate
-state is itself an availability bug.
+Where the invariant can be transiently false by design, give it a self-heal window before escalating.
+LULD waits 15 seconds in Limit State before pausing. A check that halts on a momentarily-inconsistent
+intermediate state is itself an availability bug.
 
 ## Tier gates the evidence, never which rules apply
 
-**Tier from Axis B and the observable signal table.** Axis B is: *does an external oracle exist that you can
-reconcile against?* A bot has one: the exchange. A payments integrator has one: the processor. **A matching engine,
-custodian or system-of-record ledger cannot: it IS the oracle.** When Axis B is "no", reconciliation is
-unavailable as a safety net and the proof burden moves before deployment, into simulation. **That is the only
-principled reason to demand deterministic simulation. Code complexity, team size and how important the system
-feels are not reasons.** Do not compute "max loss per erroneous action × actions per second": it is not
-observable from a diff, and the fabricated number then sets every downstream evidence requirement.
+**Tier from Axis B and the observable signal table.** Axis B is: *does an external oracle exist that you
+can reconcile against?* A bot has one: the exchange. A payments integrator has one: the processor. **A
+matching engine, custodian or system-of-record ledger cannot: it IS the oracle.** When Axis B is "no",
+reconciliation is unavailable as a safety net and the proof burden moves before deployment, into
+simulation. **That is the only principled reason to demand deterministic simulation. Code complexity,
+team size and how important the system feels are not reasons.** Do not compute "max loss per erroneous
+action times actions per second": it is not observable from a diff, and the fabricated number then sets
+every downstream evidence requirement.
 
-- **T0 → T1** is crossed by *an order can actually be sent*. Property tests become required because filters
-  and rounding are adversarial input spaces the author cannot enumerate.
-- **T1 → T2** is crossed by *someone else eats the error*. Loss is no longer bounded by capital deliberately
-  exposed, which is what justifies model-based testing, an independent reconciliation path, network-level
-  fault injection, and shadow diffing for any rewrite.
-- **T2 → T3** is crossed by *no external oracle exists*. A bug is not detectable by reconciliation after the
-  fact, so the only place to find it is a simulator. "Correct" becomes a *claimed consistency model*, which is
-  exactly what an external adversarial audit tests and an internal simulator systematically under-tests.
+- **T0 to T1** is crossed by *an order can actually be sent*. Property tests become required because
+  filters and rounding are adversarial input spaces the author cannot enumerate.
+- **T1 to T2** is crossed by *someone else eats the error*. Loss is no longer bounded by capital
+  deliberately exposed, which is what justifies model-based testing, an independent reconciliation path,
+  network-level fault injection, and shadow diffing for any rewrite.
+- **T2 to T3** is crossed by *no external oracle exists*. A bug is not detectable by reconciliation after
+  the fact, so the only place to find it is a simulator. "Correct" becomes a *claimed consistency model*,
+  which is exactly what an external adversarial audit tests and an internal simulator systematically
+  under-tests.
 
-At T3, deterministic simulation means closing the system to nondeterminism (FoundationDB deploys one node per
-core and avoids multithreaded concurrency; madsim shims `getrandom`, `getentropy`, `clock_gettime`), injecting
-faults *inside* production code paths (`buggify`), randomising tuning parameters so none becomes load-bearing,
-and proving determinism with a meta-test that runs one seed twice and byte-compares the trace. Then assert
-generator coverage with FDB-style `TEST(cond)` counters: TigerBeetle ran the VOPR on 1024 cores 24/7 and Jepsen
-still found two safety bugs plus seven crashes, because the fuzzer generated matching objects always
-consecutive in the index, so the zig-zag merge join's probe path was never exercised. **DST does not subsume
-an external adversarial pass.** Antithesis makes DST purchasable, hence *recommended*, not wasteful, at T2.
+At T3, deterministic simulation means closing the system to nondeterminism (FoundationDB deploys one node
+per core and avoids multithreaded concurrency; madsim shims `getrandom`, `getentropy`, `clock_gettime`),
+injecting faults *inside* production code paths (`buggify`), randomising tuning parameters so none
+becomes load-bearing, and proving determinism with a meta-test that runs one seed twice and byte-compares
+the trace. Then assert generator coverage with FDB-style `TEST(cond)` counters: TigerBeetle ran the VOPR
+on 1024 cores 24/7 and Jepsen still found two safety bugs plus seven crashes, because the fuzzer
+generated matching objects always consecutive in the index, so the zig-zag merge join's probe path was
+never exercised. **DST does not subsume an external adversarial pass.** Antithesis makes DST purchasable,
+hence *recommended*, not wasteful, at T2.
 
 ## Fixtures, shadow diffs, and technique blind spots
 
-**Record HTTP and WebSocket fixtures from production endpoints and replay them with `record_mode="none"`, so
-any unrecorded request fails the test.** Testnet proves protocol conformance and nothing else: its order books
-are independent and unsynchronised, are wiped periodically, expose only `/api` and not `/sapi`, carry different
-filter thresholds, and can receive a breaking API change **before** production. Binance SPOT testnet shipped
-the `MIN_NOTIONAL` → `NOTIONAL` rename first. A testnet fixture gives you the wrong `tickSize`, and the filter
-property test then proves nothing. A dry-run is optimistic by construction: freqtrade's fills a market order
-from order-book volume with 5% maximum slippage and assumes `stoploss_on_exchange` fills at the stop price.
-Never report or gate on dry-run PnL as if it were realistic. The cassette set must include **reject,
-partial-fill-then-cancel, over-fill/residual, 429-then-418, and mid-stream disconnect**. Happy-path fills test
-nothing about the branches that lose money.
+**Record HTTP and WebSocket fixtures from production endpoints, and replay them in a mode where a request
+the recording does not contain fails the test instead of reaching the network.** A replay library that
+records what it misses turns an absent fixture into a silent live call that passes CI, so the replay mode
+is part of the control: in vcrpy that is `record_mode="none"` rather than the default `once`. Testnet
+proves protocol conformance and nothing else: its order books are independent and unsynchronised, are
+wiped periodically, expose only `/api` and not
+`/sapi`, carry different filter thresholds, and can receive a breaking API change **before** production.
+Binance SPOT testnet shipped the `MIN_NOTIONAL` to `NOTIONAL` rename first. A testnet fixture gives you
+the wrong `tickSize`, and the filter property test then proves nothing. A dry-run is optimistic by
+construction: freqtrade's fills a market order from order-book volume with 5% maximum slippage and
+assumes `stoploss_on_exchange` fills at the stop price. Never report or gate on dry-run PnL as if it were
+realistic. The cassette set must include **reject, partial-fill-then-cancel, over-fill/residual,
+429-then-418, and mid-stream disconnect**. Happy-path fills test nothing about the branches that lose
+money.
 
-**Shadow diffing** is the cheapest oracle available for a rewrite at T2 and above: run the new implementation
-against production traffic, compare its economic outputs to the incumbent's, alert on divergence beyond one
-minor unit, ship nothing until the diff is empty for a stated volume.
+**Shadow diffing** is the cheapest oracle available for a rewrite at T2 and above: run the new
+implementation against production traffic, compare its economic outputs to the incumbent's, alert on
+divergence beyond one minor unit, ship nothing until the diff is empty for a stated volume.
 
-A race detector will never find a double-spend. A lost update across two transactions is not a data race, and
-it *"can't find races in code paths that are not executed."* Line coverage does not show whether money math
-asserts anything: run mutation testing on the rounding, fee, allocation and PnL modules **only**, and demand a
-high score there rather than chasing coverage.
+A race detector will never find a double-spend. A lost update across two transactions is not a data race,
+and it *"can't find races in code paths that are not executed."* Line coverage does not show whether
+money math asserts anything: run mutation testing on the rounding, fee, allocation and PnL modules
+**only**, and demand a high score there rather than chasing coverage.
 
-## REQUIRED OUTPUT: the ship verdict
+## Output
 
-Every response that reviews, tests or approves a money path ends with this block. Fill every slot. A slot with
-no `file:line` is an ABSENT row, and one ABSENT row makes the verdict NO-SHIP.
+### Default, every economic change, T0 and T1
+
+```
+FINANCIAL CHECK
+tier:       T<n>, Axis B (does an external oracle exist: yes or no), and the signal that decided it
+effect:     what moves value, from whom to whom, in what unit
+identity:   the stable identity of the intent, durably recorded at file:line
+ambiguity:  which counterparty responses are UNKNOWN, and how they resolve
+authority:  whose copy of each quantity is the record
+recovery:   what a crash or restart between the effect and the local commit does
+controls:   <control> -> <file:line>, one per line; at T2 and above also `· <test name>`
+            UNRESOLVED: <control> (<why>), for anything not implemented
+```
+
+At T0 and T1 that block plus one line, `SHIP` or `NO-SHIP: <the first unresolved control>`, is the whole
+verdict. No evidence table, no separate risk table: the `controls:` line carries the implementation
+evidence, and a control described with no `file:line` and no `UNRESOLVED:` is a defect (*implemented, not
+described*). The tier matrix, not the vocabulary in the diff, decides which techniques this tier actually
+requires; at T1 that is the eleven rows in its T1 column, whose core is the five tests above plus the daily
+comparison.
+
+### T2 and above: the ship verdict
+
+At T2 and above, and for any response that approves a money path for release, the FINANCIAL CHECK is
+followed by this block. Emit only the slots the change actually touches. A slot you emit with no
+`file:line` is ABSENT, and one ABSENT slot makes the verdict NO-SHIP.
 
 ```
 SHIP VERDICT
-Tier:            T<n>  (Axis B: external oracle = yes|no — <the signal that decided it>)
 Reconciliation:  <entrypoint file:line> · authority <name> · join key <counterparty's own field>
                  · cadence <interval, vs the authority's stated lag> · detect-test <test name>
-Breach class:    <the predicate that matched> → halt level <1–6>, implemented at <file:line>
-Evidence:        one row per technique this tier requires (references/tier-matrix.md):
-                 <technique> | <test name> | <file:line> | PRESENT|ABSENT
-NAMED RISKS:     risk | implemented at file:line | test name
-Verdict:         SHIP  —  or  NO-SHIP: <the first ABSENT row, named>
+Breach class:    <the predicate that matched> -> halt level <1..6>, implemented at <file:line>
+Evidence:        <the reconciliation detect-test actually run> · <the crash-boundary test actually run>
+Verdict:         SHIP, or NO-SHIP: <the first ABSENT slot, named>
+```
+
+There is still no separate risk table at T2: the FINANCIAL CHECK's `controls:` line carries a test name
+alongside the `file:line` for each control, which is the same evidence a risk table would restate.
+
+### T3
+
+`Evidence:` stops being two named tests and becomes the per-technique table, which exists at T3 and
+nowhere else. Emit one row for every technique the tier matrix marks required at T3, including the
+deterministic-simulation rows and the external adversarial pass:
+
+```
+<technique> | <test name> | <file:line> | PRESENT|ABSENT
 ```
 
 ## References
