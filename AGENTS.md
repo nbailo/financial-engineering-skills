@@ -12,11 +12,11 @@ unsafe path unreachable, or state explicitly that the risk remains unresolved.
 | The code | Load |
 |---|---|
 | sends, cancels or tracks orders on a venue it does not operate, or derives fills, positions, PnL or a book from one | `fin-exchange-integration` |
-| **is** the venue: matching, allocation, market-data publication, clearing, settlement, liquidation | `fin-matching-and-settlement` |
 | integrates a payment processor or rail: intents, capture, refunds, disputes, webhooks, payouts | `fin-payments` |
 | maintains balances, postings, holds, or double-entry books | `fin-ledger` |
 | crosses the chain boundary: transactions, nonces, finality, reorgs, indexing, token semantics | `fin-onchain` |
 | none of the above, or amount arithmetic, retry logic, or rollout of a money path | `fin-money-core` |
 | is about to ship, or needs tests, reconciliation, or proof it is correct | `fin-verification` |
 
-Load every row that matches. An exchange backend is `fin-matching-and-settlement` **and** `fin-ledger`.
+Load every row that matches. A crypto exchange backend that credits deposits is `fin-onchain` **and**
+`fin-ledger`.
