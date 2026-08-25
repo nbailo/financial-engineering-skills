@@ -8,10 +8,13 @@ Spec limits enforced (agentskills.io/specification):
   - Legal frontmatter keys only. Any other key hard-fails package_skill.py,
     claude.ai upload, and the Skills API.
 
-Repo budgets (docs/architecture.md):
-  - SKILL.md <= 500 lines; description <= 430 chars; suite total <= 3000 chars,
-    because the skill listing budget is shared with every other suite installed.
-  - AGENTS.md <= 2 KB: it carries routing discipline only, never financial rules.
+Repo budgets. The constants below are the only statement of these numbers; nothing
+restates them, because a restated budget is a claim that rots (see MAX_SKILL_LINES,
+MAX_DESC, TOTAL_DESC_BUDGET, AGENTS_BUDGET):
+  - SKILL.md line cap, because a SKILL.md is loaded whole on every activation.
+  - Per-description and suite-total caps, because the skill listing budget is shared
+    with every other suite the user has installed.
+  - AGENTS.md size cap: it carries routing discipline only, never financial rules.
   - skills/ holds exactly the six installed skills; advanced/ is not part of the product.
   - references/ one level deep; any reference over 100 lines carries its own
     table of contents, because a partially-read file must still reveal structure.
@@ -32,7 +35,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LEGAL_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 RESERVED = ("anthropic", "claude")
-MAX_SKILL_LINES = 220   # a SKILL.md is loaded whole on every activation
+MAX_SKILL_PROSE_LINES = 210  # what an agent actually reads: everything but the trigger table
+MAX_SKILL_LINES = 300        # hard ceiling on the whole file, trigger table included
 MAX_DESC = 430
 SPEC_MAX_DESC = 1024
 TOTAL_DESC_BUDGET = 2600
@@ -152,6 +156,16 @@ def check_skill(skill_md: Path) -> int:
     lines = text.count("\n") + 1
     if lines > MAX_SKILL_LINES:
         err(f"SKILL.md is {lines} lines (max {MAX_SKILL_LINES})")
+
+    # The budget exists because a SKILL.md loads whole, but a trigger row and a line of prose
+    # are not the same cost. A row is scanned once to decide what to open; prose is read.
+    # Counting them together made splitting a reference compete with explaining a rule, and a
+    # skill answered by compressing its prose. Budget them separately so that stops happening.
+    prose = [ln for ln in text.split("\n")
+             if not re.match(r"^\s*\|?\s*[-*]?\s*\[[^\]]+\]\((?:\.\./)*references/", ln)]
+    if len(prose) > MAX_SKILL_PROSE_LINES:
+        err(f"SKILL.md has {len(prose)} lines outside the trigger table "
+            f"(max {MAX_SKILL_PROSE_LINES})")
 
     if re.search(r"(?:^|[^\w])@(?:skills|references)/", text):
         err("contains an @-reference — force-loads the file and burns context")
@@ -328,6 +342,92 @@ def check_structure(skill_md: Path) -> None:
             f"authority (EXTERNAL|SELF) and exposure (own|customer|record)")
 
 
+
+def check_repo_consistency() -> None:
+    """Cheap structural checks that stop documentation drifting away from the code.
+
+    This repo tells agents that a comment is a claim. These apply the same rule to the
+    repo: every restated budget, version and product-shape claim must match what the code
+    enforces and what the tree actually contains. Nothing here tries to judge financial
+    correctness; that is not a job for regex.
+    """
+    import json
+
+    plugin_p = ROOT / ".claude-plugin" / "plugin.json"
+    market_p = ROOT / ".claude-plugin" / "marketplace.json"
+    installed = sorted(p.parent.name for p in (ROOT / "skills").glob("*/SKILL.md"))
+    advanced = sorted(p.name for p in (ROOT / "advanced").glob("*/") if p.is_dir())
+
+    version = None
+    if plugin_p.is_file():
+        plugin = json.loads(plugin_p.read_text(encoding="utf-8"))
+        version = plugin.get("version")
+        if not version:
+            err("plugin.json declares no version")
+        # The advanced skill is deliberately not installed, so advertising it in the
+        # plugin or marketplace description promises something the install does not give.
+        for label, path in (("plugin.json", plugin_p), ("marketplace.json", market_p)):
+            if not path.is_file():
+                continue
+            blob = path.read_text(encoding="utf-8").lower()
+            for adv in advanced:
+                bare = adv.replace("fin-", "").replace("-", " ")
+                if adv in blob or bare in blob:
+                    err(f"{label} advertises '{adv}', which lives in advanced/ and is not installed")
+
+    # A version stated anywhere else must agree with the plugin's.
+    if version:
+        for md in [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+            if not md.is_file():
+                continue
+            body = md.read_text(encoding="utf-8")
+            for m in re.finditer(r"\bv(\d+\.\d+\.\d+)\b", body):
+                if m.group(1) != version:
+                    line = body[: m.start()].count("\n") + 1
+                    err(f"{md.relative_to(ROOT)}:{line} says v{m.group(1)}, "
+                        f"plugin.json says {version}")
+
+    # Restated budget numbers must equal the constants they describe.
+    budgets = {
+        r"(\d+)\s+lines per `?SKILL\.md": MAX_SKILL_PROSE_LINES,
+        r"(\d[\d,]*)\s+(?:chars|characters) across the suite": TOTAL_DESC_BUDGET,
+        r"(\d+)\s+characters per description": MAX_DESC,
+    }
+    for md in [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
+        if not md.is_file():
+            continue
+        body = md.read_text(encoding="utf-8")
+        for rx, expected in budgets.items():
+            for m in re.finditer(rx, body):
+                got = int(m.group(1).replace(",", ""))
+                if got != expected:
+                    line = body[: m.start()].count("\n") + 1
+                    err(f"{md.relative_to(ROOT)}:{line} states {got} where the validator "
+                        f"enforces {expected}")
+
+    # One canonical failure taxonomy. Two id schemes in one document is two taxonomies.
+    tax = ROOT / "docs" / "failure-taxonomy.md"
+    if tax.is_file():
+        body = tax.read_text(encoding="utf-8")
+        # Class ids appear both as headings and as bold lead-ins, so scan both: the second
+        # scheme hid in the bold leads while the headings looked consistent.
+        schemes = {m.group(1) for m in
+                   re.finditer(r"(?m)^(?:#{2,4}\s+\**|\*\*)([A-Z])\d+[ .\u00b7:]", body)}
+        if len(schemes) > 1:
+            err(f"docs/failure-taxonomy.md runs {len(schemes)} id schemes "
+                f"({', '.join(sorted(schemes))}); exactly one is canonical")
+
+    # One hop only: a reference that points at another reference is a chain.
+    for ref in sorted(ROOT.glob("skills/*/references/**/*.md")):
+        for link in re.findall(r"\]\(([^)]+)\)", ref.read_text(encoding="utf-8")):
+            if link.startswith(("http", "#", "mailto")):
+                continue
+            target = (ref.parent / link).resolve()
+            if "references" in target.parts and target != ref.resolve():
+                err(f"{ref.relative_to(ROOT)} links to another reference ({link}); "
+                    f"references are one hop from a skill, never a chain")
+
+
 def main() -> int:
     skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
     if not skills:
@@ -394,6 +494,8 @@ def main() -> int:
         body = md.read_text(encoding="utf-8")
         if re.search(r"\]\([^)]*advanced/", body) or re.search(r"(?m)^\s*\[[^\]]+\]:\s*\S*advanced/", body):
             err(f"{md.relative_to(ROOT)} links into advanced/, which is not installed with the product")
+
+    check_repo_consistency()
 
     agents = ROOT / "AGENTS.md"
     if not agents.is_file():
