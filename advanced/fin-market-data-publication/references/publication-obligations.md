@@ -1,60 +1,67 @@
-# Timing fairness under US Regulation NMS (US-specific)
+# One sequencer, one fan-out, and the record that proves what left when
 
 > **Provenance**
-> provider: US Securities and Exchange Commission · surface: Regulation NMS Rule 603(a) as codified, and the 2012 settled administrative proceeding that applied it to a venue's fan-out architecture
-> version: 17 CFR 242.603 as in force on 2026-08-25; SEC Release No. 34-67857, September 14, 2012, Administrative Proceeding File No. 3-15023
+> provider: US Securities and Exchange Commission, cited for a settled administrative proceeding whose
+> findings are code shapes
+> surface: the 2012 proceeding against a venue's fan-out architecture, read for the four findings and for the
+> separate charge that the venue could not prove the ordering it maintained
+> version: SEC Release No. 34-67857, September 14, 2012, Administrative Proceeding File No. 3-15023
 > verified_at: 2026-08-25
 > sources: https://www.sec.gov/files/litigation/admin/2012/34-67857.pdf
 > · https://www.sec.gov/news/press-release/2012-2012-189htm
-> · https://www.ecfr.gov/current/title-17/section-242.603
-> pinned: the order was downloaded and read as text on 2026-08-25; the eCFR page is the current edition served that day.
-> verified: every sentence in quotation marks in this file was read in the order on 2026-08-25. The sentence describing what the rule prohibits is the order's own, in section III. The four findings quoted are the order's: the internal architecture giving the depth-of-book feed a faster path than the path to the Network Processor, the second feed structured to operate independently of that system, the software issue that delayed the Network Processor path during periods of high trading volume in 2010, and the failure to retain the files carrying the transmission times. The disparity range and the 5,000,000 dollar civil money penalty are in the order; "first-ever SEC financial penalty against an exchange" is the SEC's own headline on the press release. The current text of 603(a)(1) and (a)(2), with the "fair and reasonable" and "not unreasonably discriminatory" standards, was read on eCFR.
-> corrected: one quotation was reshaped to the order's wording, which is that NYSE structured the other proprietary feed to operate independently of the system that sent data to the Network Processor.
-> unverified: the codified rule text does not itself state the timing prohibition; that reading is the Commission's, given in the Regulation NMS adopting release at 70 Fed. Reg. 37,496, 37,567 and 37,569, and quoted in the order. The adopting release itself was not opened here, so it is cited at second hand. Nothing was checked about any later enforcement action, about the market data infrastructure amendments now restructuring paragraph (b), or about how another jurisdiction's rules compare. The publisher rules and the record shape proposed below are this repository's engineering advice, not the SEC's text.
-> revalidate_when: 17 CFR 242.603 is amended again; the Commission brings a newer proprietary-versus-consolidated timing action, or issues guidance that supersedes the 2012 findings; the consolidated-feed architecture the rule assumes is replaced by the competing-consolidator model; your venue comes under a regulator other than the SEC.
+> pinned: the order was downloaded and read as text on 2026-08-25.
+> verified: every sentence in quotation marks below was read in the order that day. The four findings quoted
+> are the order's: the internal architecture giving the depth-of-book feed a faster path than the path to the
+> Network Processor, the second feed structured to operate independently of that system, the software issue
+> that delayed the Network Processor path during periods of high trading volume in 2010, and the failure to
+> retain the files carrying the transmission times. The disparity range and the 5,000,000 dollar civil money
+> penalty are in the order; "first-ever SEC financial penalty against an exchange" is the SEC's own headline
+> on the press release.
+> corrected: one quotation was reshaped to the order's wording, which is that NYSE structured the other
+> proprietary feed to operate independently of the system that sent data to the Network Processor.
+> unverified: the publisher rules and the record shape proposed below are this repository's engineering
+> advice, not the SEC's text. The jurisdictional obligation these findings arose under is stated in this
+> skill's Regulation NMS reference, not here.
+> revalidate_when: the Commission brings a newer proprietary-versus-consolidated timing action, or issues
+> guidance that supersedes the 2012 findings.
 
-**This file states a United States requirement and applies only to venues subject to it.** Regulation NMS
-governs exchanges and other trading centres in the US national market system for equities and options. Most
-venues in the world are not subject to it, and nothing in this file should be read as a universal property of
-market-data architecture. The generic architectural rule, that publication is deterministic and the fan-out
-happens once after the sequence is assigned, is in the skill body and holds everywhere. Whether one
-destination is legally required to be no later than another is a jurisdictional question, and this is the
-answer for one jurisdiction.
-
-If you are building outside the US national market system, read this as a worked example of what a regulator
-can require and of how an architecture breaches a timing rule without anyone intending to, then apply your own
-venue's rules and your own regulator's requirements.
+Determinism is what makes two paths one feed and a recovery store an answer rather than a second opinion.
+This file is the architectural property, the enforcement action whose findings read as code shapes, the
+reason an unequal fan-out is a defect on sight rather than a latency question, and the per-message record
+that is the only evidence a later comparison can read. It is jurisdiction-independent: whether one
+destination is legally required to be no later than another is a separate question with a separate answer.
 
 ## Contents
 
-- What Rule 603(a) requires, and of whom
+- The obligation: byte-identical paths, one assignment point, one fan-out
 - The NYSE enforcement action, and the four code shapes that produced it
 - Why the breach was architectural rather than intentional
 - The evidentiary failure, charged separately from the timing failure
-- Publisher rules that follow, for venues in scope
+- Publisher rules that follow
+- The transmission-timing record, and the two ways it is written uselessly
 - What a venue outside the US should take from this and what it should not
 
 ---
 
-## What Rule 603(a) requires
+## The obligation
 
-Reg NMS Rule 603(a) "prohibits an exchange from releasing data relating to quotes and trades to its customers
-through proprietary feeds before it sends its quotes and trade reports for inclusion in the consolidated
-feeds."
+**Two paths carrying one sequence space are byte-identical per sequence number.**
+Arbitration is by sequence number alone: the consumer keeps whichever copy arrived first and discards the
+other unread. If the paths ever differ in content under the same sequence, through different conflation,
+different batching boundaries or a field populated on one path only, the consumer's book becomes a function of
+network jitter. Generate once, at one sequencer, and fan out bytes. No message may depend on being seen
+exactly once in a way its sequence cannot identify. A gap is declared after arbitration, never before; say so,
+or consumers run single-line and aim a recovery storm at your re-request path at the moment of highest load.
 
-That sentence is the Commission's, from the order discussed below, and it is worth knowing that it is a
-reading rather than a transcription. The codified text at 17 CFR 242.603(a) says only that market data is
-distributed on terms that are "fair and reasonable" and "not unreasonably discriminatory"; the timing
-prohibition comes from the Regulation NMS adopting release, which states that "independently distributed data
-could not be made available on a more timely basis than core data is made available to a Network processor."
-A venue arguing about the boundary argues about that release, not about the two standards.
-
-Two structural facts about the US market make this rule necessary and give it its shape. Consolidated quote
-and trade data is distributed through processors operated on behalf of the whole market, and exchanges also
-sell their own proprietary depth-of-book feeds carrying the same facts and more. A venue that reaches its own
-paying customers first, on the same facts, has sold an advantage created by its position rather than by any
-service. The rule constrains the ordering between those two paths, and it constrains it as an obligation on
-the venue's own architecture, not as a best-efforts intention.
+**Publication is deterministic, and the fan-out happens once, after the sequence is assigned.**
+The same committed inputs produce the same bytes in the same order on every replica and every replay, or your
+two paths are not the same feed and your recovery store does not answer with what you sent. Assign the
+sequence at one point, fan out from that point, timestamp each sink hand-off there, and retain those records.
+A fan-out to two sinks with different queueing or serialisation cost is a reviewable defect on sight, because
+the disparity is structural and appears under the load you did not test. Whether one destination must be no
+later than another is a question for your venue's rules and its regulator, and where that duty exists the
+evidentiary failure is charged separately from the timing one. Specialises *reconciliation* in the form it
+takes with no external authority: those records are the only copy a later comparison can read.
 
 ## The NYSE enforcement action
 

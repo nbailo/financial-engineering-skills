@@ -1,55 +1,20 @@
-# The feed specification
+# What a missing slot costs, and what changing a published feed costs
 
-The document a consumer reads before writing a line of code against your feed, and the thing that decides
-whether a correct consumer can exist at all. A consumer cannot be correct against an underspecified feed: a
-slot you leave unfilled is a slot they fill by guessing, and their guess becomes a position. This file is the
-checklist, what each slot costs when it is missing, and the rules for changing a feed that consumers have
-already been built against.
+Two halves of the same question. The first is what each unfilled slot in the specification does to a
+consumer, section by section, because a checklist without consequences gets filled in with plausible words.
+The second is which changes to a feed with external consumers are safe, which need a version, and which need
+a new feed, plus the test that says whether the document is finished at all. Read this when a field is added,
+a published number is tightened, a constant field is about to carry real data, or a first external consumer
+is onboarding.
 
 ## Contents
 
-- The checklist, in the order a consumer needs it
 - What each missing slot actually costs, section by section
 - Facts that cannot be derived from the wire format, and therefore must be written down
 - Versioning: what can change quietly, what needs a version, and what needs a new feed
 - Conformance: the reference consumer written only from the document
 
 ---
-
-## The checklist
-
-```
-SEQUENCING
-  [ ] Which counter gap-detection runs on (per-message / per-packet / per-instrument), and its arithmetic
-  [ ] Whether packets carry multiple messages, and how the count is encoded
-  [ ] Every additional counter published, its scope, and what it is NOT valid for
-CONTROL
-  [ ] Heartbeat interval, what a heartbeat carries, and whether it consumes a sequence number
-  [ ] What a heartbeat covers: the channel, or the state of any one instrument
-  [ ] End-of-session semantics and how long recovery requests remain serviceable
-RESET
-  [ ] The reset message and its trigger
-  [ ] Exactly what a reset clears, what it renumbers, and what it does NOT resend
-  [ ] How ONE instrument is withdrawn and restored, and what that event invalidates
-SNAPSHOT
-  [ ] The join key, and which stream's sequence it names
-  [ ] Direction of the join: which buffered updates are dropped and which applied
-  [ ] Snapshot cycle period, loop-order guarantees (or their absence), and fields the snapshot omits
-GAP
-  [ ] Whether A/B arbitration must precede gap declaration
-  [ ] Recovery address, request format, retained depth, truncation rule, rate limit
-  [ ] What a gap invalidates: this instrument, or every book on the channel
-CONTENT
-  [ ] Which message types are book-eligible; which are volume-eligible; the whole volume-bearing set
-  [ ] Which rulebook decides eligibility, and which figures are computed from which set
-  [ ] Every deliberately-constant field, its value, and its effective date
-  [ ] Conflation policy: which streams, state- or delta-encoded, the interval, the bound, the chain link
-  [ ] The slow-consumer policy per stream, and the recovery load it implies
-TIME
-  [ ] Each timestamp's meaning, epoch, timezone, DST rule, and clock discipline
-  [ ] Which measurement each supports: event age, send latency, receive latency
-  [ ] Which timestamp is authoritative for staleness
-```
 
 ## What each missing slot costs
 

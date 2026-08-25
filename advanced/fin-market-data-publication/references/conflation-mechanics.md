@@ -1,4 +1,4 @@
-# Conflation and backpressure
+# Conflated events, the slow consumer, and the bound that has to hold globally
 
 > **Provenance**
 > provider: Binance, cited for one worked example of a covered-range field
@@ -15,77 +15,39 @@
 > revalidate_when: the diff depth payload gains or renames a covered-range field, or the futures chain-link
 > field is confirmed or removed.
 
-What a publisher is allowed to drop, and what it owes a consumer once it has dropped something. A slow
-consumer forces a choice, and the choice is a correctness decision rather than a performance one: two of the
-four available responses leave the consumer able to reconstruct a correct book, one leaves them provably
-unable to, and one is legitimate or catastrophic depending on where the backpressure ends up. This file
-decides which is which, and states what has to be published alongside a conflated stream so that a consumer
-can still detect loss.
+What a publisher owes a consumer once it has dropped something, and what to do with a subscriber that cannot
+keep up. A conflated stream stays contiguous while it loses events, so the covered range and the chain link
+are the only things that let a consumer detect a drop or join a snapshot. Read this when a slow subscriber is
+dropped or blocked, when an outbound queue bound is chosen, or when a coalesced event's fields are designed.
+Whether the stream may be conflated at all is decided in this skill's conflation legality reference.
 
 ## Contents
 
-- The four responses to a slow consumer, and what each one leaves reconstructable
-- The three conditions conflation has to meet: equivalent, bounded, recoverable
+- Raw and conflated are two sequence spaces
 - The covered-range identifier, and why a contiguous sequence is not a gap check on a conflated feed
 - What conflation destroys even when it is legal: trades, message counts, ordering signals
 - Load-dependent conflation, and why it makes the feed's semantics a function of load
-- Publisher-side mechanics: bounded queues, drop policy, disconnect and re-entry
+- The four responses to a slow consumer, and what each one leaves reconstructable
+- Neither response to a slow consumer is unconditional
+- Publisher-side mechanics: the global memory bound, drop policy, disconnect and re-entry
 - What to publish, and the tests that hold the policy in place
 
 ---
 
-## The four responses, and what each leaves reconstructable
+## Raw and conflated are two sequence spaces
 
-| Strategy | What the consumer can still reconstruct | Legitimate when | Must be published |
-|---|---|---|---|
-| Block the publisher | Everything | Only where a bounded buffer stops the backpressure before it reaches the sequencer or the matcher | The bound, and what happens when it is reached |
-| Disconnect the consumer | Nothing, until they recover | The default, provided the recovery path can absorb the reconnects the policy causes | The disconnect reason and the recovery entry point |
-| Conflate **state** (replace the pending update for a key with its latest absolute value) | The book at each observed instant, **not** the path between instants | The feed is absolute-quantity per key | That intermediate states are unobservable, plus a covered-range identifier per event |
-| Conflate **deltas** (drop some) | Nothing correct, ever | Never | n/a |
+A conflated stream is a second feed, not a cheaper rendering of the first, and the counter is where that
+becomes concrete. Give the conflated stream its own counter in its own space. Never reuse a raw sequence
+number on a conflated event, never renumber the raw space to close the hole conflation made, and never widen
+a raw number so that one value stands for a range. Each of those turns the raw feed's gap detector into an
+instrument that reports contiguity across a hole, and it reports it to every consumer at once, including the
+ones that never subscribed to the conflated stream.
 
-Blocking is disqualified by where the backpressure ends, not by anything about the consumer. A publisher that
-blocks on a full socket buffer applies backpressure through the fan-out into the sequencer and from there into
-the matcher, so one slow subscriber changes the rate at which orders are matched for everybody and becomes a
-participant in price formation. That is the case to refuse. Where a bounded buffer terminates the chain before
-the sequencer, an archive, a replay sink or a downstream fan-out process being the usual cases, blocking is a
-legitimate choice and the bound is the thing to publish. Trace the chain to its end before ruling either way,
-because "blocking never works" is a claim about a topology rather than about blocking.
-
-Disconnecting is the honest default: the consumer loses the stream, knows it lost the stream, and re-enters
-through a recovery path you already had to build. It is not free, and calling it always correct hides the
-cost. Disconnects correlate, because the burst that made one consumer slow made all of them slow, so the
-policy has to be sized against the reconnect storm it produces rather than against one reconnect. A recovery
-path that cannot absorb that storm converts a slow-consumer incident into a recovery-path incident at the
-moment of highest load. And where a consumer is entitled to the feed by rule or contract, the entitlement does
-not lapse because they were slow, so the answer there is a documented degraded mode rather than silence.
-
-## The property that decides whether conflation is legal
-
-**Conflation is legitimate only where it is semantically equivalent, bounded and recoverable.** State
-encoding buys the first condition and neither of the other two, which is why a feed can be state-encoded and
-still be conflated wrongly.
-
-- **Equivalent.** A state-encoded event carries the absolute value for a key, so the latest event for that key
-  is sufficient and every earlier one is redundant. A delta-encoded event carries a change, so every event is
-  load-bearing and dropping one corrupts the book permanently. Equivalence is per field rather than per
-  message: one field carrying a change, on an otherwise absolute message, makes that message unconflatable.
-- **Bounded.** A published maximum interval and a published queue bound, so the age of what a consumer holds
-  has a ceiling they can reason about. Unbounded conflation is indistinguishable from a stalled stream during
-  exactly the burst that caused it, which is the period a consumer most needs to see.
-- **Recoverable.** Every conflated event carries the range of updates it stands for and a link a consumer can
-  check against the event they last received. Without both, a drop is undetectable and a snapshot cannot be
-  joined to the stream, so nothing repairs the state afterwards.
-
-The corruption is undetectable from the consumer side, which is what makes it the worst failure in this file.
-The transport sequence is still contiguous, because you dropped the message before it was numbered, or
-collapsed two numbered messages into one and renumbered. No gap detector fires. The book is simply wrong,
-silently, until the next reset or snapshot, and every decision taken against it in between was taken against
-a state that never existed.
-
-The test to run against your own encoder is mechanical: for each message type, ask whether applying the same
-message twice leaves the book in the same state as applying it once. If yes for every field, the type is
-state-encoded and conflatable. If any field is a change rather than a value, the type is delta-encoded and it
-is not.
+Publishing both counters is the whole obligation, plus one sentence saying which one gap detection runs on
+and what the other is not valid for. CME does the negative half of this explicitly on its conflated TCP
+group, which sends the per-instrument report sequence as a literal zero rather than as a number that looks
+usable; the detail is in the CME reference, and the shape is what to copy. A consumer that can see the
+counter is absent stops; a consumer handed a plausible wrong number does not.
 
 ## The covered-range identifier
 
@@ -128,6 +90,12 @@ Three consequences for your own feed:
   ever cross" or "how long did that level rest" is asking a question the conflated feed cannot answer. If the
   answer matters to anyone, publish an unconflated stream alongside and let them choose.
 
+Trades are never conflatable: each print is an economic fact with its own identity, and
+collapsing two destroys volume, VWAP and every trade-based signal. A conflated feed has last-value-cache
+semantics, so anything derived from the count or order of updates is invalid on it, and consumers build those
+things unless you say so. It must not vary silently with load, or a backtest built on quiet-period captures
+does not describe the open.
+
 ## Load-dependent conflation
 
 If depth is conflated under load and not otherwise, the feed's semantics are a function of load. A consumer's
@@ -140,13 +108,48 @@ difference appears exactly when their exposure is largest. Two acceptable design
 A hybrid is acceptable only if the transition is itself an event on the stream, carrying the interval that is
 now in force, so a consumer can see the semantics change rather than infer it from message rates.
 
+## The four responses, and what each leaves reconstructable
+
+| Strategy | What the consumer can still reconstruct | Legitimate when | Must be published |
+|---|---|---|---|
+| Block the publisher | Everything | Only where a bounded buffer stops the backpressure before it reaches the sequencer or the matcher | The bound, and what happens when it is reached |
+| Disconnect the consumer | Nothing, until they recover | The default, provided the recovery path can absorb the reconnects the policy causes | The disconnect reason and the recovery entry point |
+| Conflate **state** (replace the pending update for a key with its latest absolute value) | The book at each observed instant, **not** the path between instants | The feed is absolute-quantity per key | That intermediate states are unobservable, plus a covered-range identifier per event |
+| Conflate **deltas** (drop some) | Nothing correct, ever | Never | n/a |
+
+Blocking is disqualified by where the backpressure ends, not by anything about the consumer. A publisher that
+blocks on a full socket buffer applies backpressure through the fan-out into the sequencer and from there into
+the matcher, so one slow subscriber changes the rate at which orders are matched for everybody and becomes a
+participant in price formation. That is the case to refuse. Where a bounded buffer terminates the chain before
+the sequencer, an archive, a replay sink or a downstream fan-out process being the usual cases, blocking is a
+legitimate choice and the bound is the thing to publish. Trace the chain to its end before ruling either way,
+because "blocking never works" is a claim about a topology rather than about blocking.
+
+Disconnecting is the honest default: the consumer loses the stream, knows it lost the stream, and re-enters
+through a recovery path you already had to build. It is not free, and calling it always correct hides the
+cost. Disconnects correlate, because the burst that made one consumer slow made all of them slow, so the
+policy has to be sized against the reconnect storm it produces rather than against one reconnect. A recovery
+path that cannot absorb that storm converts a slow-consumer incident into a recovery-path incident at the
+moment of highest load. And where a consumer is entitled to the feed by rule or contract, the entitlement does
+not lapse because they were slow, so the answer there is a documented degraded mode rather than silence.
+
+## Neither response to a slow consumer is unconditional
+
+Neither answer to a slow consumer is unconditional: blocking is disqualified
+wherever the backpressure can reach the matcher, and available where a bounded buffer terminates that chain
+first; disconnecting is the honest default, and it still has a cost to size, because the recovery path must
+absorb every reconnect the policy causes, including the correlated ones.
+
 ## Publisher-side mechanics
 
 The queue in front of each consumer socket is bounded, and the bound is a published number. On overflow the
 policy is one of the two legal responses above, chosen per stream and not per incident:
 
-- On a state-encoded stream, coalesce into the pending entry for the key. The queue holds at most one pending
-  update per key, which is what makes the memory bound hold under any consumer speed.
+- On a state-encoded stream, coalesce into the pending entry for the key, so the queue holds at most one
+  pending update per key. That bounds a key and nothing more. The bound that has to hold is GLOBAL: keys
+  times subscribers, plus everything else the publisher is holding, against one budget for the process, with
+  a stated policy for reaching it. Publish that number. A per-key bound looks like a memory bound right up to
+  the day you list more instruments or one subscriber takes every symbol, and on that day it is not one.
 - On a delta-encoded stream, disconnect, with a reason code the consumer can log, and let them re-enter
   through recovery.
 
@@ -172,9 +175,12 @@ Three tests hold this in place:
 - **Encoding test.** For every message type on a conflatable stream, assert that applying the message twice
   leaves the same state as applying it once. A new field that carries a delta fails this test on the day it
   is added, which is the day to catch it.
-- **Coalescing test.** Drive the publisher with a burst that exceeds the queue bound, then assert the
-  consumer's reconstructed book equals the publisher's book, and that every event received carries a covered
-  range that chains to the previous one.
+- **Raw-stream equivalence test.** Publish one input twice, raw and conflated, under a burst that exceeds the
+  queue bound. Replay both into the same consumer implementation and assert that at every covered-range
+  boundary the state built from the conflated stream equals the state the raw stream reached at that same
+  point, and that every conflated event chains to the previous one. Comparing the conflated consumer against
+  the publisher's own book is the weaker test, and it passes while the two are wrong together, because both
+  are projections of the same code path. The raw stream is the only comparison that is not.
 - **Trade passthrough test.** Under the same burst, assert that the count and the sum of quantities of trade
   prints received equals the count and sum emitted. Volume is the quantity that conflation is most likely to
   silently reduce.
