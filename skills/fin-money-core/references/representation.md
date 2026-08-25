@@ -3,9 +3,7 @@
 The mechanism behind *exact representation*: which concrete type holds an obligation in each language, which
 column type holds it in each database, and the context that stops a division leaking a residue. A value a
 counterparty can demand lives its whole life exact; a value nobody can demand is an estimate, and binary
-floating point is the correct type for it. Read this before you declare the column or the struct field. Scale
-and currency travel in `currency-and-scale.md`; the boundaries that degrade a correct value on its way out
-are in `serialization-and-width.md`.
+floating point is the correct type for it. Read this before you declare the column or the struct field.
 
 ## Contents
 
@@ -31,7 +29,7 @@ model error dominates 1e-16 by ten or more orders of magnitude.
 | **Python** | `int` minor units, or `decimal.Decimal` built **only** from `str`/`int` | `Decimal` inside an explicit `localcontext(prec=…)`, one `quantize()` at the boundary | `Decimal(0.1)` → `Decimal('0.1000000000000000055511151231257827021181583404541015625')` | none for `==`; `Decimal('1.30')+Decimal('1.20')` is `2.50`, trailing zeros are significant |
 | **TypeScript/JS** | `bigint` minor units, or Dinero.js v2 / `big.js` / `decimal.js` | `big.js`/`decimal.js`, never `number` | `Number(x)`, `parseFloat`, `JSON.parse` of a numeric amount | `toFixed()` rounds the *float's* value: `(1.005).toFixed(2) === "1.00"` |
 | **Go** | `int64`/`int128` minor units, or `shopspring/decimal` | `shopspring/decimal`; `Div` reads a **package-global** `DivisionPrecision`; use `DivRound`/`RoundBank` with an explicit precision per call | `decimal.NewFromFloat(x)` | scan nullable columns as `decimal.NullDecimal`, not `*float64` |
-| **Rust** | `i128`/`u128` minor units, or `rust_decimal::Decimal` | `rust_decimal` `checked_*` variants; `num-rational` for intermediate pro-rata | `Decimal::from_f64_retain` | bounded type; see `serialization-and-width.md` |
+| **Rust** | `i128`/`u128` minor units, or `rust_decimal::Decimal` | `rust_decimal` `checked_*` variants; `num-rational` for intermediate pro-rata | `Decimal::from_f64_retain` | bounded type; check the width against your largest amount |
 | **Java** | `long` minor units, `BigDecimal` from `String`, or JSR-354 `Money` | `BigDecimal` with an explicit `MathContext` **and** an explicit `RoundingMode` on every `divide`/`setScale` | `new BigDecimal(0.1)` | `new BigDecimal("2.0").equals(new BigDecimal("2.00"))` is **false**; use `compareTo` |
 | **C#** | `long` minor units, or `decimal` | `decimal` with `Math.Round(x, n, MidpointRounding.…)`; the argument is not optional in a money path | `(decimal)someDouble` | `Math.Round` without `MidpointRounding` silently uses banker's (`ToEven`) |
 

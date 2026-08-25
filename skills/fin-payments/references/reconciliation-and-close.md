@@ -160,9 +160,8 @@ settlement feed is the only place the outcome is visible.
 **Returning value you already disbursed onward requires reversing the onward disbursement in the same unit of
 work.** In a marketplace the onward disbursement is the connected-account transfer, so the refund and its
 reversal commit together, and an unrecovered reversal is a receivable rather than a completed clawback. The
-Stripe wording and the proportional-reversal arithmetic are in `refunds.md`; the settlement-side
-shadow is `connect_collection_transfer`, in `settlement-feeds.md`, which is what a 180-day negative balance
-looks like in the feed.
+reversal is proportional to the refunded fraction, and its settlement-side shadow is the
+`connect_collection_transfer` line, which is what a 180-day negative balance looks like in the feed.
 
 **A grouping attribute the counterparty offers for reporting creates no economic linkage.** Stripe's
 `transfer_group` is a reporting label: *"it doesn't affect any standard functionality"*. It causes no reversal,

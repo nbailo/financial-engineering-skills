@@ -2,9 +2,7 @@
 
 Which of the three rounding problems you have, what each mode name actually does, and the regimes where
 the mode and the *level* are prescribed by law rather than chosen. Everything here assumes integer minor units
-or an exact decimal; a rounding argument over a `float` is about the wrong number. The per-leg direction table
-is in `exchange-rounding-direction.md`, the largest-remainder algorithm in `allocation-and-residue.md`, the
-truncating-language traps in `integer-arithmetic-traps.md`.
+or an exact decimal; a rounding argument over a `float` is about the wrong number.
 
 ## Contents
 
@@ -42,7 +40,7 @@ modes ignore the midpoint and always go one way.
 | nearest, ties to even | `ROUND_HALF_EVEN` | `HALF_EVEN` | `MidpointRounding.ToEven` (default) | `roundTiesToEven` | statistical/interbank contexts that want zero cumulative bias |
 | toward −∞ | `ROUND_FLOOR` | `FLOOR` | n/a | `roundTowardNegative` | the leg the system **pays out** |
 | toward +∞ | `ROUND_CEILING` | `CEILING` | n/a | `roundTowardPositive` | the leg the system **collects** |
-| toward 0 (truncate) | `ROUND_DOWN` | `DOWN` | n/a | `roundTowardZero` | almost never; see `integer-arithmetic-traps.md` |
+| toward 0 (truncate) | `ROUND_DOWN` | `DOWN` | n/a | `roundTowardZero` | almost never; a directed mode whose bias flips with the sign |
 
 Sources: Python `decimal` docs (default `prec=28`, `ROUND_HALF_EVEN`); Java `RoundingMode` (which calls
 `HALF_UP` "the rounding mode commonly taught at school" and `HALF_EVEN` "Banker's rounding"); .NET

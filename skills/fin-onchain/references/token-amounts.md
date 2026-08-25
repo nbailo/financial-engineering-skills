@@ -25,7 +25,7 @@ isolated.
 | a second transfer to or from the same account | **no**; the delta is the net of both and splits nowhere |
 | a rebasing or elastic-supply asset | **no**; the balance moved for a supply event with no transfer behind it |
 | fee-on-transfer | the delta is the amount you can spend, and it is not `Transfer.value`; which of the two the counterparty considers delivered is the token's own accounting to answer, not yours |
-| a transfer hook that reenters and moves the balance again | **no**; the two reads straddle the transfer, which is the reentrancy point the taxonomy in `token-erc20-quirks.md` names |
+| a transfer hook that reenters and moves the balance again | **no**; the two reads straddle the transfer, which is the reentrancy point |
 | any unrelated state change on that account inside the window | **no**; the delta carries it too |
 
 Where attribution is not isolated, the authoritative amount is the protocol's own accounting for that

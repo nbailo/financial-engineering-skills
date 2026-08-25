@@ -31,7 +31,7 @@ A group of postings not committed by one operation is not a group. Two primitive
 funding sources with caps and overdraft rules) as one script that commits all postings or none, using integer
 math only with built-in rounding rules. No intermediate state for a crash to leave behind, no compensating
 action to get wrong. The relational equivalent: all legs in one `INSERT … SELECT` from a VALUES list, inside
-one database transaction, behind the entrypoint in `double-entry.md`. Never one `INSERT` per leg with a
+one database transaction, behind one balanced-posting entrypoint. Never one `INSERT` per leg with a
 commit between them.
 
 ## 2 · Batch results are per-event

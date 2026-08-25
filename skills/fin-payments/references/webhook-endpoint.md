@@ -37,7 +37,7 @@ recency check entirely."* A tolerance smaller than your host clock skew rejects 
 zero rejects nothing.
 
 **The signature timestamp is regenerated on every delivery attempt.** It is a replay guard and nothing else.
-The field that orders events is the event's own timestamp, in `webhook-processing.md`.
+The field that orders events is the event's own timestamp, never the signature timestamp.
 
 Adyen signs each notification item, not the request: the HMAC arrives in that item's
 `additionalData.hmacSignature`, so a request carrying several `notificationItems` is validated **item by

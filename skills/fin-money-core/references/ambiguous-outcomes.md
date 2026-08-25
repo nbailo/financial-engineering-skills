@@ -3,8 +3,8 @@
 You are about to write the `except`/`catch` arm of a value-moving call. Two mechanisms are routinely
 collapsed into one; this is the first, the **classification** of what the counterparty told you: did the
 effect happen? Per-signal tables, the shape that carries the answer to the decision point, and the loop that
-resolves what is still unknown. The **identity** under which you may safely ask again is in
-`idempotency-keys.md`.
+resolves what is still unknown. The **identity** under which you may safely ask again is the other
+mechanism, the idempotency key.
 
 ## Contents
 
@@ -163,7 +163,7 @@ venue speaks authoritatively about it (`:295-301`).
 
 ## `resolve_unresolved_intents()`
 
-Phase 2 of the key lifecycle (`idempotency-keys.md`) exists to feed this loop; if nothing reads the row
+Phase 2 of the idempotency-key lifecycle exists to feed this loop; if nothing reads the row
 back, the row is decoration.
 
 ```python

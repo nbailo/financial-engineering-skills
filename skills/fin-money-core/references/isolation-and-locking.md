@@ -2,9 +2,8 @@
 
 The mechanism behind *concurrency on authoritative state*: the window between reading a balance and
 writing it, and the boundary that has to enclose both. Engine semantics are stated per `(engine, level)`,
-because the label is not the guarantee. Locks that must hold across processes are in
-`distributed-locks-and-fencing.md`; the window between an external effect and the local record of it is in
-`crash-boundaries-and-outbox.md`.
+because the label is not the guarantee. Locks that must hold across processes, and the window between an
+external effect and the local record of it, are each their own subject.
 
 ## Contents
 
@@ -207,7 +206,7 @@ Mechanical, and executable on a diff:
 6. **Confirm no external call is inside.** For external effects steps 3 and 6 conflict on purpose: an HTTP
    call must **not** be lexically inside a transaction block; it rolls back the intent row on exception and
    holds row locks for the counterparty's latency. Solved not by a longer transaction but by persist intent,
-   external effect, persist outcome, which `crash-boundaries-and-outbox.md` states with a crash point per phase.
+   external effect, persist outcome, three phases with a crash point between each pair.
 7. **Test with two processes, not two threads.** A single-process test passes for every one of the six
    instances above and every defect in the next section.
 

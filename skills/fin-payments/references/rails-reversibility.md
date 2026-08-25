@@ -49,9 +49,9 @@ config, not out of a constant in your code.
 
 ## Card
 
-Authorization is a **hold that expires**; capture is the money-moving event. `capture-and-amounts.md` carries the
-capture rules (cancel rather than refund an uncaptured intent; partial capture releases the remainder; read
-`capture_before` from the response). Two rail-level facts belong here:
+Authorization is a **hold that expires**; capture is the money-moving event. The capture rules are their own
+subject: cancel rather than refund an uncaptured intent, partial capture releases the remainder, and
+`capture_before` is read from the response. Two rail-level facts belong here:
 
 **A refund issued shortly after the charge may be processed as a reversal, not a credit.** The original charge
 drops off the cardholder's statement, no separate credit line appears, **no ARN is produced**, and network fees
@@ -126,7 +126,7 @@ SDD (pull) is a separate taxonomy (refunds, returns, rejects, refusals, reversal
 for unauthorised collections that run considerably longer than a card dispute.
 
 The engineering consequence: a Recall has a **three-valued, non-terminal outcome**, and the UI must never show
-the payment as cancelled until the answer arrives. The `camt.029` code sets are in `iso20022-messages.md`.
+the payment as cancelled until the answer arrives.
 
 ## Wire, RTP and FedNow: finality on record
 

@@ -1,5 +1,14 @@
 # ISO 20022 messages
 
+> **Provenance**
+> provider: ISO 20022, via the registration authority's message definitions and external code sets · surface: the `pacs.002` status ladder, identity fields across `pacs`, `pain` and `camt`, return correlation, and amount serialisation
+> version: the external code set edition named in the body, with 27 status values as of that publication. No schema version was pinned per message.
+> verified_at: not established
+> sources: https://www.iso20022.org/
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The status ladder is the sharpest case: the file's own argument is that the code list is an open enum republished on a quarterly cadence, which means the count quoted below is a snapshot of a moving list and nobody has re-read it since. The host did not answer this client on 2026-08-25, the connection timed out, so even the location above was not opened; a recheck needs the message catalogue and the external code sets file from the registration authority, and then the usage guideline of whichever scheme you actually send to.
+> revalidate_when: ISO publishes an external code set edition that adds or retires a `TxSts` value; a scheme you send to publishes a usage guideline that narrows or redefines these identity fields; the UETR requirement or its uniqueness rule changes; a rail you use moves to a newer message version.
+
 Message-level identity, status and amount, read out of the schemas. The correlation key for a return is
 decided when the original is minted, the status ladder is an open enum whose default branch is where the
 money goes wrong, and the amount carries two validation layers. Read it when a `pacs`, `camt` or `pain`

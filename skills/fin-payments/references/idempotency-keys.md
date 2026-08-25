@@ -109,7 +109,7 @@ they are not deduplicated responses and they say nothing about whether an earlie
 also meaningless at a different processor. **500s ARE cached**, and a cached 500 means *indeterminate*: Stripe
 states there is no client-side algorithm that resolves it, and Stripe's back office may roll the charge forward
 to the network afterwards, so the object *"surfaces only via webhook"*. That is the case the sweeper's
-non-terminal loop exists to find (see `webhook-recovery.md`).
+non-terminal loop exists to find.
 
 ## Replay signals, 409, and when a fresh key is legal
 

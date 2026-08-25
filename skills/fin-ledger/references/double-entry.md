@@ -179,11 +179,11 @@ Four things this makes concrete. (i) The user's liability falls by principal **a
 postings written at different times. (ii) The fee is *revenue*, credited where a P&L can read it; held in the
 same account as principal, or netted against the hot wallet, it is lost. (iii) Gas is an **expense you actually
 paid**, denominated in ETH; it does not appear in the USDC group and is never converted into USDC on the
-journal (`multi-currency-fx.md`). (iv) Drop any row and the group is unbalanced: the entrypoint rejects it
+journal. (iv) Drop any row and the group is unbalanced: the entrypoint rejects it
 rather than a reconciliation discovering it on Tuesday. If the primitive forbids cross-`ledger` transfers
 (TigerBeetle does: both accounts must share the same `ledger`), legs 1–3 and 4–5 are two transfers on two
 ledgers, tied by a
-shared correlation id in `user_data_128`, and by the linked chains in `posting-api.md` if they must commit as one.
+shared correlation id in `user_data_128`, and by the primitive's linked-transfer chain if they must commit as one.
 
 
 ## 7 · Schema sketch
@@ -235,7 +235,7 @@ CREATE INDEX ON entries (group_id);  CREATE INDEX ON entries (account_id, id);
   asserting they match the account's. An entry whose currency differs from its account's is a defect.
 - `idempotency_key` on the *group*, not the entry. Uniqueness alone is not idempotency: on a conflict the
   entrypoint loads the stored group and compares `account_id`, `direction`, `amount`, `currency` leg by leg,
-  returning a per-field mismatch (`posting-api.md`), not a bare success.
+  returning a per-field mismatch, not a bare success.
 
 The group invariant, as a deferred constraint trigger, so a multi-statement insert is legal but an unbalanced
 commit is not:

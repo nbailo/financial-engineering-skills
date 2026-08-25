@@ -3,8 +3,7 @@
 Where the scale comes from, and why an integer amount with no `(currency, scale)` pair beside it is
 uninterpretable. One currency at one vendor carries four possibly-different scales, all runtime metadata,
 and a conversion between two currencies is an operation with provenance rather than a multiplication. Read
-this before you write `* 100`, add a currency, or book an FX leg. The types and columns are in
-`representation.md`.
+this before you write `* 100`, add a currency, or book an FX leg.
 
 ## Contents
 

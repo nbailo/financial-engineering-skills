@@ -2,8 +2,7 @@
 
 Two representations of one value are traded and the counterparty chooses when and how often: shares
 against assets, LP tokens against reserves, base against quote, points against cash. The per-leg direction
-table, the exhaustive search that proves it, and the two ways a correct direction still loses everything. Mode
-names and the prescribed regimes are in `rounding-modes.md`.
+table, the exhaustive search that proves it, and the two ways a correct direction still loses everything.
 
 ## Contents
 

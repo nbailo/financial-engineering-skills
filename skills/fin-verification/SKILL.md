@@ -4,8 +4,7 @@ description: >-
   Proof that a money path is correct: reconciliation against an independent authority,
   planted-break tests that prove it detects, crash-boundary recovery, replay and reordering
   tests, and stronger evidence when the system is its own authority. Use alongside a domain
-  skill when a money-path change touches tests or assertions, when reconciliation or a kill
-  switch is involved, or when the ask is whether this is ready to ship.
+  skill for tests, reconciliation, a kill switch, review, or a ship decision.
 license: MIT
 ---
 
@@ -180,9 +179,9 @@ Load a reference when its trigger is in the diff, not on the way past.
 ## Output
 
 When the change is economic, open with one line: `authority: EXTERNAL (<name>) | SELF` and
-`exposure: own | customer | record`. Authority is a property of a quantity, not of the codebase. Where one
-authority covers everything in scope, emit the single line. Where it does not, emit `authority: MIXED` and
-qualify the differing quantities on one line each, two or three qualifiers at most:
+`exposure: own | customer | record`. Authority is per quantity. Where one covers everything in scope, emit the
+single line. Where it does not, emit `authority: MIXED` and qualify the differing quantities on one line each,
+two or three qualifiers at most:
 
 ```
 authority: MIXED · exposure: customer
@@ -204,9 +203,9 @@ FIX       <the change that closes it>
 TEST      <the property to assert>
 ```
 
-A claimed control points at executable code and, where the risk needs it, a named test. A control that is
-absent is reported as `UNRESOLVED: <control> (<why>)`, never as a completed checklist row. No findings is
-one or two sentences saying so and why the change is safe.
+A claimed control points at executable code and, where the risk needs it, a named test; a control that is
+absent is `UNRESOLVED: <control> (<why>)`, never a completed checklist row. No findings is one or two
+sentences saying so and why the change is safe.
 
 When the task is a review or a ship decision, end with one line:
 
@@ -215,4 +214,4 @@ VERDICT   SHIP  |  NO-SHIP: <the unresolved control>
 ```
 
 Emit one evidence row per property this change puts at risk, and never a row for a mechanism it does not
-touch. The fuller ship-verdict block in the reference belongs to a review or a release decision.
+touch.

@@ -3,7 +3,8 @@
 How a time-based amount becomes an entry: the balanced posting that recognises interest, fees or funding, the
 period marker that makes a re-run post nothing, the compounding law that decides whether the answer depends on
 how often the job ran, the rounding that makes a per-period accrual conserve value, and the claim expressed as
-the difference of two monotone counters. The year fraction it multiplies is `day-count-conventions.md`.
+the difference of two monotone counters. The year fraction it multiplies comes from the instrument's
+day-count convention.
 
 ## Contents
 

@@ -3,7 +3,7 @@
 The six boundaries at which a correct in-memory value is silently degraded on its way to storage or to a
 counterparty, and the width past which the arithmetic stops holding the number you think it holds. The
 arithmetic is rarely where exactness fails; these are. Read this before you declare the protobuf message, the
-Avro schema, or the integer type. The in-language types and the column types are in `representation.md`.
+Avro schema, or the integer type.
 
 ## Contents
 
@@ -20,11 +20,11 @@ The arithmetic is rarely where this fails. These six are.
 | Boundary | Mechanism | What the value becomes | Correct shape |
 |---|---|---|---|
 | **JSON number** | RFC 8259 §6: "good interoperability can be achieved by implementations that expect no more precision or range than IEEE 754 binary64 … integers in the range [-(2\*\*53)+1, (2\*\*53)-1] are interoperable". Damage happens **inside the parser** | `JSON.parse('{"amount":0.1}')` yields the double `0.1000000000000000055511…`; `JSON.parse("12345678901234567890")` yields `12345678901234567000` | amounts as **strings** or integer minor units. `Decimal(str(json_number))` is *not* a fix: `str()` of an already-damaged double is already wrong |
-| **ORM / driver coercion** | a correct `NUMERIC(18,8)` handed back as `float64` / JS `Number` | scale and exactness gone after a correct write | assert the returned **type** in a test (see `representation.md`) |
+| **ORM / driver coercion** | a correct `NUMERIC(18,8)` handed back as `float64` / JS `Number` | scale and exactness gone after a correct write | assert the returned **type** in a test |
 | **protobuf `double`** | identical to binary64 | same as JSON | `google.type.Money` `{currency_code, units:int64, nanos:int32}`, a string field, or `{scaled_int, scale}`. Note `Money`'s fixed 10⁻⁹ scale **cannot** hold an 18-decimal token amount |
 | **Avro / Parquet `decimal`** | `precision` and `scale` live in the **schema**; the payload is only the two's-complement big-endian unscaled integer | a schema evolution changing `scale` from 2 to 4 reinterprets every historical record as 1/100 of its true value, with no error | treat `scale` as immutable once data exists |
 | **CSV / Excel** | Excel stores 15 significant decimal digits and zeroes everything beyond (<https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/excel/floating-point-arithmetic-inaccurate-result>); CSV carries no type at all | a 19-digit amount or a leading-zero account number becomes a float on open | never route money through a spreadsheet inside an automated pipeline |
-| **Float SQL column** | `REAL` / `DOUBLE PRECISION` / `FLOAT` rounds on INSERT | correct in memory, wrong at rest | see the column table in `representation.md` |
+| **Float SQL column** | `REAL` / `DOUBLE PRECISION` / `FLOAT` rounds on INSERT | correct in memory, wrong at rest | an exact decimal column with an explicit scale, never a float type |
 
 Two more that show up as one-line diffs:
 

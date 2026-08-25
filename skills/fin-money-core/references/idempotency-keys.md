@@ -3,7 +3,7 @@
 You are about to mint, store or reuse the key that makes retrying a value-moving call safe. This is the
 second of the two mechanisms, the **identity** under which you may ask again: the five-phase lifecycle, the
 IETF key/fingerprint split, the server cases, the rollback trap and the retention arithmetic. The
-**classification** of what the counterparty told you is in `ambiguous-outcomes.md`.
+**classification** of what the counterparty told you is the other mechanism.
 
 ## Contents
 
@@ -114,7 +114,7 @@ X", a retry carrying `X` must match even though the committed amount was less.
 | **Key unseen** | Execute, but write key + fingerprint + `IN_PROGRESS` durably **before** any external effect, enforced by a unique index on `(tenant, key)` or a conditional write. Never `SELECT`-then-`INSERT`: the concurrent pair is the whole point. | Brandur `CREATE UNIQUE INDEX idempotency_keys_user_id_idempotency_key ON idempotency_keys (user_id, idempotency_key)`; Powertools conditional `PutItem`: *"If locking fails, it means we already have an idempotency record"* |
 | **Same key + same body + IN FLIGHT** | Do **not** execute. Return an explicit conflict, or block until the first completes. **Never fabricate success**; the response body would be a lie about state that does not exist yet. Hold the lock as a **lease**, not forever. | IETF §2.6/§2.7 → `409` + problem+json *"A request is outstanding for this Idempotency-Key"*; Stripe `409`; Adyen `422`/`409` + `704`; Powertools `IdempotencyAlreadyInProgressError`; Brandur `409 error_request_in_progress`, *"Only acquire a lock if the key is unlocked or its lock has expired"* |
 | **Same key + same body + COMPLETED** | Replay the stored status code and body, **and signal that it is a replay**. | `Idempotent-Replayed: true` (Stripe) · `200` vs `201` on capture (PayPal) · `Repeatability-Result` (OASIS) · `exists` vs `created` (TigerBeetle) · **none at all** (Open Banking UK always returns `201`; Adyen only echoes the key header) |
-| **Same key + DIFFERENT body** | **Reject.** Neither execute nor replay. | Every source agrees on the behaviour and none agrees on the code; see the do-not-branch-on-the-code note in `ambiguous-outcomes.md`. Open Banking UK frames it as fraud: *"If the TPP changes the request body, the ASPSP must not modify the end resource. The ASPSP may treat this as a fraudulent action."* |
+| **Same key + DIFFERENT body** | **Reject.** Neither execute nor replay. | Every source agrees on the behaviour and none agrees on the code, so never branch on the code alone. Open Banking UK frames it as fraud: *"If the TPP changes the request body, the ASPSP must not modify the end resource. The ASPSP may treat this as a fraudulent action."* |
 | **Key expired / outside retention** | Two designs exist and the common one is dangerous. Prefer explicit rejection for money. | Silent degradation: Stripe *"We generate a new request if a key is reused after the original is pruned."* Explicit: OASIS carries `Repeatability-First-Sent` so the server can answer deterministically: *"the server cannot guarantee the request was not already executed and so MUST return an error"* → `412 Precondition Failed` + `Repeatability-Result: rejected` |
 
 **Evaluate expiry in application code against a stored timestamp, never via the store's TTL.** Powertools:

@@ -127,12 +127,11 @@ silent outage. Each precondition halts the queue and pages; none of them may be 
 |---|---|---|
 | **ordering continuity** | the pending-minus-latest gap is zero, or has been non-zero for less than a configured interval | queued transactions behind a gap are capped at geth's `AccountQueue` (64) and evicted after `Lifetime` (3h). One stuck low-fee transaction at nonce N blocks every withdrawal behind it and then silently drops them |
 | **fee-paying reserve** | the broadcasting account's native-gas balance covers a configured multiple of the current worst-case fee for the queued depth | a hot wallet out of gas stops all withdrawals with no error anyone reads |
-| **absolute fee ceiling** | every constructed transaction carries a cap denominated in the asset, not only a fee-rate cap | a rate cap cannot bound the loss when the *input amount* is wrong; this is the Paxos shape in `wallet-utxo-construction.md` |
+| **absolute fee ceiling** | every constructed transaction carries a cap denominated in the asset, not only a fee-rate cap | a rate cap cannot bound the loss when the *input amount* is wrong; this is the Paxos shape, where the fee is a residual and the whole wrong-input discrepancy becomes fee |
 
 The remediation for a nonce gap is to **replace the lowest unmined nonce, not to submit more transactions**;
 the detector is the pending-minus-latest nonce gap, and geth's pool defaults and BitGo's `fillNonce`
 equivalent are the mechanics behind it. The interval and the gas multiple are configuration with
-no default. The absolute ceiling comes from your own worst-case payout size; Bitcoin Core's
-`DEFAULT_TRANSACTION_MAXFEE` and `DEFAULT_MAX_RAW_TX_FEE_RATE` in the fee-circuit-breaker table in
-`wallet-utxo-construction.md` show the shape of shipping both, and either one would have refused the
-Paxos transaction.
+no default. The absolute ceiling comes from your own worst-case payout size; Bitcoin Core ships both
+shapes, `DEFAULT_TRANSACTION_MAXFEE` (absolute) and `DEFAULT_MAX_RAW_TX_FEE_RATE` (rate), and either one
+would have refused the Paxos transaction.

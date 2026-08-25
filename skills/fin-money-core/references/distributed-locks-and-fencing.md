@@ -2,7 +2,7 @@
 
 Mutual exclusion that has to hold across processes, replicas, and a holder that resumed after its lease
 expired. A lock key computed differently in each interpreter excludes nothing, and a lease alone does not stop
-a paused holder from acting. The single-database read-modify-write case is in `isolation-and-locking.md`.
+a paused holder from acting. The single-database read-modify-write window is its own subject.
 
 ## Cross-process lock keys: `hash()` is salted
 

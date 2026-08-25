@@ -1,5 +1,14 @@
 # EVM replacement, stuck nonces, and dropped transactions
 
+> **Provenance**
+> provider: go-ethereum, Fireblocks and BitGo · surface: replacement pricing and the mempool defaults behind it, stuck-nonce detection, and the custodian vocabularies for dropped, replaced and confirmed transactions
+> version: the go-ethereum `legacypool` defaults as cited in the body, with no commit pinned; the Fireblocks and BitGo documentation as read in the original pass, undated.
+> verified_at: not established
+> sources: https://github.com/ethereum/go-ethereum/blob/master/core/txpool/errors.go · https://github.com/ethereum/go-ethereum · https://developers.fireblocks.com/reference/transaction-substatuses · https://developers.bitgo.com/
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The numbers here are node and custodian policy, not protocol constants, and the file says so; what the missing date costs you is any assurance that the policy numbers quoted are still the current defaults. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: go-ethereum changes `PriceBump`, `AccountSlots`, `AccountQueue` or `Lifetime`, or renames an error string a submitter classifies on; Fireblocks changes the dropped-transaction sub-statuses or its bump percentage; BitGo changes the stuck-transaction endpoint or the fill-nonce intent; you run against a chain whose node defaults differ from geth's.
+
 On EVM the identity is `(chainId, from, nonce)`, so every recovery decision is arithmetic on that nonce rather
 than a hash lookup. There is no dropped-transaction event on any EVM chain.
 

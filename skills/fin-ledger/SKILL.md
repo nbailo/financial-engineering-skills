@@ -2,10 +2,9 @@
 name: fin-ledger
 description: >-
   Financial correctness for balances and accounting systems: double-entry postings, balanced
-  sets, immutable entries, holds and available versus posted balance, reversals and corrections,
-  currency as a dimension, solvency limits and period close. Use when your code writes or reads
-  a balance other systems trust, including TigerBeetle and Formance. For processor lifecycles
-  use fin-payments.
+  sets, immutable entries, holds and available versus posted balance, reversals, currency as a
+  dimension, solvency limits and period close. Use when your code writes or reads a balance
+  other systems trust, including TigerBeetle and Formance. For processor lifecycles, fin-payments.
 license: MIT
 ---
 
@@ -176,9 +175,8 @@ authority: MIXED · exposure: customer
   postings, balances, accruals  SELF
 ```
 
-Proof follows the quantity, not the codebase. A mirrored quantity is proven by reconciliation against its
-authority. A self-authoritative one has nothing above it that can say it is wrong, so it is proven by replay,
-determinism and conservation instead.
+Proof follows the quantity: a mirrored one is proven by reconciliation against its authority, a
+self-authoritative one by replay, determinism and conservation, because nothing above it can say it is wrong.
 
 Then one entry per real finding, and nothing at all for a concept the change does not touch:
 
@@ -192,8 +190,8 @@ TEST      the property to assert
 
 Add `VERDICT   SHIP | NO-SHIP: <the unresolved control>` when the task is a review or a ship decision. No
 findings is one or two sentences saying so and why the change is safe. A control you name but have not
-implemented is reported as `UNRESOLVED: <control> (<why>)`, never as a completed row: a named control with no
-`file:line` is the defect, not a report of one.
+implemented is `UNRESOLVED: <control> (<why>)`, never a completed row: a named control with no `file:line` is
+the defect, not a report of one.
 
 **Threshold for a richer block:** emit the per-verb contract table from
 [ledger-contract.md](references/ledger-contract.md) only when a quantity in scope is SELF *and* the change

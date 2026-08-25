@@ -23,9 +23,9 @@ in a random order"; the asymmetric heal finds the bug.
 |---|---|---|---|---|
 | 1 | Delay / reorder / duplicate | replay the recorded event stream shuffled, with `injectDuplicates`, with a restart mid-stream | hours | in-memory dedupe sets, watermarks keyed on the live object, non-commutative `position +=` |
 | 2 | Partition with **asymmetric** heal | Toxiproxy `timeout` on one stream direction only; unblock in a different order than you blocked | hours | the delivered-then-failed request; split-brain between your view and the venue's |
-| 3 | Process kill at a chosen boundary | `SIGKILL` at four labelled points (`crash-boundary-tests.md`) | a day | write-ahead fields nothing reads back; foreign effect before local commit |
+| 3 | Process kill at a chosen boundary | `SIGKILL` at four labelled points | a day | write-ahead fields nothing reads back; foreign effect before local commit |
 | 4 | Clock skew | freeze/step the injected clock; skew the venue's clock relative to yours | hours | expiry, `recvWindow`, signature tolerance, LWW on a balance |
-| 5 | Storage corruption | bit flips, torn writes, sector loss | weeks | only if you wrote the storage engine, and even there the fault *model* is the limit; see `deterministic-simulation.md` |
+| 5 | Storage corruption | bit flips, torn writes, sector loss | weeks | only if you wrote the storage engine, and even there the fault *model* is the limit |
 
 ## Toxiproxy: toxics, stream direction, and the API
 

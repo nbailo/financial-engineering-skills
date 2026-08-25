@@ -1,5 +1,14 @@
 # ERC-20 call semantics, decimals, and allowances
 
+> **Provenance**
+> provider: ERC-20 token implementations, via the weird-erc20 taxonomy, Trail of Bits' token integration checklist, OpenZeppelin, and the EIP texts · surface: transfer and approve call semantics, `decimals()` as runtime metadata, the approve race, and the two permit nonce spaces
+> version: OpenZeppelin `SafeERC20` v5 and the EIP texts as cited in the body. No commit or release tag was pinned for the taxonomy or the checklist.
+> verified_at: not established
+> sources: https://github.com/d-xo/weird-erc20 · https://secure-contracts.com/development-guidelines/token_integration.html · https://docs.openzeppelin.com/contracts/5.x/api/token/erc20 · https://eips.ethereum.org/EIPS/eip-20 · https://eips.ethereum.org/EIPS/eip-2612 · https://github.com/Uniswap/permit2
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. Two kinds of claim here rot faster than the rest and should be treated as the oldest: the per-token rows, because an upgradeable token can change behaviour without changing address, and the named incidents and their figures, none of whose reports was reopened. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: OpenZeppelin ships a `SafeERC20` whose empty-returndata or `forceApprove` behaviour differs from v5; Permit2 changes the field widths or the invalidation rule; a token named in the taxonomy changes implementation behind its proxy; you add a chain where a listed address is not the same economic asset.
+
 Most tokens behave the same way on most days, which is exactly why an integration that assumes one shape
 survives staging. One row per behaviour, one guard per row.
 
@@ -16,7 +25,7 @@ One row, one guard. The right-hand column is the thing to grep the diff for.
 
 | Behaviour | Named instances | What breaks | Guard |
 |---|---|---|---|
-| **Fee on transfer** | STA, PAXG; USDT and USDC *can enable* one | `received == requested` | measured delta where attribution is isolated, per `token-amounts.md`; the token's own accounting where it is not |
+| **Fee on transfer** | STA, PAXG; USDT and USDC *can enable* one | `received == requested` | measured delta where attribution is isolated; the token's own accounting where it is not |
 | **Rebasing / balance moves with no `Transfer`** | Ampleforth; airdrop-on-balance designs | cached reserves, `Σ Transfer == delta` | credit the internal share unit; never cache a raw `balanceOf` across blocks |
 | **No return value** | USDT, BNB, OMG | `require(t.transfer(...))` reverts on ABI decode | `SafeERC20`: accept empty returndata **only if `extcodesize(token) > 0`** |
 | **Non-reverting `false`** | ZRX, EURS | tx succeeds, no value moved → **fake deposit** (DEPOSafe, arXiv 2006.06419) | `SafeERC20`; and never credit on "tx mined" |

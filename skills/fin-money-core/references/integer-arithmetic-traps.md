@@ -2,7 +2,7 @@
 
 The arithmetic underneath a rounding decision, in a language that truncates. Truncation is a directed mode
 chosen by accident, its bias flips with the sign, and the guard that keeps a value in range is invisible at
-every input except the boundary. The modes themselves are named in `rounding-modes.md`.
+every input except the boundary.
 
 ## Boundary testing at `threshold-1 / threshold / threshold+1`: the Cetus shape
 

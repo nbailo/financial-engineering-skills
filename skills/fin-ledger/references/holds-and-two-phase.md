@@ -106,7 +106,7 @@ form, `INSERT INTO holds (…) SELECT … WHERE (SELECT available_minor FROM v_a
 wrong at Read Committed: two concurrent reserves see the same `available_minor` and both insert.
 PostgreSQL documents that Read Committed does not prevent lost updates and that each command takes a fresh
 snapshot; Modern Treasury names the identical hazard for balances: *N* concurrent debits each read a
-sufficient balance before any writes. Four fixes exist, tabulated in `balance-storage.md`; two fit a hold
+sufficient balance before any writes. Four fixes exist; two fit a hold
 placement. (a) Take `SELECT posted_minor FROM account_balances WHERE … FOR UPDATE` first, then recompute
 available and insert the hold in the same transaction. (b) Put the predicate inside the write, on a
 materialised reserved column:
@@ -147,7 +147,7 @@ RETURNING id, account_id, currency, amount_minor;
 
 The sweeper is a state transition, not a money movement: an active hold never touched `posted`, so expiring it
 posts no entries. If you materialise `reserved_minor`, the `UPDATE holds` and the matching `reserved_minor`
-decrement go in the **same transaction** (`balance-storage.md`). The reader predicate is what makes the
+decrement go in the **same transaction**. The reader predicate is what makes the
 sweeper non-load-bearing: it can be late, and no balance is wrong while it is.
 
 ## 6 · Two-phase resolution

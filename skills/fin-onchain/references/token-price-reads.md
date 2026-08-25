@@ -52,8 +52,8 @@ naive grace check trivially. Reject `startedAt == 0` explicitly.
 
 **Feed decimals are not token decimals.** ETH/USD is 8; some feeds are 18; the token is whatever the token
 says. Scale by the **feed's** `decimals()` and the **token's** `decimals()` as two separate reads, both
-cached by address. Mixing them is a silent 10ⁿ error in a collateral computation, the same shape as the
-`1e18`-against-USDC row in `token-erc20-quirks.md`, and just as invisible.
+cached by address. Mixing them is a silent 10ⁿ error in a collateral computation, the same shape as
+scaling a 6-decimal USDC amount by `1e18`, and just as invisible.
 
 ---
 

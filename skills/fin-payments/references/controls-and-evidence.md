@@ -86,8 +86,8 @@ skill when a capture, refund or dispute becomes a posting.
   settlement line that has no payment object at all.
 - Authorizations are **reserved amounts in the payments layer, not ledger entries**. Only captures, refunds,
   disputes, fees and settlement adjustments post.
-- The reversal tail decides when the books may close, not the payment object's lifecycle state. The tail is in
-  `reconciliation-and-close.md`, per rail.
+- The reversal tail decides when the books may close, not the payment object's lifecycle state, and the
+  tail is per rail.
 
 ## When a richer evidence block is warranted
 

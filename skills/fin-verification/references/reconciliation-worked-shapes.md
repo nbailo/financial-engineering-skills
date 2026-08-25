@@ -1,8 +1,7 @@
 # Worked reconciliation shapes
 
 What is compared, on which key, against which authority, and what happens on a mismatch, per system class.
-Then the canary probe and the reconciliation a dual-write cutover needs. Halt levels named here are tabulated
-in `halt-and-fail-closed.md`.
+Then the canary probe and the reconciliation a dual-write cutover needs.
 
 ## Contents
 

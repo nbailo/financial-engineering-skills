@@ -2,8 +2,7 @@
 
 The durability half of *operation identity*: an external money call is three phases and the first one
 commits. This is the second window in which correct-looking code produces an economically wrong outcome,
-between an external effect and the local record of it, plus the two writes that are not one transaction. The
-read-modify-write window is in `isolation-and-locking.md`.
+between an external effect and the local record of it, plus the two writes that are not one transaction.
 
 ## Contents
 

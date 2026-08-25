@@ -91,7 +91,7 @@ Two different bugs, one outcome: the customer holds two credits for one purchase
 | pending-refund variant | n/a | the refund fails with `charge_for_pending_refund_disputed`; the interlock worked, but if you decremented store credit at `refund.created` your ledger already double-credited |
 | remedy | represent with prior-credit evidence, within `evidence_details.due_by` | reverse the internal credit; do not attempt to reverse the network credit |
 
-The single guard that covers both directions is the refundable ceiling in `refunds.md`: one
+The single guard that covers both directions is a refundable ceiling: one
 `(charge_id, currency)` ledger of
 remaining refundable that debits refunds **and** dispute holds, evaluated under `SELECT … FOR UPDATE` on the
 charge row, on every path that can credit a customer, including the internal store-credit path that never

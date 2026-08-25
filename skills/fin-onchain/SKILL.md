@@ -1,11 +1,10 @@
 ---
 name: fin-onchain
 description: >-
-  Financial correctness for on-chain deposits, withdrawals and value-moving transactions:
-  crediting, finality and reorgs, transaction identity, nonces, custody and wallet state, token
-  amount semantics, and chain-to-ledger reconciliation. Use when building or reviewing code that
-  reads chain state or moves value on-chain, including ethers, viem, web3.py, Solana, Bitcoin,
-  XRPL, Fireblocks and BitGo.
+  Financial correctness at the chain boundary: crediting deposits, finality and reorgs,
+  transaction identity, nonces, custody and wallet state, token amount semantics, and
+  chain-to-ledger reconciliation. Use when reviewing code that reads chain state or moves value
+  on-chain, including ethers, viem, web3.py, Solana, Bitcoin, XRPL, Fireblocks and BitGo.
 license: MIT
 ---
 
@@ -187,12 +186,11 @@ When the change is economic, report authority and exposure:
 
     authority: EXTERNAL (<chain>) · exposure: own | customer | record
 
-Authority is a property of a quantity, not of the codebase. Chain inclusion and the value that arrived are
-EXTERNAL: the chain is the record and can tell you that you are wrong. The wallet's own view, which outputs
-are its own and which nonce or sequence number is next, is SELF, and so are the customer liabilities your
-books carry. Exposure is usually `customer`, because a crediting or withdrawal path holds someone else's
-funds. Where one authority covers everything in scope, emit the single line. Where it does not, emit MIXED and
-qualify only the quantities that differ, on one line each:
+Authority is per quantity. Chain inclusion and the value that arrived are EXTERNAL: the chain is the record and
+can tell you that you are wrong. The wallet's own view, which outputs are its own and which nonce is next, is
+SELF, and so are the customer liabilities your books carry. Exposure is usually `customer`, because a crediting
+or withdrawal path holds someone else's funds. Where one authority covers everything in scope, emit the single
+line. Where it does not, emit MIXED and qualify only the quantities that differ, on one line each:
 
     authority: MIXED · exposure: customer
       arrived value, inclusion   EXTERNAL (Base)
@@ -206,8 +204,7 @@ Then one entry per real finding, and nothing for a concept this change does not 
     FIX       <the change that closes it>
     TEST      <the property to assert>
 
-A control you claim points at executable code and, where the risk needs it, a test. A comment, a TODO, an
-uncalled helper or a design note describing a control is the same defect as the missing control; report it as
+A control you claim points at executable code and, where the risk needs it, a test; anything absent is
 `UNRESOLVED: <control> (<why>)`. No findings means one or two sentences saying so and why the change is safe.
 
 Add a final `VERDICT SHIP` or `VERDICT NO-SHIP: <the unresolved control>` only when the task is a review or a

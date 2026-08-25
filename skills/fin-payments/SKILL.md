@@ -2,10 +2,10 @@
 name: fin-payments
 description: >-
   Financial correctness for payment processor and rail integrations: authorization and capture,
-  refund ceilings, disputes and chargebacks, payouts and transfers, webhook ordering and replay,
-  fee treatment and settlement reconciliation. Use when building or reviewing an integration
-  with Stripe, Adyen, PayPal, Square or Modern Treasury, or with ACH, SEPA, wire, RTP and
-  FedNow. For balances and postings use fin-ledger.
+  refund ceilings, disputes, payouts, webhook ordering and replay, fee treatment and
+  settlement-report reconciliation. Use when reviewing an integration with Stripe, Adyen,
+  PayPal, Square or Modern Treasury, or an ACH, SEPA, RTP or FedNow rail. For balances and
+  postings use fin-ledger.
 license: MIT
 ---
 
@@ -170,9 +170,9 @@ When the change is economic, open with two fields on one line, and omit the line
 authority: EXTERNAL (Stripe) · exposure: customer
 ```
 
-Authority is a property of a quantity, not of the codebase. The usual pair here is EXTERNAL, the processor, with
-exposure customer. Where one authority covers every quantity in scope, emit the single line. Where it does not,
-emit `authority: MIXED` and qualify the quantities that differ, one line each, two or three at most:
+Authority is per quantity. The usual pair here is EXTERNAL, the processor, with exposure customer. Where one
+authority covers every quantity in scope, emit the single line. Where it does not, emit `authority: MIXED` and
+qualify the quantities that differ, one line each, two or three at most:
 
 ```
 authority: MIXED · exposure: customer
@@ -196,10 +196,8 @@ VERDICT   SHIP | NO-SHIP: <the unresolved control>
 ```
 
 The verdict line appears only when the task is a review or a ship decision. No findings means one or two
-sentences saying so and why the change is safe. Never emit a slot for a concept the change does not touch.
-
-A control you claim points at executable code that a value-moving path reaches. A comment, a TODO, a design
-note or an uncalled helper **is** the missing control, and anything absent is reported as
+sentences saying so and why the change is safe. Never emit a slot for a concept the change does not touch. A
+control you claim points at executable code that a value-moving path reaches; anything absent is reported as
 `UNRESOLVED: <control> (<why>)`, never as a completed row.
 
 Add the control table from [controls-and-evidence.md](references/controls-and-evidence.md) only when exposure is

@@ -21,7 +21,7 @@ A webhook that is never delivered produces no error anywhere. The self-healing j
 limit=100)` with `starting_after`, inserting each event into the same inbox with `source='sweeper'`; the
 unique index makes overlap free. Use an overlap of at least the tolerance window, because `created` is a
 second-granularity clock and a cursor set to the exact last `created` skips events sharing that second, the
-same failure as the watermark case in `webhook-processing.md`, one layer up.
+same off-by-one a watermark makes when it advances to a timestamp that unread rows also carry.
 
 **Advance the cursor only over a range you verifiably covered, which is *proven coverage before the
 cursor advances*:** a page that comes back with
@@ -57,5 +57,5 @@ idempotency key is relying on a key that has already been pruned, and the call e
 
 Event payloads are frozen at the account's API version *at event time* and are never updated. Combine that
 with a 3-day retry horizon and a 30-day manual resend, and the payload you process can be arbitrarily stale
-and rendered against an API version you have since migrated off. This is the whole argument for the rule in
-`webhook-processing.md` that `raw_body` is evidence, not input.
+and rendered against an API version you have since migrated off. This is the whole argument for treating
+`raw_body` as evidence, not input.

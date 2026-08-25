@@ -2,7 +2,7 @@
 
 One exact total divided among N parts, or a rate applied per line and again at the total. Direction is
 irrelevant here and conservation is the whole property: the largest-remainder algorithm with its arithmetic
-written out, and the two places a real difference has to land. Mode names are in `rounding-modes.md`.
+written out, and the two places a real difference has to land.
 
 ## Largest-remainder allocation, with complete worked arithmetic
 

@@ -84,10 +84,10 @@ Closure is a sweep plus a state change, committed as one construct. TigerBeetle'
 which is why the matrix above can say "reopen, then post" as a mechanism rather than a hope.
 
 **Closing does not resolve already-pending holds.** They remain and can still time out on their own clock:
-correct, because a hold mirrors an upstream authorization whose window you do not control
-(`holds-and-two-phase.md`). So a closed account can still see a reservation released after closure: the
-closure path must be idempotent against a later
-expiry event, and the solvency assertion must keep counting that account's outstanding holds until terminal.
+correct, because a hold mirrors an upstream authorization whose window you do not control. So a closed
+account can still see a reservation released after closure: the closure path must be idempotent against a
+later expiry event, and the solvency assertion must keep counting that account's outstanding holds until
+terminal.
 
 ## 4 · The solvency chokepoint
 

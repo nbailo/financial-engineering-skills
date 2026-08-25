@@ -1,5 +1,14 @@
 # UTXO replacement: BIP-125, full-RBF, and CPFP
 
+> **Provenance**
+> provider: Bitcoin Core and BIP-125, with BitGo and Fireblocks for the custodial surfaces · surface: the replacement rules, the full-RBF default, RBF against CPFP as an identity decision, and the mempool topology limits that bound both
+> version: BIP-125 as published; Bitcoin Core 28.0 for the `-mempoolfullrbf` default change; the policy constants as cited in the body, with no commit pinned.
+> verified_at: not established
+> sources: https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki · https://github.com/bitcoin/bitcoin/blob/master/src/policy/policy.h · https://github.com/bitcoin/bitcoin
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The five rules are quoted from a BIP that does not change, but the policy that enforces them does, and the constants quoted from the Core source are the part most likely to have moved. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: Core changes a policy constant quoted here, the ancestor and descendant limits, the standard weight ceiling or the TRUC limits; the full-RBF default changes again; a newer policy document supersedes BIP-125; your custodian changes how it signals replaceability or accelerates a stuck transaction.
+
 On a UTXO chain the identity of an intent is its input set, so a fee bump publishes a new txid over the same
 coins and invalidates every ledger row keyed on the old one.
 
