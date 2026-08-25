@@ -51,7 +51,12 @@ is true. Rewordings are not listed; corrections always are.
 - Six prediction-market references under `fin-exchange-integration`: cross-venue core, client-side settlement
   integration, Polymarket V2, Kalshi, Limitless and Hyperliquid outcome markets. Prediction markets remain a
   specialisation of the exchange skill, not a seventh installed skill.
-- `examples/prediction-market-bot/`, the fifth worked example.
+- `examples/prediction-market-bot/`, the one worked example that is code rather than prose: a fake venue
+  in the test process, a safe bot, a counter-example, a frozen event log, and a suite that runs on the
+  standard library. `demo.py` shows the unsafe version crediting a settlement twice while the safe one
+  credits it once. The tests deny themselves a socket, so a live call cannot be reintroduced without
+  them failing, and there is no credential and no live mode. It runs in CI as its own step in
+  `.github/workflows/validate.yml`.
 - A provider-support matrix with four honest levels: deep and verified, generic, experimental, unverified.
 - Provenance blocks on provider and protocol references: provider, surface, version, `verified_at`, source
   URLs, pinned commits, verified claims, **explicitly unverified claims**, and a revalidation trigger.
@@ -64,12 +69,49 @@ is true. Rewordings are not listed; corrections always are.
   carry `verified_at: not established`, which `scripts/validate.py` now accepts as an explicit non-answer and
   reports on its own line, because a file written from real sources by an earlier pass and re-read by nobody
   since should say so rather than show a date nobody earned.
+- `scripts/test-install-guardrails.sh`, a hostile suite for the routing-block installer, run by CI on
+  `ubuntu-latest` and `macos-latest`. It covers symlinked, non-regular and multiply linked targets, a
+  symlinked `.github`, duplicate, unbalanced, reversed, embedded and carriage-return-corrupted markers,
+  temporary-file collision, file modes, empty files, interruption, partial failure, repeated installation,
+  every supported target filename, and a byte-identical round trip on eight host shapes.
 
 ### Changed
 
 - Routing: a domain skill normally wins alone. `fin-money-core` no longer loads merely because a
   domain-specific retry exists, and `fin-verification` loads for tests, proof, reconciliation or a readiness
   question rather than because customer money is involved.
+- The README was cut to the product: value proposition, install, the six skills, the two opt-in BETA skills,
+  where it applies, and links out. The provider matrix moved to `docs/providers.md` and the sourcing and
+  selection material to `docs/methodology.md`.
+- Install, verify, update and remove commands were checked against the `skills` CLI at version 1.5.23 rather
+  than recalled, including where the files land per agent, and that a default `add` discovers the six under
+  `skills/` and nothing under `advanced/`. The two advanced skills now have an install command that does not
+  require cloning the repository.
+- Provider evidence is stated as three states: currently revalidated, sourced but revalidation pending, and
+  illustrative or historical only. `scripts/validate.py --provenance-report` is the live answer for which
+  file is in which of the first two.
+- Corrected in the README's own prose: the Revolut US refund incident was farmed deliberately by organised
+  groups once the divergence existed, so it is no longer offered as an example of a loss with no attacker.
+  Knight Capital and the Citigroup near miss still are, because they were.
+- Version is stated in one shape across `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, this
+  file and the release build, and `scripts/validate.py` fails any version restated in the README or `docs/`
+  that disagrees with the plugin manifest.
+- `.github/CODEOWNERS` names the maintainer for transparency. It deliberately does not gate merges: the
+  repository has one active maintainer, and code-owner approval would lock that maintainer out.
+- The routing-block installer was rewritten around six failures reproduced against its old form. It staged
+  through a predictable `AGENTS.md.tmp`, so a symlink pre-created at that path was written through and the
+  file it pointed at was overwritten with the block; it replaced a symlinked target with a regular file; it
+  broke a hard link silently, leaving the other name behind at the old content; it reset a `0600` host file
+  to the caller's umask; it deleted a pre-existing empty file on uninstall; and a lone BEGIN marker deleted
+  every line after it. A later file failing also left the earlier ones replaced. It now validates every path
+  and every marker before writing anything, stages through `mktemp` in the destination directory, preserves
+  the mode, replaces by rename, and rolls every file back on a failure or a signal. The round trip is
+  byte-identical for a host file with no final newline and for a zero-byte file, which the old normalisation
+  could not do.
+- Installation references an exact release rather than a moving branch. The README's `git clone` into a
+  shared temporary directory is gone; `npx skills add` and `/plugin marketplace add` carry the release tag,
+  and the pinned-clone path prints the commit the tag resolved to and the digest of the script before
+  anything executes.
 
 ## v0.4.0
 

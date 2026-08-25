@@ -1,8 +1,8 @@
 # Contributing
 
-The six skills under `skills/` are the installed product. `advanced/` holds the venue-side skill, which is
-opt-in and is not shipped by `npx skills add`. A change to `advanced/` never changes what an ordinary user
-installs.
+The six skills under `skills/` are the installed product. `advanced/` holds two opt-in BETA skills,
+`fin-matching-engine` and `fin-market-data-publication`, which are not shipped by a default
+`npx skills add`. A change to `advanced/` never changes what an ordinary user installs.
 
 Read `docs/architecture.md` first. It explains the three-level hierarchy, the runtime budgets, and why a
 rule lives where it lives. Run `python3 scripts/validate.py` before you open a PR.
@@ -84,7 +84,7 @@ python3 scripts/validate.py
 ```
 
 It enforces the Agent Skills spec (legal frontmatter keys, name rules, description length) and this repo's
-budgets: 220 lines per `SKILL.md`, 430 characters per description and 2,600 characters across the suite,
+budgets: 210 lines per `SKILL.md`, 430 characters per description and 2,600 characters across the suite,
 and 2 KB for `AGENTS.md`. It also checks that `skills/` holds exactly the six installed skills, that the
 six share one section order, that every money-core invariant citation resolves, that nothing in `skills/`
 links into `advanced/`, that references are one hop deep and meet their floors, that no `@`-reference
@@ -92,7 +92,12 @@ force-loads a file, that every cited repository path exists, that no em dash app
 that any version string in `README.md` or `docs/` matches `.claude-plugin/plugin.json`, and that any budget
 number restated in prose equals the constant the validator enforces.
 
-CI runs the same script, plus an idempotence and uninstall test for `scripts/install-guardrails.sh`.
+CI runs the same script. It also runs `scripts/test-install-guardrails.sh`, the hostile suite for
+`scripts/install-guardrails.sh`, on Linux and on macOS: refusal of symlinked, non-regular, multiply linked
+and ambiguously marked targets, unique temporary files inside the destination, preserved modes and preserved
+bytes outside the block, replacement by rename, full rollback after a partial failure and after a signal, and
+a byte-identical install-then-uninstall round trip. Run it locally before changing that script. Every tracked
+`*.sh` file is also run through shellcheck.
 
 ## Examples
 
