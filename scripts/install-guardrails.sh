@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Install the always-on financial guardrails into a project.
+# Install the optional financial routing reminder into a project.
 #
-# Skills are loaded only when an agent decides they are relevant. For a
-# correctness suite that is the wrong default: the agent believes it can already
-# write the money-handling code, so it never loads the skill. The guardrails
-# block closes that gap by living in the files every agent reads on every turn.
+# The skills are self-sufficient. Each fin-* skill carries its own rules, its
+# own evidence and its own output contract, and needs nothing from this block
+# to do its job. What this installs is a short pointer that lives in the files
+# every agent reads on every turn, so the right skill is more reliably
+# consulted when a task touches money. Uninstalling it costs you routing
+# reliability and nothing else.
 #
 # Idempotent: re-running replaces the block between the markers, never appends a
 # second copy. Removing it is `--uninstall`.
+#
+# Round-trip guarantee, asserted in CI: a host file ending in a single newline comes
+# back byte-identical after install then uninstall. Trailing blank lines are collapsed
+# and a missing final newline is added, because the block is joined to the host content
+# through a command substitution, which strips trailing newlines. Do not claim more
+# than this in the README.
 #
 # Usage:
 #   scripts/install-guardrails.sh [target-dir]      # default: current directory
