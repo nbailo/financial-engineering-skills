@@ -17,6 +17,10 @@ jobs:
       # invariant citation resolves in fin-money-core. The numbers live in the
       # validator and are deliberately not restated here.
       - run: python3 scripts/validate.py
+      # Routing is the product's first correctness property: a skill that never loads is a
+      # skill that does nothing. These fixtures cover a positive and a negative case for each of
+      # the eight skills, including near-misses that must load nothing at all.
+      - run: python3 scripts/eval_routing.py
   routing-block-installer:
     runs-on: ubuntu-latest
     steps:

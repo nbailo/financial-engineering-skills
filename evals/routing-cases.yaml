@@ -1,0 +1,257 @@
+# Routing evals: which skills a task should load, and which references inside them.
+#
+# WHAT THIS FILE IS. Each case is a task as a user would actually type it, plus the skill set
+# that should end up loaded. `scripts/eval_routing.py` scores each case by lexical overlap
+# between the task and every skill's frontmatter description, which is the only text the real
+# router sees before it decides. That makes this an approximation of routing, not a
+# reproduction of it, and the runner says so on every run.
+#
+# WHAT IT CATCHES. A description that has lost the vocabulary a task speaks. That is the
+# regression this suite has actually shipped: a description gets shortened for the listing
+# budget, the venue names or the domain nouns go with it, and the skill stops triggering on
+# tasks it owns. Lexical overlap is exactly the right instrument for that.
+#
+# WHAT IT CANNOT CATCH. Whether a description that contains the right words READS correctly
+# to a language model. And it cannot decide a negative that is settled by the skill body
+# rather than the description: a backtest task names Binance, fills and PnL, so it will
+# always score high against fin-exchange-integration no matter how good the description is.
+# Those cases declare `decided_by: exclusion`, and the runner checks the different thing that
+# is mechanically checkable, namely that the skill body carries an explicit exclusion the
+# task matches. A case that can be scored neither way declares `decided_by: unscorable` with
+# a reason, and is reported as such rather than counted as a pass.
+#
+# Skill names below are the eight that exist: six under skills/, two under advanced/.
+#
+# FIELDS
+#   id                    stable name, used in the failure summary
+#   task                  the task text, written as a user would type it
+#   expect_skills         skills that MUST be predicted; [] means the task loads nothing
+#   forbid_skills         skills that must NOT be predicted
+#   forbid_probe          regex; a forbidden skill that matches it in its own description or
+#                         body is redirecting explicitly, so a lexical over-prediction is
+#                         reported as a matcher limit instead of a failure
+#   expect_references     references that must rank among the top trigger matches inside the
+#                         expected skills
+#   forbid_references     references that must not outrank a required one
+#   decided_by            `description` (default), `exclusion`, or `unscorable`
+#   exclusion_probe       for decided_by: exclusion, the regex the skill body must contain
+#   exclusion_required_in the skills that must carry that exclusion, named explicitly because
+#                         charging every over-predicted skill would invent work
+#   note                  why the case exists, and what a failure would mean
+#
+# TWO CASES FAIL TODAY, and both are findings about the skills rather than about the runner.
+# They are left failing on purpose: a fixture edited until it passes measures nothing.
+#   limitless-prediction-bot: the prediction-market-core.md trigger row advertises only the
+#     pricing half of that file (outcome tokens, payouts, complements, ticks, fees). The file
+#     also covers order identity and ambiguous submission, so a task about a clientOrderId
+#     and out-of-order events scores 0.0 against the row that should open it.
+#   prediction-market-settlement-credit: fin-exchange-integration's description no longer
+#     carries settlement vocabulary, so a task about crediting a resolved market's payout
+#     scores 0.5 against it and 1.333 against fin-payments. Settlement handling on a venue
+#     you do not operate belongs to the venue-client skill.
+
+cases:
+
+  # ---------------------------------------------------------------- ordinary venue clients
+  - id: binance-spot-bot
+    task: >-
+      I have a Python bot that places limit orders on Binance spot with python-binance. It
+      sets newClientOrderId, rounds price and quantity against exchangeInfo tickSize and
+      stepSize, and reads executionReport off the user data websocket to track fills and
+      average entry price. Sometimes a create order call times out and I am not sure whether
+      the order exists.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - venues/binance-orders.md
+      - venues/binance-filters.md
+    forbid_references:
+      - prediction-market-hyperliquid-hip4.md
+    note: >-
+      The base case. If this one stops routing, the suite's primary use case has broken.
+
+  - id: hyperliquid-perp-client
+    task: >-
+      Writing a Hyperliquid perpetuals client. It sends orders with a cloid, reads the
+      funding rate and the mark price, keeps a position with unrealized PnL, and has to
+      handle a venue-originated liquidation and ADL showing up in the account feed without
+      any instruction from me.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - venues/coinbase-deribit-hyperliquid.md
+      - fees-and-funding.md
+      - position-and-pnl.md
+    forbid_references:
+      - prediction-market-hyperliquid-hip4.md
+    note: >-
+      The negative half of the Hyperliquid split. Ordinary perps must not pull the outcome
+      market file, which is experimental and version sensitive.
+
+  # ------------------------------------------------------------------- prediction markets
+  - id: limitless-prediction-bot
+    task: >-
+      Building a bot against Limitless Exchange. It authenticates with lmts-api-key HMAC
+      headers, posts orders to api.limitless.exchange with a clientOrderId, and subscribes to
+      subscribe_order_events over the Socket.IO stream. I need to handle orderEvent frames
+      where the OME and SETTLEMENT sources arrive out of order.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - prediction-market-limitless.md
+      - prediction-market-core.md
+    forbid_references:
+      - prediction-market-kalshi.md
+    note: >-
+      Prediction markets are a specialisation of the venue-client skill, never a seventh
+      installed skill. This case fails if that ever changes.
+
+  - id: polymarket-v2-signer
+    task: >-
+      Porting our Polymarket order signer to CLOB V2 with py-clob-client-v2. The signed
+      struct dropped feeRateBps, nonce and taker and gained timestamp and builder, collateral
+      is pUSD now, and I need the right verifyingContract for neg risk markets plus the tick
+      size from orderPriceMinTickSize.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - prediction-market-polymarket-v2.md
+    forbid_references:
+      - prediction-market-limitless.md
+    note: >-
+      An EIP-712 signer on Polygon. It is still a venue client, not an onchain value
+      transfer, so fin-onchain must not be the skill that answers it.
+
+  - id: hyperliquid-outcome-client
+    task: >-
+      Reading Hyperliquid outcome markets. I call the info endpoint for outcomeMeta and
+      settledOutcome, parse sideSpecs and the pipe delimited description encoding, and need
+      to know what settleFraction means for a position at settlement.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - prediction-market-hyperliquid-hip4.md
+      - prediction-market-core.md
+    forbid_references:
+      - venues/binance-orders.md
+    note: >-
+      The positive half of the Hyperliquid split.
+
+  - id: prediction-market-settlement-credit
+    task: >-
+      A market resolved and I need to credit the payout. I get a MATCHED frame with
+      isEstimate true, then MINED, and separately the market status goes to determined and
+      later finalized. I want to know which of these I am allowed to credit a user balance
+      from, and how to dedupe a redeem so a replay does not pay twice.
+    expect_skills: [fin-exchange-integration]
+    expect_references:
+      - prediction-market-settlement-integration.md
+    note: >-
+      Settlement handling is client side. It must not route to a venue-side advanced skill,
+      because deciding an outcome is not what this code does.
+
+  # --------------------------------------------------------------------- the venue side
+  - id: matching-engine
+    task: >-
+      I am writing the matching engine itself. It crosses incoming orders against resting
+      orders, assigns priority and a sequence number, does pro rata allocation with a
+      residue pass, applies self match prevention, and has to replay its journal after a
+      crash and produce the identical execution sequence.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration]
+    forbid_probe: '(?i)(venue side|you own the book)'
+    note: >-
+      Authority is SELF. The venue-client skill is the wrong half of the problem.
+
+  - id: market-data-publisher
+    task: >-
+      We publish our own market data feed. I need a sequencing scheme consumers can gap
+      detect, a snapshot that says what it is a snapshot of, session identity across a
+      restart, a recovery channel that terminates, and conflation that stays recoverable.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine]
+    forbid_probe: '(?i)(publish a sequenced feed|you are the venue)'
+    note: >-
+      Outbound publication. The consuming half belongs to the venue-client skill.
+
+  - id: market-data-consumer
+    task: >-
+      Consuming Binance depth updates to keep a local order book. I join the depthUpdate
+      stream to a REST snapshot using lastUpdateId with U and u, and I discard and re-snapshot
+      when the sequence gaps. I also need a staleness gate on the mid price before I quote.
+    expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-market-data-publication, fin-matching-engine]
+    forbid_probe: '(?i)use fin-exchange-integration'
+    expect_references:
+      - orderbook-sync.md
+      - prices-and-staleness.md
+    note: >-
+      Inbound consumption. The mirror image of market-data-publisher, and the pair only means
+      something if both route to different skills.
+
+  # ------------------------------------------------------------------- the other domains
+  - id: stripe-refund-ceiling
+    task: >-
+      Adding partial refunds against a Stripe PaymentIntent. I need to stop the sum of
+      refunds exceeding the captured amount, handle the charge.refunded webhook arriving
+      before the API response, and deal with a dispute opening on an already refunded charge.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration]
+
+  - id: double-entry-postings
+    task: >-
+      Writing the posting service for our internal ledger. Every transfer becomes a balanced
+      set of debits and credits, entries are immutable, and a correction is a reversing entry
+      rather than an update. I also need available balance to account for holds.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration]
+
+  - id: erc20-deposit-crediting
+    task: >-
+      Indexing ERC-20 Transfer logs on an EVM chain to credit user deposits. I need a
+      confirmation policy, reorg handling that can uncredit, transaction identity that
+      survives a replacement, and token decimals read from the contract rather than assumed.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-exchange-integration]
+
+  - id: allocation-rounding-util
+    task: >-
+      A helper that splits an amount across recipients by percentage. Right now it rounds
+      each share half up with floats and the parts do not sum back to the total. I want the
+      residue handled explicitly and the whole thing in integer minor units.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-ledger]
+
+  - id: reconciliation-readiness
+    task: >-
+      Before we go live I want proof this is correct. I need reconciliation against the
+      processor's settlement report, a planted break test that proves the reconciliation
+      actually detects a difference, and crash boundary tests around the capture call.
+    expect_skills: [fin-verification, fin-payments]
+    note: >-
+      Verification loads alongside a domain skill, never instead of one.
+
+  # ------------------------------------------------------------- backtests: load NOTHING
+  - id: backtest-sharpe
+    task: >-
+      I have a research notebook that pulls historical Binance klines, replays a moving
+      average crossover over them, and reports the Sharpe ratio, max drawdown and a hit rate.
+      Nothing is sent anywhere; it reads a parquet file and prints a table.
+    expect_skills: []
+    decided_by: exclusion
+    exclusion_probe: '(?i)backtest'
+    exclusion_required_in: [fin-exchange-integration, fin-money-core, fin-verification]
+    note: >-
+      Lexically this is indistinguishable from a live Binance bot: it names Binance, klines
+      and a replay. The description matcher will always predict fin-exchange-integration
+      here. The thing that actually decides it is the exclusion sentence in the skill body,
+      so that is what the runner checks.
+
+  - id: backtest-greeks
+    task: >-
+      A Monte Carlo run that prices a book of options and reports implied vol and greeks
+      against historical marks. It never places an order and never writes a balance; the
+      output is a chart.
+    expect_skills: []
+    decided_by: exclusion
+    exclusion_probe: '(?i)(greeks|implied[- ]vol|monte carlo)'
+    exclusion_required_in: [fin-exchange-integration, fin-money-core, fin-verification]
+    note: >-
+      The second near miss. Analytics that never become an obligation are out of scope for
+      the whole suite, and the exclusion has to be stated in the body of the skill whose
+      vocabulary the task borrows.

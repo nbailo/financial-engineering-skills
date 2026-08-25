@@ -1,0 +1,64 @@
+name: provider-drift
+
+# Reports the age of the evidence behind every provider and protocol reference. It reads,
+# it prints, and it stops there.
+#
+# It deliberately does NOT open an issue, commit, or touch a file. A provenance block records
+# that a human read a named source on a named date. Only another human reading that source
+# again may move verified_at, and a job that edited the date would destroy the single fact the
+# block exists to carry: not "this file was checked by CI", but "a person read this URL on
+# this day". Automating the date would turn honest evidence into a timestamp nobody stands
+# behind. When something here is stale, a maintainer re-reads the source and files the report
+# by hand; .github/ISSUE_TEMPLATE/provider-drift.md is the shape for that.
+#
+# The output lands in the job summary so it is readable without opening logs. The job exits 0
+# whatever it finds: a stale date is expected in a repository that pins vendor behaviour, and
+# a red cross on a scheduled job trains people to ignore it.
+
+on:
+  schedule:
+    # 07:00 UTC every Monday. Weekly, because the venues this repo pins ship changelog
+    # entries most weeks and a monthly cadence would let a whole quarter of drift accumulate
+    # behind one report.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      max_age_days:
+        description: 'Call a provenance block stale after this many days'
+        required: false
+        default: '90'
+
+permissions:
+  contents: read
+
+jobs:
+  evidence-age:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - name: report evidence age
+        id: report
+        env:
+          MAX_AGE_DAYS: ${{ github.event.inputs.max_age_days || '90' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate.py --provenance-report --max-age-days "$MAX_AGE_DAYS" \
+            | tee drift-report.txt
+      - name: publish to the job summary
+        if: always()
+        run: |
+          {
+            echo '## Provider evidence age'
+            echo
+            echo 'This job reports only. It never edits a verified_at date, opens an issue, or'
+            echo 'commits. Re-read the source, then move the date by hand if the source still'
+            echo 'says what the file says.'
+            echo
+            echo '```'
+            cat drift-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
