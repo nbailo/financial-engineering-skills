@@ -48,8 +48,7 @@ A fill busted by the venue inside its clearly-erroneous window is a **new balanc
 the original one. The original fill happened, was reported, and may already have driven a hedge; erasing the
 row destroys the only record of why the hedge exists. Model the bust the same way the order state machine
 models a fill void: a negative-quantity event against the specific trade id, folded over rather than applied
-in place. The mechanics are in [order-state-machine.md](order-state-machine.md) under "Late fills and fill
-voids".
+in place. The mechanics are in `order-state-machine.md` under "Late fills and fill voids".
 
 ## Seam: venue and client
 
@@ -90,10 +89,9 @@ to the executions already received, and a "33 Account" holding positions the fir
 match to a parent order. The client half had no working reconciliation between executions received and orders
 still to send; the record half had a bucket that nobody read.
 
-Both halves appear in this suite's references: the emitter side in
-[execution-algorithms.md](execution-algorithms.md), which quotes the SEC order on the termination state the
-emitter could not read, and the unmatched-position side in
-[order-state-machine.md](order-state-machine.md) under "Synthesised events, deferred reports, orders you never
+Both halves appear in this suite's references, each loaded from the skill's table rather than from here: the emitter
+side in `execution-algorithms.md`, which quotes the SEC order on the termination state the emitter could not read, and
+the unmatched-position side in `order-state-machine.md` under "Synthesised events, deferred reports, orders you never
 sent". The relevant engineering conclusion for the seam is narrower than either: a control that lives on one
 half of a dual-role process does not protect the other half, and a review that declares one set of obligations
 for the whole codebase will miss whichever half it did not declare.

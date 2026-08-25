@@ -36,9 +36,8 @@ because you reconnect first and the venue never observes a gap long enough to ac
 Deribit's heartbeat deserves its own line: it is documented as an order-cancellation mechanism, so failing to
 respond to it cancels resting orders. That is the desired behaviour when you are dead and the wrong behaviour
 when you are merely slow, and the timeout has to be chosen with both in mind. Panel F of
-[venues/divergence-matrix.md](venues/divergence-matrix.md) carries the per-venue detail, and
-[venues/coinbase-deribit-hyperliquid.md](venues/coinbase-deribit-hyperliquid.md) carries the shutdown paths
-that do **not** trigger it.
+`venues/divergence-matrix.md` carries the per-venue detail, and `venues/coinbase-deribit-hyperliquid.md` carries the
+shutdown paths that do **not** trigger it.
 
 ## Local invalidation is a different failure
 
@@ -87,9 +86,8 @@ has to be computed and **materialised as events**, not skipped:
   difference. Recovering net position alone leaves realized PnL permanently short, because realized PnL is a
   function of the individual fills, not of the net.
 - Synthesised ids must be **deterministic over venue-supplied fields including a venue timestamp**, so the
-  same inference made again after a restart dedupes against itself instead of double-booking. The mechanics
-  and the code locations are in [order-state-machine.md](order-state-machine.md) under "Synthesised events,
-  deferred reports, orders you never sent".
+  same inference made again after a restart dedupes against itself instead of double-booking. The mechanics and the
+  code locations are in `order-state-machine.md` under "Synthesised events, deferred reports, orders you never sent".
 - A sequence gap in the stream is discarded and re-snapshotted, never patched.
 
 ## Cursor durability
@@ -119,9 +117,8 @@ while True:
 
 `len(page) == PAGE` is the cap condition, and it means there is more, always, even when there is not: one
 extra request is the cost of never mistaking a cap for an end. Venue-specific retention bounds, which decide
-how far back the backfill can reach at all, are in each venue file, and the recovery-endpoint tables in
-[venues/binance.md](venues/binance.md), [venues/okx-bybit-kraken.md](venues/okx-bybit-kraken.md) and
-[venues/coinbase-deribit-hyperliquid.md](venues/coinbase-deribit-hyperliquid.md) name the windows.
+how far back the backfill can reach at all, are in each venue file: the recovery-endpoint tables in
+`venues/binance.md`, `venues/okx-bybit-kraken.md` and `venues/coinbase-deribit-hyperliquid.md` name the windows.
 
 ## Session credentials that expire while you are connected
 
@@ -135,13 +132,14 @@ a scheduled outage. Handle it on your own clock, before it fires.
 
 ## Where the rest lives
 
+Each file named here is a sibling reference with its own trigger row in the skill. Load it from there, not from here.
+
 - The **book** rebuild is venue-specific, and the wrong algorithm is the most-copied incorrect snippet in the
   ecosystem: Binance Spot and Binance USDⓈ-M Futures use different snapshot/incremental join algorithms. Follow
-  your venue's exactly, from [orderbook-sync.md](orderbook-sync.md), which also carries gap detection, snapshot
-  depth horizons, the `SYNCED`/`UNSYNCED`/`NEVER_RECEIVED` states and reconnect storms.
-- **Fill dedupe** and the fold that makes replay safe are in [order-state-machine.md](order-state-machine.md).
-- **Reconciling the recovered state** against the venue's own position and PnL figures is in
-  [position-and-pnl.md](position-and-pnl.md).
+  your venue's exactly, from `orderbook-sync.md`, which also carries gap detection, snapshot depth horizons, the
+  `SYNCED`/`UNSYNCED`/`NEVER_RECEIVED` states and reconnect storms.
+- **Fill dedupe** and the fold that makes replay safe are in `order-state-machine.md`.
+- **Reconciling the recovered state** against the venue's own position and PnL figures is in `position-and-pnl.md`.
 
 ## Test recipe
 

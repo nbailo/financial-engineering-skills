@@ -1,29 +1,21 @@
-# Binance: spot, USDⓈ-M futures, COIN-M
+# Binance orders: identity, recovery, error classes and limits
 
-Everything Binance-specific that a correct client cannot infer: the filter set and its exact predicates, the
+Everything Binance-specific about instructing the venue that a correct client cannot infer: the
 client-order-ID uniqueness scope and the query endpoints that recover an order whose response was lost, the
-error codes that mean UNKNOWN versus the ones that mean rejected, the two different order-book join algorithms
-(Spot and Futures are not the same), and the user-data stream lifecycle. Facts are dated to the docs revision
-read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24), so re-verify before keying
-production behaviour on one.
+error codes that mean UNKNOWN versus the ones that mean rejected, the timing and rate-limit rules that decide
+whether an instruction reaches the book at all, and the order-type preconditions that reject it when it does.
+Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),
+so re-verify before keying production behaviour on one.
 
 ## Contents
 
 - [Two venues, not one](#two-venues-not-one): what changes between spot and USDⓈ-M
-- [Instrument metadata](#instrument-metadata): `exchangeInfo`, `symbolStatus`, refresh, fixture capture
-- [Filter reference](#filter-reference): every filter, its predicate, and which order type it validates
-- [Futures-only metadata](#futures-only-metadata): `pricePrecision` is not `tickSize`; COIN-M multipliers
 - [`newClientOrderId`](#newclientorderid): charset, uniqueness scope, `-2010 "Duplicate order sent."`
 - [Query-before-retry: endpoints and their retention bounds](#query-before-retry-endpoints-and-their-retention-bounds)
 - [Data sources and what `-2013` actually means](#data-sources-and-what--2013-actually-means)
 - [Error codes, classified](#error-codes-classified): UNKNOWN vs rejected vs rate-limited, and the HTTP layer (403 WAF, 409, 429, 418, 5XX)
 - [Timing: `recvWindow` and the two-phase check](#timing-recvwindow-and-the-two-phase-check)
 - [Rate limits](#rate-limits): weight vs order count, headers, ban escalation
-- [Order book: the Spot algorithm](#order-book-the-spot-algorithm)
-- [Order book: the Futures algorithm](#order-book-the-futures-algorithm): the `pu` continuity check
-- [User data stream](#user-data-stream): `listenKey`, `listenKeyExpired`, the Ed25519 migration
-- [`executionReport`: cumulative vs last-fill](#executionreport-cumulative-vs-last-fill)
-- [Commission](#commission): the side flip and the BNB discount's scope
 - [STP and `EXPIRED_IN_MATCH`](#stp-and-expired_in_match)
 - [Hedge mode, reduce-only, `closePosition`](#hedge-mode-reduce-only-closeposition)
 - [Cancel-on-disconnect, and the FIX API's `ResendRequest`](#cancel-on-disconnect-and-the-fix-apis-disabled-resendrequest)
@@ -40,69 +32,8 @@ production behaviour on one.
 | `-2021`/`-2022` | cancelReplace partial / total failure | different conditions: see the error table |
 | Quantity unit | base asset | base asset (linear); **contracts** on COIN-M |
 
-A shared `BinanceAdapter` branching on `futures: bool` and reusing one book-sync routine is the defect this
-file exists to prevent.
-
-## Instrument metadata
-
-`GET /api/v3/exchangeInfo` / `GET /fapi/v1/exchangeInfo`. Fetch at startup, refresh on a schedule, and
-**fail closed** (refuse to size) when a symbol's metadata is absent or older than a configured max age.
-`symbolStatus` is a live field and gained a new value `CANCEL_ONLY` in 2026-07 (spot `CHANGELOG.md`): a symbol
-can move to a state where `submit_order` is rejected while `cancel_all` still works, so branch on it. Tick,
-step and notional minimums are revised and symbols are delisted, so anything cached at process start is a
-stale snapshot, not a constant. Commit a **production-captured** fixture (`exchangeInfo.BTCUSDT.json`) for the
-filter property test; hand-written fixtures agree with the hand-written rounder and prove nothing.
-
-## Filter reference
-
-From `filters.md` (spot docs repo). Filters live at two levels, `symbols[].filters[]` and top-level
-`exchangeFilters[]`; any of `minPrice` / `maxPrice` / `tickSize` set to `0` disables **that clause only**.
-
-| Filter | Fields | Predicate | Applies to |
-|---|---|---|---|
-| `PRICE_FILTER` | `minPrice`, `maxPrice`, `tickSize` | `price >= minPrice`, `price <= maxPrice`, `price % tickSize == 0` | any order carrying a price |
-| `PERCENT_PRICE_BY_SIDE` | `bidMultiplierUp/Down`, `askMultiplierUp/Down`, `avgPriceMins` | BUY uses the **bid** multipliers, SELL the **ask** multipliers, against the `avgPriceMins` average | priced orders |
-| `LOT_SIZE` | `minQty`, `maxQty`, `stepSize` | `minQty <= qty <= maxQty`, `qty % stepSize == 0` | **non-MARKET** orders |
-| `MARKET_LOT_SIZE` | `minQty`, `maxQty`, `stepSize` (**its own values**) | same predicate, different numbers | **MARKET orders only** |
-| `MIN_NOTIONAL` | `minNotional`, `applyToMarket`, `avgPriceMins` | `price * qty >= minNotional` | symbols exposing this variant |
-| `NOTIONAL` | `minNotional`, `maxNotional`, `applyMinToMarket`, `applyMaxToMarket`, `avgPriceMins` | both bounds | symbols exposing this variant |
-| `ICEBERG_PARTS` | `limit` | `ceil(qty / icebergQty) <= limit` | iceberg orders |
-| `MAX_POSITION` | `maxPosition` | free base **+ locked base + qty of all open BUY orders** ≤ `maxPosition` | account-level, per symbol |
-| `MAX_NUM_ORDERS` | `maxNumOrders` | counts **algo orders too** | per symbol |
-| `MAX_NUM_ALGO_ORDERS` / `MAX_NUM_ICEBERG_ORDERS` / `MAX_NUM_ORDER_LISTS` / `MAX_NUM_ORDER_AMENDS` / `TRAILING_DELTA` | matching `maxNum*`; trailing min/max deltas | independent counters and bounds | per symbol / per order |
-| `EXCHANGE_MAX_NUM_ORDERS` / `..._ALGO_ORDERS` / `..._ICEBERG_ORDERS` / `..._ORDER_LISTS` | n/a | account-wide across **all** symbols | `exchangeFilters[]` |
-
-Four things this table exists to stop:
-
-1. **`MARKET_LOT_SIZE` is a separate filter from `LOT_SIZE`, applying only to MARKET orders**, and its
-   `maxQty` is frequently far below `LOT_SIZE.maxQty`. One shared `round_to_step(qty, market.lot_size.step)`
-   helper produces `-1013 Filter failure: MARKET_LOT_SIZE` at the moment you are trying to exit fast.
-2. **`MIN_NOTIONAL` and `NOTIONAL` are different filter types**; a symbol exposes one or the other, so code
-   that only looks up `MIN_NOTIONAL` under-validates and never sees `maxNotional`.
-3. **A MARKET order's notional is not computed from your price**: the engine substitutes the `avgPriceMins`
-   VWAP, or last price when `avgPriceMins == 0`, so a client check against last price can pass while the
-   engine rejects, and vice versa.
-4. **`PERCENT_PRICE_BY_SIDE` is asymmetric.** The doc's own worked example is a bid band of 0.2–1.2 against
-   an ask band of 0.8–5, so a symmetric `abs(price/ref - 1) < band` check is wrong on every symbol.
-
-Do it all in `Decimal`: `0.29 % 0.01 == 0.009999999999999974` and `int(0.29/0.01) == 28` (CPython 3, verified);
-float floor-division loses a whole step, and `str(1e-05) == '1e-05'` reaches the wire as a value the
-decimal parser rejects (`-1100` or `-1111`; which fires was not established by live test).
-
-## Futures-only metadata
-
-**`pricePrecision` is not `tickSize`.** The USDⓈ-M `exchangeInfo` doc says verbatim of `pricePrecision`:
-*"please do not use it as tickSize"*. Decimal count and tick size are independent constraints: a symbol can
-carry `pricePrecision: 2` with `tickSize: 0.05`, and rounding to two decimals produces `100.03`, which is not
-a multiple of the tick. Read `tickSize` from the symbol's `PRICE_FILTER` and `stepSize` from its `LOT_SIZE`,
-on futures exactly as on spot. The notional floor is `-4164 "Order's notional must be no smaller than 5.0
-(unless you choose reduce only)"`; the number is not universally 5, so read it from the symbol's filters, and
-a residual close below it must set `reduceOnly` or refuse to send.
-
-**COIN-M quantity is in contracts, not base asset.** BTCUSD contracts are 100 USD each; most alt COIN-M
-contracts are 10 USD (Binance contract-specification support page). `size = usd_notional / price` on COIN-M is
-off by 100×, while USDⓈ-M linear quantity is in base asset. Same exchange, two unit systems; carry the unit
-with the number across every module boundary and convert only in the adapter.
+A shared `BinanceAdapter` branching on `futures: bool` and reusing one book-sync routine is the defect the
+Binance file set exists to prevent.
 
 ## `newClientOrderId`
 
@@ -254,124 +185,6 @@ Two independent limiters with **different keys**:
   20 s and expects a pong within a minute, inbound is capped at **5 messages/second** per connection (PING,
   PONG and JSON control messages all count), 1024 streams per connection, and **300 connections per 5 minutes
   per IP**, which is what a naive per-symbol reconnect storm trips first.
-
-## Order book: the Spot algorithm
-
-`web-socket-streams.md`, "How to manage a local order book correctly". Do not paraphrase; these are the steps.
-
-1. Open a stream to `wss://stream.binance.com:9443/ws/<symbol>@depth`.
-2. Buffer the events you receive. Note the `U` of the **first** event received.
-3. `GET /api/v3/depth?symbol=<SYMBOL>&limit=5000`.
-4. If the snapshot's `lastUpdateId` is **strictly less than** the `U` from step 2, the snapshot is too old:
-   **go back to step 3**.
-5. Discard every buffered event with `u <= lastUpdateId`. The first remaining event must satisfy
-   `U <= lastUpdateId+1` and `u >= lastUpdateId+1`, i.e. `lastUpdateId` falls inside `[U-1, u]`.
-6. Set your local book to the snapshot. Set `localId = lastUpdateId`.
-7. Apply the update procedure to the buffered events, then to live events:
-   - if `u < localId` → **ignore** the event (it predates the snapshot);
-   - if `U > localId + 1` → **you missed events. Discard the book and restart from step 1.**
-   - otherwise `U` of each event equals `u + 1` of the previous;
-   - per level: absent locally ⇒ insert; `qty == 0` ⇒ delete; else **set** (the payload is the absolute
-     quantity at that price, never a delta);
-   - `localId = u`.
-
-Spot depth events carry **no `pu` field**. A snapshot is depth-limited (5000 per side), so levels outside it
-are *unknown*, not empty: *"you won't learn the quantities for the levels outside of the initial snapshot
-unless they change."* Sizing a large order against `sum(local_book)` over-states available liquidity.
-
-## Order book: the Futures algorithm
-
-USDⓈ-M "How to manage a local order book correctly". **The acceptance rule and the continuity rule are both
-different from spot.** Using the spot procedure here is the single most-copied incorrect snippet in this
-ecosystem.
-
-1. Open a stream to `wss://fstream.binance.com/stream?streams=<symbol>@depth`.
-2. Buffer the events you receive.
-3. `GET /fapi/v1/depth?symbol=<SYMBOL>&limit=<venue max>`.
-4. Drop any buffered event with `u < lastUpdateId`.
-5. The **first event you process** must satisfy `U <= lastUpdateId` **AND** `u >= lastUpdateId`. (Spot's rule
-   is `lastUpdateId` inside `[U-1, u]` after discarding `u <= lastUpdateId`, not the same predicate.) If no
-   buffered event satisfies it, go back to step 3.
-6. Set the book to the snapshot.
-7. For **every subsequent event**: `pu` must equal the **previous event's `u`**. On mismatch, the stream has a
-   hole: **discard the book and re-initialise from step 3.**
-8. Level semantics are identical to spot: `qty == 0` ⇒ delete, otherwise set the absolute quantity. *"Receiving
-   an event that removes a price level that is not in your local order book can happen and is normal"*; do not
-   warn-spam on it.
-
-Why `pu` is not optional: server-side coalescing can emit a frame whose `[U, u]` range still looks adjacent to
-your `localId` while an intermediate frame was dropped, and `pu` is the only field that catches it. The book
-then carries a phantom level forever (the delete was in the lost frame) and the strategy quotes into a
-spread that does not exist, posting inside the real book and adversely selected on every print. On any gap on
-either venue: **discard and re-snapshot. Never patch, never interpolate, never "fill in the missing levels."**
-Suppress quoting on that instrument between the gap and the completed resync.
-
-## User data stream
-
-**USDⓈ-M futures.** `POST /fapi/v1/listenKey` starts a stream; the key *"will close after 60 minutes unless a
-keepalive is sent"*; `PUT /fapi/v1/listenKey` extends it by 60 minutes. Critically: *"if the account has an
-active `listenKey`, that `listenKey` will be returned and its validity will be extended for 60 minutes"*, so
-`POST`ing again does **not** rotate the key, and code that "gets a fresh key" on reconnect is a keepalive
-under a different name.
-
-**Spot.** Receiving user data on `wss://stream.binance.com:9443` via `listenKey` was **deprecated 2025-04-07**
-and all `listenKey` documentation for that endpoint was **removed 2025-10-24** (`CHANGELOG.md`). The
-replacement is subscribing to the User Data Stream on the **WebSocket API**, which **requires an Ed25519 API
-key**: an HMAC key cannot subscribe, so a spot bot authenticating with an HMAC secret and calling
-`POST /api/v3/userDataStream` is on a path Binance has said will be removed.
-
-Both venues: run the keepalive on a scheduler strategy work **cannot starve**, renewing at ≤30 min against the
-60-min TTL: a keepalive `await`ed in the same event loop as a blocking indicator misses one tick, the stream
-closes, and the bot keeps trading against its last known position. Treat `listenKeyExpired` as **"you are now
-blind"** (halt new orders, reconcile, resync), not an informational log line. And **subscribe and confirm the
-private stream before sending the first order**: placing first loses the initial `NEW`/`TRADE` events and the
-order starts life untracked.
-
-## `executionReport`: cumulative vs last-fill
-
-Spot `executionReport` carries both, for different jobs.
-
-| Field | Meaning | Use it for |
-|---|---|---|
-| `z` | **cumulative** filled quantity | position: `filled = z` (assignment, not `+=`) |
-| `Z` | **cumulative** quote asset transacted | notional |
-| `l` / `L` / `Y` | **last** executed quantity / price / quote quantity (`L * l`) | the fill record |
-| `n` / `N` | commission amount / **commission asset** | fee booking; `N` can be **null** on non-trade events |
-| `t` | trade id | the fill dedupe key |
-| `i` / `c` / `C` | orderId / clientOrderId / original clientOrderId | correlation |
-| `X` / `x` / `T` | order status / execution type / transaction time | state machine, ordering, staleness |
-
-The doc states the derivation outright: **"Average price can be found by doing `Z` divided by `z`."**
-`position += l` is **not** idempotent under reconnection, replay, or dual stream+poll ingestion; `filled = z`
-is. Build the fill record from `l`/`L`/`t` and the order status from `z`/`Z`, exactly the split
-NautilusTrader's Binance futures adapter makes
-(`crates/adapters/binance/src/futures/websocket/streams/parse_exec.rs`), and dedupe fills on `t` before the
-position transition, persisting the dedupe set in the same transaction as the position row. USDⓈ-M emits
-`ORDER_TRADE_UPDATE` with the order fields **nested under `o`** (`o.z`, `o.l`, `o.L`, `o.t`, …); verify the
-full futures field map against the current derivatives doc before keying on a field this table does not name,
-because several widely-circulated futures field names are not in any primary source.
-
-## Commission
-
-**The fee side flips with the order side** (`faqs/commission_faq.md`): on a **SELL** the commission is charged
-on the notional, i.e. in the **quote** asset; on a **BUY**, *"the received amount would be `quantity`"*; the
-commission comes out of the **base asset you just bought**. So buying 36.38 GTC with a 0.1% GTC-denominated
-fee leaves you holding **36.34** GTC. Selling `trade.amount`
-returns `-2010 "Account has insufficient balance for requested action."` (freqtrade#1371); selling the raw
-free balance returns `-1013 Filter failure: LOT_SIZE` because 36.34 is not a multiple of `stepSize`
-(freqtrade#5481). The correct model, in `Decimal`: `credited = filled_qty − (fee if commissionAsset == base)`,
-then re-snap **down** to `stepSize`.
-
-**The BNB discount's scope is narrower than a single `fee_rate` scalar can express.** When
-`discount.enabledForAccount && discount.enabledForSymbol`, the **standard** commission is converted to BNB and
-multiplied by `discount`, and the doc states the discount *"does not apply to tax commissions or special
-commissions"*, so one scalar rate is wrong three ways at once: wrong currency, wrong rate, wrong composition.
-Book the fee in the asset the venue reports (`commissionAsset` / `N`), handle null, and where it is neither
-the quote nor the settlement asset, convert at a **recorded** rate or surface it as unconverted.
-Do not treat an adapter's fee as truth: NautilusTrader's Binance adapter *estimates*
-`default_taker_fee × qty × price` for USD-M linear when Binance omits the commission and defaults COIN-M
-inverse commission to zero; ccxt's `calculateFee` is *"experimental, unstable and may produce incorrect
-results"*.
 
 ## STP and `EXPIRED_IN_MATCH`
 

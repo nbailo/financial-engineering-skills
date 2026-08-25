@@ -94,8 +94,8 @@ halted. A band derived from a value the instrument does not participate in admit
 pre-market check allowed any price above $0.01 and below 1.5 times the highest closing price of *any* listed
 option, so a $1 order in any name passed it. The full derivation, the two SEC orders behind it, the per-state
 reference table and the rule that a missing reference is a rejection rather than a default are in
-[execution-algorithms.md](execution-algorithms.md) under "Collaring a marketable child, derived per session
-state". Read that section before writing a band, whether or not the code has a parent/child algorithm.
+`execution-algorithms.md` under "Collaring a marketable child, derived per session state", a sibling reference loaded
+from the skill's table. Read that section before writing a band, whether or not the code has a parent/child algorithm.
 
 ## SEC Rule 15c3-5(c)(1)
 
