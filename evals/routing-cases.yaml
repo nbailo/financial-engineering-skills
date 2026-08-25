@@ -1,9 +1,9 @@
-# Routing evals: which skills a task should load, and which references inside them.
+# Lexical routing lint: which skills a task should load, and which references inside them.
 #
 # WHAT THIS FILE IS. Each case is a task as a user would actually type it, plus the skill set
-# that should end up loaded. `scripts/eval_routing.py` scores each case by lexical overlap
-# between the task and every skill's frontmatter description, which is the only text the real
-# router sees before it decides. That makes this an approximation of routing, not a
+# that should end up loaded. `scripts/lint_routing_lexical.py` scores each case by lexical
+# overlap between the task and every skill's frontmatter description, which is the only text
+# the real router sees before it decides. That makes this an approximation of routing, not a
 # reproduction of it, and the runner says so on every run.
 #
 # WHAT IT CATCHES. A description that has lost the vocabulary a task speaks. That is the
@@ -20,39 +20,45 @@
 # task matches. A case that can be scored neither way declares `decided_by: unscorable` with
 # a reason, and is reported as such rather than counted as a pass.
 #
+# THE TASKS ARE TASKS, NOT CLAIMS. Every case is written as something a user says about their
+# own code. Where an identifier appears it is one this repository already carries in a skill
+# or a reference, so no case asserts a venue behaviour that nothing here has sourced. A task
+# is allowed to be wrong about the world; it is a prompt, and the fixture asserts only where
+# it routes.
+#
+# ALLOWLISTS. An unexpected activation FAILS. If this matcher predicts a skill the case did
+# not ask for, the case must either forbid it or list it in `allow_skills`, and every entry
+# there is a recorded statement that a bag of words pulls that skill into that task. The
+# runner prints the total on every run so the number is watchable. Most entries exist for one
+# reason: a task states its own scope in a negation or a clause ("it never writes a balance",
+# "before I quote"), and a bag of words cannot read either.
+#
 # Skill names below are the eight that exist: six under skills/, two under advanced/.
 #
 # FIELDS
-#   id                    stable name, used in the failure summary
+#   id                    stable name, unique, used in the failure summary. It is also the key
+#                         scripts/validate.py measures a loaded path under, so renaming a case
+#                         with expect_references may need its ratchet entry renamed too.
 #   task                  the task text, written as a user would type it
 #   expect_skills         skills that MUST be predicted; [] means the task loads nothing
 #   forbid_skills         skills that must NOT be predicted
+#   allow_skills          skills this matcher predicts that the case tolerates
 #   forbid_probe          regex; a forbidden skill that matches it in its own description or
 #                         body is redirecting explicitly, so a lexical over-prediction is
 #                         reported as a matcher limit instead of a failure
 #   expect_references     references that must rank among the top trigger matches inside the
-#                         expected skills
+#                         expected skills. These also define the loaded path the budget in
+#                         scripts/validate.py is measured against.
 #   forbid_references     references that must not outrank a required one
 #   decided_by            `description` (default), `exclusion`, or `unscorable`
 #   exclusion_probe       for decided_by: exclusion, the regex the skill body must contain
 #   exclusion_required_in the skills that must carry that exclusion, named explicitly because
 #                         charging every over-predicted skill would invent work
 #   note                  why the case exists, and what a failure would mean
-#
-# TWO CASES FAIL TODAY, and both are findings about the skills rather than about the runner.
-# They are left failing on purpose: a fixture edited until it passes measures nothing.
-#   limitless-prediction-bot: the prediction-market-core.md trigger row advertises only the
-#     pricing half of that file (outcome tokens, payouts, complements, ticks, fees). The file
-#     also covers order identity and ambiguous submission, so a task about a clientOrderId
-#     and out-of-order events scores 0.0 against the row that should open it.
-#   prediction-market-settlement-credit: fin-exchange-integration's description no longer
-#     carries settlement vocabulary, so a task about crediting a resolved market's payout
-#     scores 0.5 against it and 1.333 against fin-payments. Settlement handling on a venue
-#     you do not operate belongs to the venue-client skill.
 
 cases:
 
-  # ---------------------------------------------------------------- ordinary venue clients
+  # ================================================================= fin-exchange-integration
   - id: binance-spot-bot
     task: >-
       I have a Python bot that places limit orders on Binance spot with python-binance. It
@@ -61,6 +67,8 @@ cases:
       average entry price. Sometimes a create order call times out and I am not sure whether
       the order exists.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-market-data-publication, fin-verification]
+    allow_skills: [fin-ledger, fin-matching-engine, fin-money-core, fin-payments]
     expect_references:
       - venues/binance-orders.md
       - venues/binance-filters.md
@@ -76,6 +84,8 @@ cases:
       handle a venue-originated liquidation and ADL showing up in the account feed without
       any instruction from me.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-money-core]
+    allow_skills: [fin-ledger]
     expect_references:
       - venues/coinbase-deribit-hyperliquid.md
       - fees-and-funding.md
@@ -86,7 +96,6 @@ cases:
       The negative half of the Hyperliquid split. Ordinary perps must not pull the outcome
       market file, which is experimental and version sensitive.
 
-  # ------------------------------------------------------------------- prediction markets
   - id: limitless-prediction-bot
     task: >-
       Building a bot against Limitless Exchange. It authenticates with lmts-api-key HMAC
@@ -94,6 +103,8 @@ cases:
       subscribe_order_events over the Socket.IO stream. I need to handle orderEvent frames
       where the OME and SETTLEMENT sources arrive out of order.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-market-data-publication, fin-money-core, fin-payments]
+    allow_skills: [fin-ledger, fin-matching-engine, fin-verification]
     expect_references:
       - prediction-market-limitless.md
       - prediction-market-core.md
@@ -110,6 +121,9 @@ cases:
       is pUSD now, and I need the right verifyingContract for neg risk markets plus the tick
       size from orderPriceMinTickSize.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-onchain, fin-matching-engine, fin-money-core]
+    allow_skills: [fin-market-data-publication]
+    forbid_probe: '(?i)(venue you do not operate|use fin-exchange-integration)'
     expect_references:
       - prediction-market-polymarket-v2.md
     forbid_references:
@@ -124,6 +138,7 @@ cases:
       settledOutcome, parse sideSpecs and the pipe delimited description encoding, and need
       to know what settleFraction means for a position at settlement.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-money-core]
     expect_references:
       - prediction-market-hyperliquid-hip4.md
       - prediction-market-core.md
@@ -139,35 +154,13 @@ cases:
       later finalized. I want to know which of these I am allowed to credit a user balance
       from, and how to dedupe a redeem so a replay does not pay twice.
     expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-market-data-publication, fin-verification, fin-payments]
+    allow_skills: [fin-ledger, fin-matching-engine, fin-money-core]
     expect_references:
       - prediction-market-settlement-integration.md
     note: >-
       Settlement handling is client side. It must not route to a venue-side advanced skill,
       because deciding an outcome is not what this code does.
-
-  # --------------------------------------------------------------------- the venue side
-  - id: matching-engine
-    task: >-
-      I am writing the matching engine itself. It crosses incoming orders against resting
-      orders, assigns priority and a sequence number, does pro rata allocation with a
-      residue pass, applies self match prevention, and has to replay its journal after a
-      crash and produce the identical execution sequence.
-    expect_skills: [fin-matching-engine]
-    forbid_skills: [fin-exchange-integration]
-    forbid_probe: '(?i)(venue side|you own the book)'
-    note: >-
-      Authority is SELF. The venue-client skill is the wrong half of the problem.
-
-  - id: market-data-publisher
-    task: >-
-      We publish our own market data feed. I need a sequencing scheme consumers can gap
-      detect, a snapshot that says what it is a snapshot of, session identity across a
-      restart, a recovery channel that terminates, and conflation that stays recoverable.
-    expect_skills: [fin-market-data-publication]
-    forbid_skills: [fin-exchange-integration, fin-matching-engine]
-    forbid_probe: '(?i)(publish a sequenced feed|you are the venue)'
-    note: >-
-      Outbound publication. The consuming half belongs to the venue-client skill.
 
   - id: market-data-consumer
     task: >-
@@ -175,7 +168,7 @@ cases:
       stream to a REST snapshot using lastUpdateId with U and u, and I discard and re-snapshot
       when the sequence gaps. I also need a staleness gate on the mid price before I quote.
     expect_skills: [fin-exchange-integration]
-    forbid_skills: [fin-market-data-publication, fin-matching-engine]
+    forbid_skills: [fin-market-data-publication, fin-matching-engine, fin-money-core]
     forbid_probe: '(?i)use fin-exchange-integration'
     expect_references:
       - orderbook-sync.md
@@ -184,55 +177,979 @@ cases:
       Inbound consumption. The mirror image of market-data-publisher, and the pair only means
       something if both route to different skills.
 
-  # ------------------------------------------------------------------- the other domains
+  - id: okx-bybit-order-recovery
+    task: >-
+      Our OKX and Bybit adapters both set clOrdId and orderLinkId, and after a websocket drop
+      I have to work out which orders actually reached the venue. I want the query endpoint
+      each one gives me for that and the rate limit I am allowed to hit while catching up.
+    expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-payments, fin-market-data-publication, fin-money-core]
+    allow_skills: [fin-ledger, fin-matching-engine]
+    expect_references:
+      - venues/okx-bybit-kraken-orders.md
+    note: >-
+      Two venue adapters in one repo. The divergence material is what this task needs, and it
+      lives inside the venue-client skill.
+
+  - id: ccxt-retry-funnel
+    task: >-
+      We use ccxt for four venues. I found that createOrder goes through the same retry funnel
+      as fetchBalance, and amountToPrecision truncates while priceToPrecision rounds. Is a
+      RequestTimeout on a signed call safe to retry the way the library implies?
+    expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-verification]
+    allow_skills: [fin-ledger, fin-money-core]
+    expect_references:
+      - ccxt.md
+    note: >-
+      A client-library failure mode rather than a venue one. It still belongs to the skill
+      that owns talking to a venue.
+
+  - id: fix-order-entry-resend
+    task: >-
+      Our FIX order entry session sends 35=D and I have to decide what to do with a
+      ResendRequest after a reconnect. PossDupFlag and PossResend on an ExecutionReport, and
+      OrigClOrdID on a cancel replace, are both things I am currently ignoring.
+    expect_skills: [fin-exchange-integration]
+    forbid_skills: [fin-onchain, fin-money-core, fin-verification]
+    allow_skills: [fin-ledger, fin-market-data-publication, fin-matching-engine, fin-payments]
+    expect_references:
+      - fix.md
+    note: >-
+      FIX order entry is a venue client. FIX session sequencing on a feed you publish is the
+      market data skill, and the two must not collapse into one.
+
+  # ============================================================================ fin-payments
   - id: stripe-refund-ceiling
     task: >-
       Adding partial refunds against a Stripe PaymentIntent. I need to stop the sum of
       refunds exceeding the captured amount, handle the charge.refunded webhook arriving
       before the API response, and deal with a dispute opening on an already refunded charge.
     expect_skills: [fin-payments]
-    forbid_skills: [fin-exchange-integration]
+    forbid_skills: [fin-exchange-integration, fin-ledger, fin-money-core]
+    allow_skills: [fin-verification]
+    expect_references:
+      - refunds.md
+      - disputes.md
+    note: >-
+      The base payments case: a refund ceiling is the classic economic bug in this domain.
 
+  - id: adyen-webhook-ordering
+    task: >-
+      Adyen sends us notifications and I store them by eventCode and pspReference. AUTHORISATION
+      sometimes arrives after CAPTURE, and we occasionally get the same notification twice with
+      a different notification id. What is the processing order I am allowed to assume?
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine, fin-ledger]
+    expect_references:
+      - webhook-processing.md
+    note: >-
+      Arrival order is not occurrence order, in the processor's own vocabulary.
+
+  - id: paypal-dispute-evidence
+    task: >-
+      A PayPal chargeback came in as NOTIFICATION_OF_CHARGEBACK and later CHARGEBACK_REVERSED,
+      and our books never moved the money back. I need the dispute lifecycle and what
+      funds_reinstated should do to the customer's balance.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-onchain, fin-verification]
+    allow_skills: [fin-exchange-integration, fin-ledger, fin-money-core]
+    expect_references:
+      - disputes.md
+    note: >-
+      Disputes are a payments lifecycle. What the reversal does to a balance is the ledger's
+      half, and the ledger being pulled in alongside is correct rather than noise.
+
+  - id: ach-return-r01
+    task: >-
+      We credit a customer as soon as the ACH debit is submitted. An R01 return can land days
+      later and by then the balance is spent. I want the return window per R code and where
+      the credit is actually allowed to happen.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-money-core]
+    allow_skills: [fin-ledger]
+    expect_references:
+      - rails-reversibility.md
+    note: >-
+      A rail whose settlement is reversible for days. The vocabulary is entirely payments.
+
+  - id: iso20022-pacs004-return
+    task: >-
+      Building the pain.001 initiation and correlating pacs.002 status reports back to it.
+      A pacs.004 return has to find the original TxId and EndToEndId, and a camt.029 answer
+      to our camt.056 recall needs to be matched to the same payment.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-ledger]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - iso20022-messages.md
+    note: >-
+      Scheme messages. Nothing outside payments should recognise this vocabulary at all.
+
+  - id: stripe-settlement-report
+    task: >-
+      Reconciling our own numbers against the Stripe balance_transaction report. I need
+      reporting_category and available_on to line up with what we booked, and an adjustment
+      row we currently drop on the floor is exactly the difference.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-money-core]
+    allow_skills: [fin-ledger, fin-matching-engine, fin-onchain, fin-verification]
+    expect_references:
+      - settlement-feeds.md
+    note: >-
+      Settlement feeds are the payments authority for a comparison. Verification arriving
+      alongside is the intended pairing, not noise.
+
+  - id: capture-window-expiry
+    task: >-
+      Our checkout authorises with capture_method manual and captures when the warehouse
+      ships. Some authorisations expire before that, and amount_to_capture is sometimes lower
+      than the authorised amount. What does a final_capture actually close?
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-money-core]
+    allow_skills: [fin-ledger, fin-verification]
+    expect_references:
+      - capture-and-amounts.md
+    note: >-
+      Authorisation and capture are the processor's own state machine.
+
+  - id: payout-batch-to-bank
+    task: >-
+      We send seller payouts once a day through Modern Treasury. A payout can fail after we
+      have already marked the seller paid, and a retry of the batch must not send the same
+      payout twice. What key do I send and what does the processor do with a repeat?
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-matching-engine, fin-ledger, fin-money-core]
+    allow_skills: [fin-exchange-integration]
+    expect_references:
+      - idempotency-keys.md
+    note: >-
+      Payouts move value outward and the identity of the instruction is the whole control.
+
+  - id: processor-idempotency-key
+    task: >-
+      Our Stripe wrapper mints an Idempotency-Key from a uuid4 generated inside the retry
+      loop, so every retry sends a new one. I also see PayPal-Request-Id reused across two
+      different charges. How long is a key good for and what should mint it?
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-verification, fin-ledger, fin-money-core]
+    allow_skills: [fin-exchange-integration, fin-matching-engine]
+    expect_references:
+      - idempotency-keys.md
+    note: >-
+      Operation identity is a money-core rule; what a named processor does with the key is the
+      specialisation, and this task is entirely in the specialisation.
+
+  - id: webhook-endpoint-signature
+    task: >-
+      Writing the route that receives provider events. It reads the raw body for
+      Stripe-Signature verification, returns 200 before doing any work, and currently parses
+      the JSON with a framework middleware that rewrites the body first.
+    expect_skills: [fin-payments]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine, fin-onchain]
+    allow_skills: [fin-ledger, fin-money-core, fin-verification]
+    expect_references:
+      - webhook-endpoint.md
+    note: >-
+      The endpoint and the processing of a stored event are two different files, and the
+      trigger rows have to separate them.
+
+  # ============================================================================== fin-ledger
   - id: double-entry-postings
     task: >-
       Writing the posting service for our internal ledger. Every transfer becomes a balanced
       set of debits and credits, entries are immutable, and a correction is a reversing entry
       rather than an update. I also need available balance to account for holds.
     expect_skills: [fin-ledger]
-    forbid_skills: [fin-exchange-integration]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-money-core]
+    expect_references:
+      - double-entry.md
+      - holds-and-two-phase.md
+    note: >-
+      The base ledger case.
 
+  - id: holds-available-balance
+    task: >-
+      Our accounts have a posted balance and an available balance. A hold is placed at
+      checkout, expires_at two hours later, and is captured for less than it reserved. Right
+      now available is computed by a query that sometimes disagrees with the stored column.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-payments]
+    expect_references:
+      - holds-and-two-phase.md
+    note: >-
+      Two-phase money is where a ledger earns its keep.
+
+  - id: reversal-not-update
+    task: >-
+      Someone shipped a handler that fixes a bad posting with an UPDATE on the amount column.
+      I want to replace it with a reversal that keeps the original entry and records why, and
+      I need to know what reverses_transaction_id should point at for a clawback.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-payments, fin-verification]
+    allow_skills: [fin-exchange-integration, fin-money-core, fin-onchain]
+    expect_references:
+      - reversals-and-corrections.md
+    note: >-
+      Immutability is the ledger invariant that most often loses to a quick fix.
+
+  - id: period-close-as-of
+    task: >-
+      Finance wants a statement balance as_of the last day of the month that does not change
+      when a late entry arrives with an earlier effective_at. We have posted_at and created_at
+      and nothing else, and period_close is a spreadsheet.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-money-core]
+    expect_references:
+      - bitemporality-and-close.md
+    note: >-
+      Bitemporality: a balance is a function of two clocks, and one of them is the ledger's.
+
+  - id: multi-currency-sum
+    task: >-
+      Our balances table has one amount column and a currency column, and the dashboard does
+      a SUM(amount) across all of them. We also hold two assets with different scales, and an
+      FX revaluation is booked as a plain adjustment with no rate recorded.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-matching-engine, fin-payments, fin-onchain]
+    allow_skills: [fin-exchange-integration, fin-money-core]
+    expect_references:
+      - multi-currency-fx.md
+    note: >-
+      Currency is a dimension, not a label. A cross-currency sum is a silent wrong number.
+
+  - id: tigerbeetle-linked-transfers
+    task: >-
+      Moving our balances onto TigerBeetle. I am building create_transfers batches with linked
+      flags, and I need to know how to read the per-event result array and what happens to the
+      whole chain when one transfer in it fails.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-verification]
+    allow_skills: [fin-money-core, fin-onchain]
+    expect_references:
+      - posting-api.md
+    note: >-
+      A named ledger engine, and the posting entrypoint's result handling is where its users
+      get hurt.
+
+  - id: solvency-check-constraint
+    task: >-
+      We have CHECK (balance >= 0) on customer accounts, but a support tool sets
+      allow_negative for one account and nothing records who approved it. I also want to
+      assert that the sum of customer balances never exceeds what we actually hold.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-payments]
+    expect_references:
+      - solvency-and-limits.md
+    note: >-
+      A per-account override on a solvency check is the shape that has emptied real companies.
+
+  - id: interest-accrual-posting
+    task: >-
+      We accrue interest daily on a savings product. The apr is stored as a decimal, the
+      accrual uses SECONDS_PER_YEAR, and the per-period residue is currently dropped. Rewards
+      are then paid out monthly from the accrued figure.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-money-core]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - accrual-posting.md
+    note: >-
+      Accrual is a ledger posting shape, not a rounding question, though it contains one.
+
+  - id: materialised-balance-column
+    task: >-
+      Reads got slow so we added a cached balance column updated in the same transaction as
+      the entry insert. Under load two workers now disagree, and a nightly job that recomputes
+      the running sum sometimes finds a different number.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-payments]
+    allow_skills: [fin-onchain]
+    expect_references:
+      - balance-storage.md
+    note: >-
+      A cached balance is a second source of truth, and the ledger owns what to do about it.
+
+  - id: corporate-action-split
+    task: >-
+      A holding needs a four for one split applied across every account on the record_date,
+      with cash in lieu for the fractional remainder, and the ticker is being renamed at the
+      same time. Positions have to end up consistent for statements produced before and after.
+    expect_skills: [fin-ledger]
+    forbid_skills: [fin-matching-engine, fin-payments, fin-onchain]
+    allow_skills: [fin-exchange-integration, fin-money-core]
+    expect_references:
+      - corporate-actions.md
+    note: >-
+      Corporate actions rewrite quantities across every account at once.
+
+  # ============================================================================= fin-onchain
   - id: erc20-deposit-crediting
     task: >-
       Indexing ERC-20 Transfer logs on an EVM chain to credit user deposits. I need a
       confirmation policy, reorg handling that can uncredit, transaction identity that
       survives a replacement, and token decimals read from the contract rather than assumed.
     expect_skills: [fin-onchain]
-    forbid_skills: [fin-exchange-integration]
+    forbid_skills: [fin-exchange-integration, fin-ledger, fin-money-core]
+    expect_references:
+      - indexing.md
+      - finality-policy.md
+    note: >-
+      The base on-chain case: crediting is where chain semantics become an obligation.
 
+  - id: evm-nonce-stuck-tx
+    task: >-
+      Our withdrawal sender gets replacement transaction underpriced and sometimes nonce too
+      low, and one stuck transaction blocks every later one. We read pendingNonce from the
+      node on every send and bump maxPriorityFeePerGas on a timer.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-ledger]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - tx-evm-nonces.md
+    note: >-
+      A nonce is an ordering resource, and losing one is how a payout stops moving.
+
+  - id: reorg-uncredit
+    task: >-
+      A reorg took out a block we had already credited from, and the log came back with
+      removed true. We store block_hash per block but nothing compares parent_hash, and there
+      is no path that takes a credit back on chain once it is booked.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-exchange-integration, fin-ledger, fin-money-core]
+    allow_skills: [fin-matching-engine, fin-verification]
+    expect_references:
+      - reorg-handling.md
+    note: >-
+      A reorg is the chain retracting a fact you already turned into a balance.
+
+  - id: utxo-coin-selection
+    task: >-
+      Our Bitcoin withdrawal builder does coin selection with listunspent, builds a PSBT and
+      sends the change to a fresh changeAddress. Sometimes the change output is dust and
+      sometimes we hit TOO_LONG_MEMPOOL_CHAIN on the second send.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-matching-engine]
+    expect_references:
+      - wallet-utxo-construction.md
+    note: >-
+      UTXO construction is a chain-boundary concern with its own arithmetic.
+
+  - id: solana-signature-status
+    task: >-
+      On Solana we submit with @solana/web3.js and poll getSignatureStatuses. A transaction
+      that passes lastValidBlockHeight may still land, and we retry by rebuilding it, which
+      gives us a different signature for the same intent.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-ledger]
+    expect_references:
+      - tx-solana-and-xrpl.md
+    note: >-
+      Transaction identity is per chain, and Solana's is not a hash you control.
+
+  - id: erc4626-share-price
+    task: >-
+      Our vault integration calls convertToShares on deposit and previewRedeem on the way out,
+      and we compute a share price by dividing totalAssets by totalSupply in the client. The
+      first depositor case rounds in the user's favour.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-ledger, fin-payments, fin-verification]
+    allow_skills: [fin-exchange-integration, fin-matching-engine, fin-money-core]
+    expect_references:
+      - token-vault-shares.md
+    note: >-
+      Share arithmetic is token semantics, and the rounding direction is the money-core rule
+      it specialises.
+
+  - id: chainlink-price-read
+    task: >-
+      We read an on-chain price oracle to size collateral: latestRoundData, and we never look
+      at updatedAt. On an L2 there is a sequencer uptime feed we ignore, and a fallback path
+      reads slot0 from a pool when the oracle call reverts.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-payments, fin-matching-engine, fin-ledger]
+    allow_skills: [fin-market-data-publication, fin-money-core, fin-verification]
+    expect_references:
+      - token-price-reads.md
+    note: >-
+      A stale price is an economic input. The on-chain read has its own staleness surface.
+
+  - id: custody-withdrawal-queue
+    task: >-
+      We send withdrawals through Fireblocks and treat any non-success as failed. I have seen
+      PARTIALLY_FAILED and PENDING_AUTHORIZATION treated as terminal, and treatAsGrossAmount
+      changes what the customer actually receives.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-ledger, fin-verification]
+    allow_skills: [fin-exchange-integration, fin-money-core, fin-payments]
+    expect_references:
+      - wallet-withdrawal-queue.md
+    note: >-
+      A custody provider's status set is where an ambiguous outcome hides on this boundary.
+
+  - id: wallet-derivation-gap-limit
+    task: >-
+      Deposit addresses come from an xpub with a derivationPath per user. We generate ahead by
+      twenty and a customer paid to an address past our gapLimit, so the scan never saw it. We
+      also reuse an address when a user asks twice.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-payments, fin-ledger, fin-money-core]
+    allow_skills: [fin-exchange-integration, fin-market-data-publication, fin-verification]
+    expect_references:
+      - wallet-derivation.md
+    note: >-
+      Derivation and scanning decide whether a deposit is ever seen at all.
+
+  - id: sweep-gas-tank
+    task: >-
+      A sweep job moves deposits from per-user forwarder contracts into the hot wallet, funded
+      from a gasTank. When the tank runs dry we get INSUFFICIENT_FUNDS_FOR_FEE and the sweep
+      half completes, and our spendable balance read counts unconfirmed change.
+    expect_skills: [fin-onchain]
+    forbid_skills: [fin-matching-engine, fin-money-core, fin-payments]
+    allow_skills: [fin-exchange-integration, fin-ledger]
+    expect_references:
+      - wallet-sweeps.md
+    note: >-
+      Sweeps are internal transfers that can still lose value.
+
+  # ========================================================================== fin-money-core
   - id: allocation-rounding-util
     task: >-
       A helper that splits an amount across recipients by percentage. Right now it rounds
       each share half up with floats and the parts do not sum back to the total. I want the
       residue handled explicitly and the whole thing in integer minor units.
     expect_skills: [fin-money-core]
-    forbid_skills: [fin-exchange-integration, fin-ledger]
+    forbid_skills: [fin-exchange-integration, fin-ledger, fin-payments]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - allocation-and-residue.md
+    note: >-
+      The base money-core case: no venue, no processor, no ledger, just arithmetic that owes
+      someone a number. It expects one reference on purpose. rounding-modes.md scores 0.5 here
+      because its trigger row is keyed on API literals (`round(`, `quantize(`, `setScale`) and
+      this task describes the rounding in prose, which is the row working as designed: the
+      residue is the defect, and allocation-and-residue.md is the file that answers it.
 
+  - id: decimal-vs-float-column
+    task: >-
+      Our amounts are stored as double precision in Postgres and read into a Python float. I
+      want to move to an exact type end to end and I need to know what the ORM column, the
+      wire format and the arithmetic should be.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-matching-engine]
+    allow_skills: [fin-ledger, fin-onchain]
+    expect_references:
+      - representation.md
+    note: >-
+      Representation is the first money-core rule and the one with the widest blast radius.
+
+  - id: idempotency-key-after-flush
+    task: >-
+      We mint the idempotency key from the row id returned by flush(), inside the transaction
+      that is rolled back when the call to move the money times out. The retry then gets a new
+      id, a new key and no durable dedupe, so it pays the same amount twice. What should the
+      key be minted from instead?
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-ledger]
+    allow_skills: [fin-matching-engine, fin-onchain]
+    expect_references:
+      - idempotency-keys.md
+      - crash-boundaries-and-outbox.md
+    note: >-
+      Operation identity that does not survive a rollback is the failure this suite exists
+      for, and it is domain independent.
+
+  - id: outbox-dual-write
+    task: >-
+      One function writes a row and then calls publish() on the queue, both inside
+      @transaction.atomic. If the publish fails the row is still there, and if the commit
+      fails after the publish the message is a lie about an amount someone is owed. This is
+      the ambiguous outcome I keep hitting on every external call.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-verification]
+    allow_skills: [fin-ledger, fin-market-data-publication, fin-onchain]
+    expect_references:
+      - crash-boundaries-and-outbox.md
+    note: >-
+      The dual write is a crash boundary. It is not a payments or a venue problem.
+
+  - id: select-then-update-balance
+    task: >-
+      A handler reads the balance, checks it in Python, then writes the new value back. There
+      is no FOR UPDATE and the isolation level is whatever the pool defaults to. Under
+      concurrency we see two withdrawals both pass the check and the amount owed goes
+      negative.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-verification]
+    allow_skills: [fin-ledger, fin-matching-engine, fin-onchain]
+    expect_references:
+      - isolation-and-locking.md
+    note: >-
+      Read modify write on a balance is the canonical concurrency defect on a money path.
+
+  - id: json-number-amount
+    task: >-
+      Our API returns exact amounts as JSON numbers and the JavaScript client does JSON.parse
+      then toFixed(2), so the rounding happens in the browser. There is also a Parquet export
+      where the decimal scale was set once and never checked.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-payments, fin-onchain, fin-verification]
+    allow_skills: [fin-exchange-integration, fin-ledger, fin-matching-engine]
+    expect_references:
+      - serialization-and-width.md
+    note: >-
+      Every hop between systems is a chance to lose precision, and none of them is a domain.
+
+  - id: minor-units-conversion
+    task: >-
+      Half our code multiplies by 100 to get minor units and half calls to_minor with a
+      currency exponent, so the exact amount depends on which path ran. JPY and a three
+      decimal currency both break the first half, and the rounding on the way back to display
+      is a second guess.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-payments]
+    allow_skills: [fin-ledger, fin-verification]
+    expect_references:
+      - currency-and-scale.md
+    note: >-
+      Scale is a property of the currency and not a constant.
+
+  - id: rounding-mode-statute
+    task: >-
+      Our invoice lines round with the language default, which is banker's rounding in one
+      service and half up in another, and the tax total is computed from the rounded lines.
+      The contract we signed specifies a direction.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine, fin-ledger]
+    expect_references:
+      - rounding-modes.md
+    note: >-
+      A rounding mode set by contract or statute is not a style preference.
+
+  - id: webhook-cursor-coverage
+    task: >-
+      A backfill job pulls events since a stored cursor with limit=100 and advances the
+      watermark to the newest item it saw, even when the provider returned exactly the page
+      cap or threw halfway through. Every skipped event is an amount a user is owed and never
+      gets, and nothing reconciles it afterwards.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-matching-engine, fin-ledger, fin-payments]
+    allow_skills: [fin-exchange-integration]
+    expect_references:
+      - ordering-and-coverage.md
+    note: >-
+      Advancing a watermark past a range you did not cover is silent under-crediting, and the
+      rule is domain independent even though every domain hits it.
+
+  - id: kill-switch-config-reuse
+    task: >-
+      To ship faster we reused an existing feature flag to gate a new hard limit on the amount
+      a payout may move, and the same flag is read by two other services with a different
+      meaning. The rollout is per region, and the limit has a per-customer override that
+      nobody approves.
+    expect_skills: [fin-money-core]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-payments]
+    allow_skills: [fin-ledger, fin-onchain, fin-verification]
+    expect_references:
+      - authority-limits-and-rollout.md
+    note: >-
+      Reuse of an existing flag on a money path changes who decides, which is an authority
+      change wearing a config change's clothes.
+
+  # ======================================================================== fin-verification
   - id: reconciliation-readiness
     task: >-
       Before we go live I want proof this is correct. I need reconciliation against the
       processor's settlement report, a planted break test that proves the reconciliation
       actually detects a difference, and crash boundary tests around the capture call.
     expect_skills: [fin-verification, fin-payments]
+    forbid_skills: [fin-ledger, fin-money-core, fin-exchange-integration]
+    expect_references:
+      - settlement-feeds.md
     note: >-
-      Verification loads alongside a domain skill, never instead of one.
+      Verification loads alongside a domain skill, never instead of one. The reference
+      expectation is the processor-side authority the comparison reads, because that is what
+      the task names. It is NOT reconciliation-design.md, and the reason is a finding rather
+      than a preference: that file's trigger row says "a scheduled job compares two sources"
+      and never uses the word reconciliation, so a task asking for a reconciliation scores
+      0.0 against the row for the file that designs one.
 
-  # ------------------------------------------------------------- backtests: load NOTHING
+  - id: planted-break-test
+    task: >-
+      Our nightly comparison has never alerted, and I do not know whether that is because
+      nothing is wrong or because it cannot see a difference. I want a test that plants a
+      break and fails if the job stays quiet, plus somewhere for the aged breaks to go.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine, fin-payments]
+    expect_references:
+      - reconciliation-breaks.md
+    note: >-
+      A reconciliation that has never been proven to detect is not a control.
+
+  - id: crash-boundary-kill9
+    task: >-
+      I want a test that kills the process with SIGKILL between the intent write and the
+      external call, restarts it, and asserts that the resume path neither loses the intent
+      nor sends it twice. Right now dedupe state lives in memory.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-market-data-publication]
+    allow_skills: [fin-matching-engine, fin-money-core]
+    expect_references:
+      - crash-boundary-tests.md
+    note: >-
+      The crash boundary is the property, and the test is what makes the claim real.
+
+  - id: property-generators-money
+    task: >-
+      Writing hypothesis strategies for amounts so the suite stops testing only round numbers.
+      I want generators that produce the awkward scales and a mutation run that tells me
+      whether the assertions actually bite.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-payments]
+    allow_skills: [fin-ledger, fin-money-core]
+    expect_references:
+      - money-properties-and-generators.md
+    note: >-
+      Property tests on money need generators that know what money looks like.
+
+  - id: model-based-state-machine
+    task: >-
+      I want a RuleBasedStateMachine over our transfer service with a Bundle of open holds, so
+      the test explores sequences I would not write by hand and compares against a simple
+      model of what the balances should be.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-onchain]
+    allow_skills: [fin-ledger, fin-market-data-publication]
+    expect_references:
+      - model-based-testing.md
+    note: >-
+      Model based testing is a verification technique, not a domain.
+
+  - id: deterministic-simulation-vopr
+    task: >-
+      Our sequencer is its own authority and there is nothing to reconcile it against. I want
+      a seeded deterministic simulator that replays the same schedule after a fault and proves
+      the output is identical.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-payments, fin-onchain, fin-exchange-integration]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - deterministic-simulation.md
+    note: >-
+      When the system is its own authority the evidence bar rises, and the matching engine
+      being pulled in alongside is exactly right for a sequencer.
+
+  - id: concurrency-isolation-test
+    task: >-
+      I want a test that runs two withdrawals at once against the same account and fails if
+      both succeed, including under the isolation level we actually deploy with, and I want
+      the 40001 retries counted rather than swallowed.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-payments]
+    allow_skills: [fin-ledger]
+    expect_references:
+      - concurrency-and-isolation-tests.md
+    note: >-
+      The concurrency defect and the test that proves it are two different skills' jobs.
+
+  - id: shadow-diff-rewrite
+    task: >-
+      We are rewriting the pricing service and want to run the new one in shadow against the
+      incumbent, replaying the same event stream through both and diffing every output before
+      we cut over.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-payments, fin-ledger, fin-onchain]
+    allow_skills: [fin-exchange-integration]
+    expect_references:
+      - replay-and-shadow-diffing.md
+    note: >-
+      A shadow diff is how a rewrite earns the right to be believed.
+
+  - id: recorded-fixture-sandbox
+    task: >-
+      Our tests hit the venue's testnet and are flaky. I want recorded cassettes with a
+      match_on that is not just the URL, plus a fixture of the venue constraints so the suite
+      fails when they change rather than when the network does.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-payments, fin-ledger, fin-onchain]
+    allow_skills: [fin-exchange-integration, fin-matching-engine, fin-money-core]
+    expect_references:
+      - recorded-fixtures-and-sandboxes.md
+    note: >-
+      A sandbox is not the venue, and a recording is not a sandbox.
+
+  - id: small-bot-proof-set
+    task: >-
+      My bot is four hundred lines against one venue and trades my own capital. I do not want
+      an enterprise test plan, I want to know the minimum set of tests it actually owes before
+      I let it run unattended.
+    expect_skills: [fin-verification]
+    forbid_skills: [fin-payments, fin-onchain, fin-market-data-publication]
+    allow_skills: [fin-exchange-integration, fin-ledger]
+    expect_references:
+      - small-bot-proof-set.md
+    note: >-
+      Proportionality. The suite has to answer a small bot as well as a clearing house.
+
+  # ===================================================================== fin-matching-engine
+  - id: matching-engine-core
+    task: >-
+      I am writing the matching engine itself. It crosses incoming orders against resting
+      orders, assigns priority and a sequence number, does pro rata allocation with a
+      residue pass, applies self match prevention, and has to replay its journal after a
+      crash and produce the identical execution sequence.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-market-data-publication, fin-ledger]
+    allow_skills: [fin-verification]
+    forbid_probe: '(?i)(venue side|you own the book|you are the venue)'
+    expect_references:
+      - pro-rata-residue.md
+    note: >-
+      Authority is SELF. The venue-client skill is the wrong half of the problem. The task also
+      touches priority, self-match prevention and journal replay, each of which is now its own
+      narrow reference; the row asserted here is the allocation half the task leads with.
+
+  - id: matching-engine-journal-replay
+    task: >-
+      Our engine writes a wal before it acts and rebuilds from a snapshot plus the journal on
+      failover. I need the epoch and fencing rules for a single writer, and a migration that
+      changes the reducer must still replay old inputs identically.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-market-data-publication]
+    expect_references:
+      - failover-fencing.md
+    note: >-
+      Deterministic replay is what makes an execution sequence reproducible at all. The reducer
+      migration half of this task is its own reference; single-writer fencing is the half the
+      task names first.
+
+  - id: matching-engine-risk-halts
+    task: >-
+      We need pre-trade rejection against a risk_limit, a price_band that stops a fat finger,
+      and a halt and resume path that leaves the book in a state the resume can trust. There
+      is also a trade_break tool that currently just deletes the execution row.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-payments, fin-market-data-publication]
+    allow_skills: [fin-exchange-integration, fin-ledger, fin-verification]
+    expect_references:
+      - busts-and-corrections.md
+    note: >-
+      Halting is a money path decision, and busting a trade rewrites something already booked.
+      Pre-trade rejection, price bands, halt levels and resumption are each their own reference
+      now; the bust is the part of this task that rewrites something already published.
+
+  - id: matching-engine-self-match
+    task: >-
+      Two accounts belonging to the same customer keep crossing with each other on our book.
+      I need self trade prevention that decides which side is cancelled and does not leave the
+      book with a quantity the aggregates disagree about.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-onchain]
+    allow_skills: [fin-ledger]
+    forbid_probe: '(?i)(you own the book|you are the venue)'
+    note: >-
+      Self match prevention only exists for the side that owns the book.
+
+  - id: matching-engine-auction-uncross
+    task: >-
+      Writing the opening auction. It has to compute an uncross price from the imbalance,
+      allocate at that single price across every eligible order, and publish what it did in a
+      way a consumer can reconcile against the continuous session that follows.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration]
+    allow_skills: [fin-ledger, fin-market-data-publication, fin-verification]
+    note: >-
+      An auction is an allocation problem the venue owns, and it borders on the feed it emits.
+
+  - id: matching-engine-iceberg-priority
+    task: >-
+      Our book supports iceberg orders and the refresh currently keeps the original priority,
+      so a large hidden order never loses its place. I need the rule for when a refreshed slice
+      goes to the back and what the aggregates should show.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-market-data-publication]
+    forbid_probe: '(?i)(you own the book|you are the venue)'
+    note: >-
+      Priority is the promise a book makes to the orders resting in it.
+
+  - id: matching-engine-sequencer-failover
+    task: >-
+      The sequencer that assigns our ordering fails over to a standby, and I need to be sure
+      two writers can never both mint an execution. Today the standby starts from the last
+      snapshot it saw with no fencing at all.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-verification]
+    allow_skills: [fin-market-data-publication]
+    note: >-
+      Single writer is the invariant the whole engine rests on.
+
+  - id: matching-engine-trade-bust
+    task: >-
+      Operations want to bust a trade an hour after it printed. The execution has already gone
+      to clearing and to the feed, and the position it created has been used as collateral. I
+      need what a bust is allowed to touch.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-payments, fin-verification, fin-ledger]
+    allow_skills: [fin-exchange-integration, fin-market-data-publication, fin-money-core]
+    note: >-
+      Busting is a correction to something other systems have already booked.
+
+  - id: matching-engine-fanout-bounds
+    task: >-
+      One aggressive order can cross a thousand resting orders and our emit path allocates a
+      message per fill with no bound, so a single input can stall the whole engine. I need the
+      fan-out limit and what happens to the orders past it.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-onchain, fin-market-data-publication]
+    note: >-
+      A bound on fan-out is a correctness property when the engine is the system of record.
+
+  - id: matching-engine-single-writer
+    task: >-
+      We are moving the book from one process to a sharded set, and each shard would own a
+      subset of instruments. I want to know what breaks about deterministic replay and about
+      checked aggregates when the writer stops being singular.
+    expect_skills: [fin-matching-engine]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-market-data-publication]
+    allow_skills: [fin-verification]
+    note: >-
+      Sharding a book is a rollout change to the component that mints executions.
+
+  # ============================================================== fin-market-data-publication
+  - id: market-data-publisher
+    task: >-
+      We publish our own market data feed. I need a sequencing scheme consumers can gap
+      detect, a snapshot that says what it is a snapshot of, session identity across a
+      restart, a recovery channel that terminates, and conflation that stays recoverable.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-matching-engine, fin-verification]
+    forbid_probe: '(?i)(publish a sequenced feed|you are the venue|emits the feed)'
+    expect_references:
+      - feed-spec.md
+    note: >-
+      Outbound publication. The consuming half belongs to the venue-client skill.
+
+  - id: market-data-itch-sequencing
+    task: >-
+      Our feed is carried over MoldUDP64 with a ten byte session id and a MessageCount per
+      packet, and there is a re-request server behind it. I need to know what a consumer is
+      entitled to assume when the session id changes mid day.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-ledger]
+    expect_references:
+      - moldudp64.md
+    note: >-
+      A named transport for a feed you originate.
+
+  - id: market-data-cme-recovery
+    task: >-
+      We emit incremental refreshes with RptSeq per instrument and run a separate recovery
+      channel. A consumer that joins mid stream has to know when it is caught up, and today
+      our recovery loop can run forever.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-onchain]
+    allow_skills: [fin-matching-engine]
+    expect_references:
+      - cme-recovery.md
+    note: >-
+      Recovery that does not terminate is a feed that never becomes usable.
+
+  - id: market-data-conflation
+    task: >-
+      Our outbound queue does conflation with a last value cache when a consumer of our feed
+      falls behind, and drops the slow ones after a threshold. I need to know which fields
+      conflation may touch and still leave the consumer able to rebuild a correct book.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-matching-engine]
+    allow_skills: [fin-verification]
+    expect_references:
+      - conflation-legality.md
+    note: >-
+      Conflation is a correctness decision about what a consumer can still reconstruct.
+
+  - id: market-data-fix-session
+    task: >-
+      The feed session uses MsgSeqNum and answers a ResendRequest with a SequenceReset and
+      GapFillFlag. On a restart we send ResetSeqNumFlag, and a consumer told us their book was
+      wrong for ten minutes afterwards.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-payments, fin-ledger, fin-matching-engine]
+    allow_skills: [fin-exchange-integration]
+    expect_references:
+      - fix-session.md
+    note: >-
+      Session sequencing on the publishing side. The order entry half is the client skill's,
+      and this is the pair that keeps them apart.
+
+  - id: market-data-reg-nms-fairness
+    task: >-
+      We run a US equity venue and send the same update to the consolidated feed and to our
+      proprietary one. Someone asked whether our own path is faster, and I need to know what
+      the timing obligation actually is and where to measure it.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-onchain]
+    allow_skills: [fin-verification]
+    expect_references:
+      - reg-nms-603a.md
+    note: >-
+      A regulatory timing constraint that only applies to the side that publishes.
+
+  - id: market-data-emit-assertions
+    task: >-
+      The publisher keeps a total_qty per level as an unsigned integer and subtracts on every
+      cancel. It underflowed once and we shipped a book where the best bid crossed the best
+      ask. I want assertions on the emit path that stop the bad frame leaving.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-matching-engine]
+    allow_skills: [fin-verification]
+    expect_references:
+      - emit-checks.md
+    note: >-
+      The emit path is the last place a wrong number is still yours.
+
+  - id: market-data-ab-arbitration
+    task: >-
+      We send two identical lines and expect consumers to arbitrate between the A and B feeds.
+      Our own sender sometimes emits a frame on one line only, and nothing on our side checks
+      that both lines carry the same sequence.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-ledger]
+    allow_skills: [fin-matching-engine]
+    note: >-
+      Redundant lines are a publisher obligation, not a consumer convenience.
+
+  - id: market-data-snapshot-join
+    task: >-
+      Consumers join our incremental stream to a periodic snapshot, and the snapshot currently
+      carries no statement of which update it includes. Two consumers ended up with different
+      books from the same join.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-payments, fin-onchain, fin-ledger]
+    note: >-
+      The snapshot has to say what it is a snapshot of, or the join is a guess.
+
+  - id: market-data-feed-versioning
+    task: >-
+      We are adding a field to the feed other systems build an index from, and there is no
+      document that says what any slot means or how a consumer learns the version changed. I
+      need to write that specification before the first external consumer onboards.
+    expect_skills: [fin-market-data-publication]
+    forbid_skills: [fin-exchange-integration, fin-payments, fin-matching-engine]
+    allow_skills: [fin-money-core]
+    note: >-
+      The document consumers read is part of the product, and versioning it is a correctness
+      concern.
+
+  # ============================================================= near misses: load NOTHING
   - id: backtest-sharpe
     task: >-
       I have a research notebook that pulls historical Binance klines, replays a moving
       average crossover over them, and reports the Sharpe ratio, max drawdown and a hit rate.
       Nothing is sent anywhere; it reads a parquet file and prints a table.
     expect_skills: []
+    forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-ledger]
+    allow_skills: [fin-onchain, fin-payments]
     decided_by: exclusion
     exclusion_probe: '(?i)backtest'
     exclusion_required_in: [fin-exchange-integration, fin-money-core, fin-verification]
@@ -248,6 +1165,8 @@ cases:
       against historical marks. It never places an order and never writes a balance; the
       output is a chart.
     expect_skills: []
+    forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-onchain]
+    allow_skills: [fin-ledger, fin-payments]
     decided_by: exclusion
     exclusion_probe: '(?i)(greeks|implied[- ]vol|monte carlo)'
     exclusion_required_in: [fin-exchange-integration, fin-money-core, fin-verification]
