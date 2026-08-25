@@ -30,9 +30,9 @@ Routing literals, evidence rather than definition: imports of `ccxt`, `python-bi
 ## When not to
 
 - You own the book and match incoming against resting orders, compute allocation or priority, publish a sequenced feed, or run a
-  clearing or liquidation batch. That is the venue side, where your authority is SELF rather than EXTERNAL, and its skill
-  `fin-matching-and-settlement` lives in the repository's advanced area rather than this installed set. A resolution **you
-  assign** belongs to it; trading a market somebody else resolves belongs here.
+  clearing or liquidation batch. That is the venue side, where your authority is SELF rather than EXTERNAL, and its skills
+  live in the repository's advanced area rather than this installed set. Deciding what an instrument is worth at expiry is
+  venue-side too; trading an instrument somebody else settles belongs here.
 - Fills become double-entry postings: `fin-ledger`.
 - The change is only amount arithmetic, rounding direction, or the retry classification of an outbound call: `fin-money-core`,
   which otherwise loads alongside this skill only for a cross-domain mechanism this one does not already specialise.
@@ -188,8 +188,7 @@ pointer to a test plan is the missing control, not a plan for it.
 - [execution-algorithms.md](references/execution-algorithms.md): the diff defines a parent/child order, a TWAP/VWAP/POV/IS schedule, `participation_rate`, `slice`, or a benchmark price
 - [ccxt.md](references/ccxt.md): the diff imports `ccxt`/`ccxt.pro`, or touches `precisionMode`/`amountToPrecision`/`createMarketBuyOrderRequiresPrice`
 - [fix.md](references/fix.md): the diff speaks FIX: `35=D`, `PossDupFlag`, `PossResend`, `OrigClOrdID`, `ResendRequest`, `ExecRefID`, iLink 3 / FIXP
-- [prediction-markets.md](references/prediction-markets.md): the diff names `polymarket`, `kalshi`, `conditionId`, `clobTokenIds`, a complete set, a tick grid, or a binary-market fee
-- [prediction-markets-resolution.md](references/prediction-markets-resolution.md): the diff names `negRisk`/`convertPositions`, `payoutNumerators`, `redeemPositions`, `finalized`/`amended`, or credits a resolved market
+- [prediction-markets-client-trading.md](references/prediction-markets-client-trading.md): the diff quotes, sizes or books a trade on a binary venue: `polymarket`, `kalshi`, `clobTokenIds`, `neg_risk`, a tick grid or `price_ranges`, a YES/NO position keeper, or a fee that is not `bps × notional`
 - [test-properties.md](references/test-properties.md): you are writing or reviewing the tests for any of the five properties above
 - [seams.md](references/seams.md): the same process posts fills into a ledger, or is both a venue for its own clients and a client of another venue
 

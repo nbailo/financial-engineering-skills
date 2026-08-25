@@ -68,7 +68,7 @@ different proof obligations:
 - The **client half** reconciles by client order identity against the exchange, on the cadence and with the
   tolerance the exchange's replication lag dictates.
 - The **venue half** requires order-by-order rejection on the last hop before the order is routed, a
-  deterministic core, and deterministic simulation of that core. `fin-matching-and-settlement`, shipped
+  deterministic core, and deterministic simulation of that core. `fin-matching-engine`, shipped
   separately, owns those requirements and states this seam from the venue side.
 
 The tell that a codebase is sitting on this seam: an order object that is sometimes an instruction you sent
@@ -118,6 +118,6 @@ with a reassuring sentence.
 
 Where authority is SELF, add the per-technique evidence table whose shape `fin-verification` owns: replay,
 determinism, conservation and fault injection at crash boundaries, each with the artefact that demonstrates
-it. The venue-of-record equivalent of this block is the engine contract in `fin-matching-and-settlement`, and
+it. The venue-of-record equivalent of this block is the engine contract in `fin-matching-engine`, and
 a process that is both a venue and a client of another venue emits both, one per half, never one merged block
 covering the two.
