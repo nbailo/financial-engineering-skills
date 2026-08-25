@@ -23,6 +23,8 @@ withdrawal batching with partial failure.
 - **Asynchronous rejecting gates**: screening, freezes, authorisation expiry, returned VASP transfers.
 - **Uncreditable deposits**: funds you hold that belong to no customer, and the house account they need.
 - **Hot/warm/cold and multisig operations**: in-flight ledgering, quorum liveness, two-sided reconciliation.
+- **The sequence allocator and the outbound queue**: the single-writer lock and its span; the two ways a
+  lock key stops being a lock; the three preconditions a broadcast must clear before it is sent.
 
 ## The three states, named
 
@@ -418,3 +420,52 @@ Reconcile the wallet against **both** neighbours, and read the direction of the 
 The asset side of every one of these must be computed from block data or an independent node: a reconciliation
 that reads both sides from the same custodian API cannot detect a custodian-side bug, which is the only class
 of bug it exists to find.
+
+## The sequence allocator and the outbound queue
+
+Where the external ledger orders your instructions by a number you assign (an EVM nonce, an XRPL `Sequence`),
+that number is authoritative state with exactly one writer. The lock must span **allocation through to the
+durable record of what was sent**, because everything between those two points is the window in which a second
+writer allocates the same number.
+
+```python
+# WRONG, in two independent ways
+with engine.begin() as cx:                              # (2) the span ends at the dedent
+    cx.execute("SELECT pg_advisory_xact_lock(:k)", {"k": hash(chain) & 0x7FFFFFFF})   # (1) the key
+    nonce = cx.execute("SELECT next_nonce FROM wallet WHERE chain = :c FOR UPDATE", ...).scalar()
+signed = sign(build_tx(nonce))                          # outside the lock
+broadcast(signed)                                       # outside the lock
+```
+
+**(1) The key is not a lock.** Python's `hash()` is salted per interpreter for `str`, so `hash('ethereum')`
+differs in every process while `hash(1) == 1` everywhere; each replica therefore takes a *different* advisory
+lock and all of them succeed at once. Derive the key from a stable digest of the UTF-8 key bytes, never from
+the language's own hash of a string.
+
+**(2) The span ends before the effect.** `with engine.begin():` commits and releases at the dedent, so
+`SELECT … FOR UPDATE` is released before the sign and the broadcast it exists to protect. Hold the transaction
+across the broadcast, and write the record of what was sent inside it.
+
+Fireblocks solves the same problem by serialising and documents the cost: it "can only process a single
+transaction per blockchain standard per vault account". The throughput ceiling is therefore one in-flight
+transaction per account, and **sharding across accounts must happen before nonces are assigned, never after**:
+a shard chosen after allocation splits one number space across two writers, which is the original bug with
+extra steps.
+
+### Three preconditions, checked before every broadcast
+
+A queue that keeps submitting into a condition that guarantees failure converts one stuck instruction into a
+silent outage. Each precondition halts the queue and pages; none of them may be a warning.
+
+| precondition | the assertion | what it prevents |
+|---|---|---|
+| **ordering continuity** | the pending-minus-latest gap is zero, or has been non-zero for less than a configured interval | queued transactions behind a gap are capped at geth's `AccountQueue` (64) and evicted after `Lifetime` (3h). One stuck low-fee transaction at nonce N blocks every withdrawal behind it and then silently drops them |
+| **fee-paying reserve** | the broadcasting account's native-gas balance covers a configured multiple of the current worst-case fee for the queued depth | a hot wallet out of gas stops all withdrawals with no error anyone reads |
+| **absolute fee ceiling** | every constructed transaction carries a cap denominated in the asset, not only a fee-rate cap | a rate cap cannot bound the loss when the *input amount* is wrong; this is the Paxos shape above |
+
+The remediation for a nonce gap is to **replace the lowest unmined nonce, not to submit more transactions**;
+the detector, the geth pool defaults behind it and BitGo's `fillNonce` equivalent are in
+[transaction-identity.md](transaction-identity.md). The interval and the gas multiple are configuration with
+no default. The absolute ceiling comes from your own worst-case payout size; Bitcoin Core's
+`DEFAULT_TRANSACTION_MAXFEE` and `DEFAULT_MAX_RAW_TX_FEE_RATE` in the fee-circuit-breaker table above show the
+shape of shipping both, and either one would have refused the Paxos transaction.

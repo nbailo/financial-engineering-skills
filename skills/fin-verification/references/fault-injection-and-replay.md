@@ -276,7 +276,8 @@ vcr = VCR(record_mode="none", cassette_library_dir="tests/cassettes",
 Filtering `timestamp` and `signature` out of the match is mandatory for a signed API (otherwise no replayed
 request matches) and out of the *stored* cassette, which is a file in your repo.
 
-**The required cassette set.** Happy-path fills test nothing about the branches that lose money:
+**The required cassette set** is reject, partial-fill-then-cancel, over-fill/residual, 429-then-418, and
+mid-stream disconnect. Happy-path fills test nothing about the branches that lose money:
 
 | Cassette | Must contain |
 |---|---|
@@ -342,7 +343,8 @@ no stubs, no sandbox, because the core makes no external calls.
 
 ## Shadow and dark-launch diffing
 
-For a money-path rewrite at T2 and above, production traffic plus the incumbent is the cheapest strong oracle
+For a money-path rewrite at exposure `customer` or `record`, production traffic plus the incumbent is the
+cheapest strong oracle
 available.
 
 - **Run the new implementation on the same inputs with its effects disabled**, not "a feature flag at 1%". If
@@ -363,7 +365,7 @@ Uber's dual-write migration used the same idea as its safety net: an `EntityChan
 
 ## Deterministic simulation testing
 
-**The principled trigger is Axis B: no external oracle exists to reconcile against.** A bot reconciles against
+**The principled trigger is authority SELF: no external oracle exists to reconcile against.** A bot reconciles against
 the exchange, a payments integrator against the processor. A matching engine, custodian or system-of-record
 ledger cannot (it *is* the oracle), so a bug is undetectable after the fact and the proof burden moves before
 deployment, into a simulator. Complexity, team size and importance are not triggers.
@@ -387,11 +389,11 @@ macros, whose hit counts across runs say whether a scenario is generated at all.
 
 **Antithesis** collapses part of that cost by supplying the deterministic environment ("The Antithesis
 environment is fully deterministic. This makes every bug we find perfectly reproducible"), which is why *buying*
-DST is recommended rather than wasteful at T2 while building it is not. The Raft result calibrates expectations:
+DST is recommended rather than wasteful at exposure `customer` while building it is not. The Raft result calibrates expectations:
 one minimal property ("all replicas apply the same sequence of commands in the same order", via a hash-chained
 state machine), partitions alone, three bugs in an hour. Vendor source; note the incentive.
 
-**Protocol-aware DST** is the T3-and-you-wrote-consensus-or-storage extension: plain DST checks *system-level*
+**Protocol-aware DST** is the authority-SELF-and-you-wrote-consensus-or-storage extension: plain DST checks *system-level*
 invariants, and the marginal value is in *per-replica internal* ones (cross-replica commit checksum equality,
 LSM metadata checksum equality across levels, byte-for-byte superblock/grid/client-reply equality) plus deep
 liveness properties such as "replicas should never wind up in a state where they need to coordinate" when logs
@@ -415,5 +417,5 @@ VOPR "24/7 on 1024 cores" and Jepsen still found two safety bugs plus seven cras
   accounts, transfers and error codes, written from the documentation by someone who did not share the
   implementers' assumptions: the one property an internal simulator structurally cannot have.
 
-**A simulator injects the faults its author imagined and generates the cases its generator produces.** At T3
-both DST and an external adversarial pass are required; the second's value is that someone else wrote it.
+**A simulator injects the faults its author imagined and generates the cases its generator produces.** When authority is
+SELF, both DST and an external adversarial pass are required; the second's value is that someone else wrote it.

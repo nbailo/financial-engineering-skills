@@ -20,6 +20,7 @@ independent read path, its break classification, and its alert destination.
 - Fee, tax and FX lines: presentment vs settlement vs payment-method currency
 - Auth ↔ clearing matching: force posts, late presentment, amounts and dates that do not line up
 - The scheduled entrypoint: independent read path, alert destination with no default, runbook
+- Onward disbursement: `transfer_group` vs `source_transaction`, async funding, clawbacks as receivables
 
 ---
 
@@ -418,3 +419,35 @@ The failure this exists to catch has a name. Revolut lost ~$23M gross / ~$20M ne
 declined transactions out of its own funds, and it was detected when **a US partner bank reported holding less
 cash than expected**, by external reconciliation, not by any internal control. The settlement report is that
 control, built before you need it.
+
+## Onward disbursement: transfers, `transfer_group`, and clawbacks
+
+Money leaving to a third party is the case where recovery is a **claim rather than a certainty**, so the
+settlement feed is the only place the outcome is visible.
+
+**Returning value you already disbursed onward requires reversing the onward disbursement in the same unit of
+work.** In a marketplace the onward disbursement is the connected-account transfer, so the refund and its
+reversal commit together, and an unrecovered reversal is a receivable rather than a completed clawback. The
+Stripe wording and the proportional-reversal arithmetic are in refunds-and-disputes.md; the settlement-side
+shadow is `connect_collection_transfer`, above, which is what a 180-day negative balance looks like in the feed.
+
+**A grouping attribute the counterparty offers for reporting creates no economic linkage.** Stripe's
+`transfer_group` is a reporting label: *"it doesn't affect any standard functionality"*. It causes no reversal,
+it joins nothing at settlement, and a platform that treats it as the link between a charge and its transfer has
+built a relationship the processor will not honour. Only `source_transaction` creates a real dependency between
+a charge and a transfer, and it is the field a reversal actually follows.
+
+| field | what it is | what it does at settlement |
+|---|---|---|
+| `transfer_group` | a label you chose, attached to several objects | nothing; grouping and display only |
+| `source_transaction` | a declared funding dependency on a specific charge | the transfer waits for the charge to settle, and reversals follow it |
+
+**Never create a transfer against a payment whose method settles asynchronously** (ACH, SEPA Direct Debit)
+until it has settled. Stripe: *"Stripe doesn't automatically reverse a transfer if the associated async payment
+fails… your platform's balance is debited."* The failure lands up to 60 days later as a return, by which time
+the connected account may be empty.
+
+**Transfers are not auto-retried**, and a transfer reversal can itself fail for lack of funds on the connected
+account. Model clawbacks as **receivables**, not as guaranteed recoveries: carry the unrecovered amount as an
+open balance with an owner and an age, and reconcile it against `connect_collection_transfer` lines in the
+settlement feed rather than assuming the platform got its money back.

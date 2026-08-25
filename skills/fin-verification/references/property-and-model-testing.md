@@ -27,7 +27,7 @@ not produce the cases you believe it does.
 ## The property catalogue
 
 Five are load-bearing everywhere; three more apply only when the design claims them. Write each in the form
-given: a property stated in prose becomes a comment, which is the failure `fin-verification` rule 7 catches.
+given: a property stated in prose becomes a comment, which is the failure the *a comment is a claim* rule catches.
 
 | Property | Assertion, literally | Applies when | Primary evidence |
 |---|---|---|---|

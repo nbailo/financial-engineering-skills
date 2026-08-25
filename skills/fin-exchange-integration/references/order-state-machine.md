@@ -13,6 +13,7 @@ overfill mechanics the table depends on.
 - What stays absorbing, and why it is absent from the table rather than special-cased
 - Late fills and fill voids: the fifteenth status (`Voided`), `(Filled, FillVoided)`, and the bust window
 - The ghost-order resurrection: the exact buggy predicate, and the watermark that fixes it
+- The committed intent row's seven fields, and the transaction block that must not enclose the send
 - In-flight categories: `INTENT_RECORDED`, `SENT_UNCONFIRMED`, `INFLIGHT_UNKNOWN`, and the wall-clock budget
 - `leaves_qty` is venue-authoritative and is not `order_qty − cum_qty`
 - Fill dedupe: `trade_id` plus a field comparison, and why the dedupe set shares the position row's transaction
@@ -142,10 +143,41 @@ except KeyError:
     raise InvalidStateTransition(order.state, event.type)   # NOT `return`, NOT `pass`
 ```
 
+The in-process spelling of the same guard, `if last_seen[client_id] >= event.update_time: return`, is
+acceptable only as a fast path in front of the guarded write and never instead of it: the dictionary is lost
+on restart and shared by nothing, so it protects one process for as long as that process lives.
 `if seen_version(cid) >= v: return` followed by a separate write is a TOCTOU that two concurrent redeliveries
 both pass. `>=` is correct only where the version is a total order. Where the venue publishes no version,
 derive one from its own sequence; where the only clock is coarse, the watermark is `(ts, applied_event_ids)`.
 Give **balance events the same guard**, not only orders.
+
+## The committed intent row, and the transaction that must not enclose the send
+
+Before the socket write there is a row, and it is **committed**, not flushed. `flush()` inside an open
+transaction is not persistence: a `rollback()` on the exact timeout the row exists for erases the identity and
+the next attempt mints a fresh one, which buys twice. Mint the identity from the **intent instance**, from a
+value that survives `ROLLBACK`, never from a bar timestamp, a `strategy+symbol+side` tuple or a wall-clock
+second, each of which repeats on its own.
+
+Seven fields belong on that row:
+
+| Field | Why |
+|---|---|
+| client order ID | the correlation key you will query by |
+| full economic intent: instrument, side, qty, price, TIF, reduce-only, `positionSide` | so the recovery path can prove the order it found is the order you meant |
+| venue, account and API-key identity | uniqueness is per-account, so the identity is only meaningful with them |
+| the venue's own sequence or nonce where one exists: OUCH `UserRefNum`, Hyperliquid nonce, FIX `MsgSeqNum` | the venue's replay guard, which is often stronger than the client ID |
+| the exact signed payload bytes, on signature-authenticated venues | a replay with a different body is not a retry |
+| `sent_at`, with a `not_before` / `not_after` bracket | every history endpoint is time-windowed, and the bracket is what makes the scan bounded |
+| `state`, `INTENT_RECORDED` flipped to `SENT_UNCONFIRMED` after the write | the in-flight categories below read it |
+
+**No transaction block may lexically enclose the send.** Grep for `session.begin()`, `engine.begin()` and
+`@transaction.atomic` around the call site: if the external call sits inside one, the row it depends on can be
+rolled back by the same failure the row exists to survive.
+
+Query-first is the default, and the per-venue table is the exception list: the retention bounds that decide
+how far back a query can reach live in the venue files. The malign outcome when this is skipped is a strategy
+that hedges and exits one lot while carrying a naked residual it cannot see.
 
 ## In-flight categories
 
@@ -212,7 +244,8 @@ redelivery and voids, while a fold over a *sequence* is not. Ship
 
 Fills and statuses are different report types with different reconciliation rules: a status report may carry a
 *cumulative* filled quantity (`z`, `Z`, `cumExecQty`) while a fill report is a *single* trade (`l`, `L`, `t`).
-Assign from the cumulative field; never `+= l`. A fill report that arrives before any order state exists must
+Assign from the cumulative field, which the venue also spells `executedQty` (Binance) and `cumQty` (FIX);
+never `+= l`. A fill report that arrives before any order state exists must
 be **deferred**, not dropped.
 
 ## Overfills

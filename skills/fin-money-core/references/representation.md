@@ -1,6 +1,6 @@
 # Representation
 
-The mechanism behind MC1 and MC2: which concrete type holds an obligation in each language, which column
+The mechanism behind *exact representation*: which concrete type holds an obligation in each language, which column
 type holds it in each database, where the scale comes from, and the six boundaries at which a correct
 in-memory value is silently degraded on its way to storage or to a counterparty. Everything here assumes the
 obligation/estimate split is already the question: a value a counterparty can demand is an obligation and

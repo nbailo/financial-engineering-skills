@@ -337,6 +337,26 @@ expensed monthly, not carried forever and not escalated into an outage. Route an
 owner and never auto-adjust it: an automatic correcting posting for an unexplained difference converts a
 detectable break into an undetectable one.
 
+**A break is a reason to keep operating carefully, not a reason to halt.** SEC Rule 17a-11(c) is the shipped
+precedent for the tempo: a broker-dealer whose books are not current gives **same-day** notice and files the
+corrected computation within **48 hours**, and nowhere in the rule is it told to cease operating. Copy that
+shape. The break row carries `detected_at`, `source_a`, `source_b`, `amount`, `currency`, `status`, an owner
+and an age; the escalation threshold is on the *age and size* of an open break, not on its existence; and the
+sweep runs on a fixed schedule so an unresolved difference is expensed rather than carried indefinitely. A
+reconciliation that halts the system on the first difference is switched off within a quarter, which is the
+same outcome as never having written it.
+
+**Reconcile on three axes, not one.** A balance comparison alone misses the two failures that matter most:
+
+| axis | the question | the detector |
+|---|---|---|
+| completeness | are all the records that should exist present on both sides? | a count and a set difference on the join key, not a sum: two missing records with offsetting amounts pass a sum |
+| clearing | did every clearing and in-transit account return to zero? | a non-zero balance past the account's settlement window, which needs no external counterparty at all |
+| balance | do the two sides agree on the amount for each joined record? | the per-record difference, posted to suspense and aged |
+
+The alert destination for all three is a configuration key with no default, so an unset destination fails at
+startup rather than discarding the alert at the moment it fires.
+
 ## "Recompute from the whole ledger" is idempotent only if the recomputation is total
 
 This design note is a common one:

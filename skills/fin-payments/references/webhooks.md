@@ -19,6 +19,7 @@ the delivery-killing traps that live in framework and CDN configuration rather t
 - Never fulfil from a client redirect: 3DS `return_url`, checkout success pages
 - The sweeper: listing processor objects changed since a cursor so a dropped event self-heals
 - Retry horizons and what expires: Stripe 3 days, Adyen queued-and-failing behaviour
+- Reading the object from its authority: which call, where on the path, and why not the payload
 
 ---
 
@@ -387,3 +388,33 @@ Event payloads are frozen at the account's API version *at event time* and are n
 with a 3-day retry horizon and a 30-day manual resend, and the payload you process can be arbitrarily stale
 and rendered against an API version you have since migrated off. This is the whole argument for §7's rule that
 `raw_body` is evidence, not input.
+
+## 12. Reading the object from its authority
+
+The re-read is not a style preference, it is the whole handler. Between the signature check and the first
+write, the processor of the stored row calls the authority and uses **that** response for every value-moving
+decision. The check on a diff is simply that such a read occurs on that path, whatever the call is spelled:
+
+| processor | the authority read |
+|---|---|
+| Stripe | `stripe.Refund.retrieve(id)`, `stripe.PaymentIntent.retrieve(id)`, `stripe.Charge.retrieve(id)` |
+| Adyen | the payment-details endpoint for the `pspReference` |
+| any | the same read behind an internal port that wraps one of the above |
+
+Make every ledger move, every fulfilment and every order attribution from that response, never from
+`event.data.object`.
+
+**Why the payload cannot stand in for it.** Stripe Event objects are **immutable** and rendered at the account's
+API version *at event time*; they are never updated. With a 3-day retry horizon and a 15-to-30-day manual
+resend, the payload you are holding can be arbitrarily stale and rendered against an API version you have since
+migrated off. The payload is a snapshot taken when the event was queued, and the queue can be days deep.
+
+**Attribution is the sharpest case.** `metadata` read off the payload attributes money to whatever the object
+looked like when the event was queued: the order id, the connected account, the customer. If any of those were
+corrected on the object afterwards, the payload pays the wrong party and every double-entry check still passes.
+Read attribution from the re-read object, in the same unit of work as the effect.
+
+Two events for the same object can be in flight at once, so the payload is not even a consistent view of one
+instant. Adyen states the same about its synchronous response: *"The status of a payment can sometimes change
+after you get the result code, so we recommend that you do not use the result code to update your order
+management system."*

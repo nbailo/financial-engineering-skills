@@ -59,6 +59,10 @@ transaction must equal zero"; Square: "all transactions must balance to 0."
 group finds it after the money moved. The entrypoint takes a *set* of legs and returns
 `UnbalancedGroup { currency, delta }` in the same transaction as the write; no code path then produces an
 unbalanced state, so nothing is left for a runtime "do the books balance" check to catch.
+TigerBeetle documents the same discipline on its own rejections: `exceeds_credits` means "The transfer was
+not created.", so the rejection leaves nothing behind, not a partial group. And halting is the wrong response
+even when such a checker does fire, because a discrepancy against an *external* record is a reconciliation
+break, which takes a suspense posting rather than an outage (§5).
 
 **The three shapes an unbalanced journal takes.** Ledger code that names itself double-entry and enforces the
 balance condition nowhere fails in three recognisable ways:
@@ -71,6 +75,10 @@ balance condition nowhere fails in three recognisable ways:
 
 The third is the diagnostic one: `-2 × amount` is not a rounding artefact, it is arithmetically only reachable
 by writing two legs with the same sign, which is what a single signed `amount` column invites.
+
+*Measured: three of three reps wrote a journal and three of three journals failed to balance: a single leg, a
+missing hot-wallet counterparty, and one settlement group summing to `-2 × amount` in a table its own comment
+called "append-only double-entry". That comment is what let it survive review.*
 
 **The assert that ships.** A copyable `assert sum(l.amount for l in legs) == 0` passes on `+100 JPY, −100 USD`;
 the currency clause goes *inside*:
@@ -240,7 +248,8 @@ codes rather than one opaque conflict (`src/tigerbeetle.zig:236-247`):
 | `exists_with_different_pending_id` | 40 | `exists_with_different_code` | 45 |
 | `exists_with_different_ledger` | 67 | `exists` | 46 |
 
-Comparison order is documented in source (`src/state_machine.zig:3990-4045`): flags are compared **first**,
+TigerBeetle states the reason for comparing at all in as many words: it is done "to prevent silent data
+inconsistencies". Comparison order is documented in source (`src/state_machine.zig:3990-4045`): flags are compared **first**,
 because "the flags change the behavior of the remaining comparisons". Two refinements you will not derive:
 
 - **`id_already_failed = 68`** (`src/tigerbeetle.zig:252`, returned at `src/state_machine.zig:3736` on a
@@ -257,6 +266,12 @@ because "the flags change the behavior of the remaining comparisons". Two refine
 The homegrown anti-pattern is `INSERT INTO entries(idempotency_key, …) ON CONFLICT DO NOTHING` then "if not
 inserted, return the cached success": it silently accepts a *different* request under a used key (a different
 amount, a different destination) and reports success for a posting that never happened.
+
+The signature carries the same weight as the storage. Write `idempotency_key: str`, positional and required,
+never `idempotency_key: Optional[str] = None` with enforcement deferred to prose about the API layer: an
+optional identity is no identity, because the caller that omits it is the retry. *Measured: both partial reps
+built `idempotency_key text UNIQUE`, made it optional, and compared nothing; the unvalidated replay let
+`reverse_transfer` mark a transfer reversed **while writing zero compensating entries**.*
 
 ## 10 · Two-phase transfers release the reservation in full
 

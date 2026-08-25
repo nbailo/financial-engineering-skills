@@ -1,7 +1,7 @@
 # Concurrency and failure boundaries
 
-The mechanism behind two SKILL.md rules: *the lock, the key, the subject, the duration* and *every external
-money call is three phases and the first one COMMITs*. Everything here concerns the two windows in which
+The mechanism behind two invariants: *concurrency on authoritative state* and the durability half of
+*operation identity*, where an external money call is three phases and the first one commits. Everything here concerns the two windows in which
 correct-looking code produces an economically wrong outcome: between reading a balance and writing it, and
 between an external effect and the local record of it. Engine semantics are stated per `(engine, level)`,
 because the label is not the guarantee.
@@ -19,7 +19,7 @@ because the label is not the guarantee.
 - [Persist intent → external effect → persist outcome](#persist-intent--external-effect--persist-outcome)
 - [The dual-write problem and the transactional outbox](#the-dual-write-problem-and-the-transactional-outbox)
 - [Compensation is not rollback](#compensation-is-not-rollback)
-- [Step 9 / Step 10 artefact templates](#step-9--step-10-artefact-templates)
+- [Artefact templates: read-then-write, and crash points](#artefact-templates-read-then-write-and-crash-points)
 
 ---
 
@@ -309,7 +309,7 @@ Two Generals: there is exactly one sound shape, and it is not a bigger transacti
 - **No `with session.begin()` / `engine.begin()` / `@transaction.atomic` may lexically enclose step 2.** Such
   a block rolls back on exception with no `rollback` token anywhere in the diff, so the defect is invisible to
   a grep and invisible to review. This is why step 6 of the boundary check is a separate check.
-- **Crash points, and the recovery action for each** (this is the Step 10 artefact):
+- **Crash points, and the recovery action for each** (this is the crash-point artefact):
 
 | Crash between | State on disk | Recovery action |
 |---|---|---|
@@ -367,8 +367,9 @@ COMMIT;
 them published, and can crash between the two, so delivery is at-least-once forever. Consumers must dedupe on
 the **business identity of the effect**, not the transport's message id: Stripe states that two separate
 `Event` objects can describe the same underlying fact, so dedupe on `data.object.id` + `event.type`. That
-dedupe row commits in the same transaction as the balance mutation it protects; an in-memory `_seen_ids` set
-evaporates on restart, which is exactly when the redelivery arrives.
+dedupe row commits in the same transaction as the balance mutation it protects; an in-memory `_seen_ids` set,
+an `@lru_cache`, a module-level `set()` or any process-local dict evaporates on restart, which is exactly
+when the redelivery arrives.
 
 Do not reach for XA/2PC instead without an operator-owned transaction manager: PostgreSQL states
 `PREPARE TRANSACTION` "is not intended for use in applications or interactive sessions", that a lingering
@@ -405,9 +406,9 @@ by timeout and happens **exactly once** (`pending_transfer_already_posted` / `pe
 back-reference. And "compensation failed" is a reachable state needing a terminal transition and a human
 escalation path, not a retry loop.
 
-## Step 9 / Step 10 artefact templates
+## Artefact templates: read-then-write, and crash points
 
-Step 9: one row per read-then-write on an authoritative quantity. The last column is what makes the row
+One row per read-then-write on an authoritative quantity. The last column is what makes the row
 falsifiable: if you cannot write the interleaving, you have not found the fix.
 
 | site (`file:line`) | isolation | lock (key · subject · released where) | retry semantics | the breaking interleaving |
@@ -416,5 +417,5 @@ falsifiable: if you cannot write the interleaving, you have not found the fix.
 | `withdraw.py:88` | PG RC | `FOR UPDATE` on `withdrawals.id`; **released at the `engine.begin()` dedent, line 94**; act at line 103 | none | admin `reject()` runs between 94 and 103; broadcast lands; balance reversed too |
 | `limits.py:41` | PG RR | none | none | two `INSERT`s of different positions each pass `SUM(notional) <= limit` |
 
-Step 10 uses the crash-point table above as its four canonical rows. A row with no recovery action says the
+The recovery artefact uses the crash-point table above as its four canonical rows. A row with no recovery action says the
 money is unrecoverable.

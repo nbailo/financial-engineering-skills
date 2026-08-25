@@ -24,6 +24,7 @@ constraints that block the fraud response they were written to protect.
 13. **Overdraft modelled explicitly**: a floor column, not a flag; the FTX `borrow` counter-example.
 14. **The control that defeats the safety operation**: the floor versus clawback, `AccountNotActive` versus freeze.
 15. **Account closure**: sweep, close, and the holds that outlive the closure.
+16. **The solvency chokepoint**: the per-asset invariant, the single writer, and Euler's `donateToReserves`.
 
 ## 1 · Four states, four names
 
@@ -309,6 +310,10 @@ reconciliation in CI against a **freshly-migrated** database seeded with one kno
 produces exactly one `break` row and one alert, so an un-backfilled opening fails the test rather than muting
 production.
 
+*Measured: the near-miss wrote flawless reconciliation SQL, ran it nowhere, and its per-account comparison
+was broken on day one by un-backfilled openings. Transfer and reversal arithmetic is written correctly
+unaided; journals that do not balance and reconciliations that never run ship at close to 100%.*
+
 ## 11 · Hot-account contention
 
 Fee, tax, FX-liquidity and clearing accounts appear in a large fraction of transactions, so contention is
@@ -362,6 +367,7 @@ logging of every change.
 Two constraints that look obviously correct block the fraud response they exist to enable. A blanket
 `CHECK (balance_cents >= 0)` silently makes `allow_overdraft=True` **dead code** in a reversal path: the
 constraint is easy to add, and its interaction with clawback is easy to miss.
+*Measured: `CHECK (balance_cents >= 0)` made `allow_overdraft=True` dead code in a shipped reversal path.*
 
 **The floor versus the clawback.** The fraud you are responding to is money already spent, so a clawback must
 drive the balance below the floor; that is what "claw back already-spent funds" means. A blanket
@@ -415,3 +421,40 @@ which is why the matrix above can say "reopen, then post" as a mechanism rather 
 correct, because a hold mirrors an upstream authorization whose window you do not control (§8). So a closed
 account can still see a reservation released after closure: the closure path must be idempotent against a later
 expiry event, and the solvency assertion must keep counting that account's outstanding holds until terminal.
+
+## 16 · The solvency chokepoint
+
+The system-level invariant is not "balances are non-negative". It is `Σ customer balances <= custodied assets`,
+**per asset**, asserted continuously against the custodian's own figure rather than against your own record of
+what you believe you hold. Write it down as an expression the code evaluates, name the account set on each
+side, and state the window in which the two sides may legitimately differ (in-flight settlement, an unconfirmed
+deposit, a pending withdrawal already debited internally). An invariant with no stated disagreement window
+either alerts constantly or is written loose enough to never alert.
+
+**Enumerate every function that can change a balance and show that each one terminates in the single chokepoint
+that evaluates the invariant before the write.** That enumeration is worth doing once, and it is worth not
+relying on afterwards, because the next contributor adds the path that skips it.
+
+**Make the bypass unrepresentable rather than provable.** The application role loses the ability to write a
+balance at all, so the only writer is the chokepoint's own role or a `SECURITY DEFINER` function, and a test
+asserts the grant is absent:
+
+```sql
+REVOKE UPDATE, DELETE ON balances FROM app_role;
+GRANT EXECUTE ON FUNCTION post_group(jsonb) TO app_role;   -- SECURITY DEFINER, evaluates solvency
+```
+
+"Prove that each path terminates in the chokepoint" is an architecture-review question answered with a
+paragraph, and the paragraph ages badly. A revoked grant is a fact a test can read on every run.
+
+**The precedent.** Euler's `donateToReserves` was the single value-moving path that did not run the health
+check. Every other entrypoint did. The result was roughly **$197M**, and the shape of the bug is worth stating
+plainly: the missing control was not missing from the design, it was missing from *one function*, and no
+document listing the controls would have caught it. Only an enumeration of writers, or an inability to write
+without passing through the chokepoint, would have.
+
+**Per-account overrides.** A per-account override on a solvency, credit-limit or liquidation check is an
+unbounded liability generator: it converts a system-wide invariant into a per-row opinion, and the row is
+usually edited during an incident by someone under time pressure. Where one exists, it raises the evidence bar
+for the whole path: field-level audit logging of every change to the override, an approver distinct from the
+requester, and an expiry on the override itself so the exception does not outlive the incident.

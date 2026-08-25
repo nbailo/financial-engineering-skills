@@ -2,7 +2,7 @@
 
 You arrived here because the diff contains `round(`, `floor`, `ceil`, `trunc`, `int(`, `quantize(`, `//`,
 `* rate`, `/ total`, `split`, `allocate`, `pro_rata`, `convert`, or `%` on a money value. This file supplies
-the mechanism behind MC3: the per-operation direction table for an exchange, the largest-remainder algorithm
+the mechanism behind *rounding and conservation*: the per-operation direction table for an exchange, the largest-remainder algorithm
 with its arithmetic written out, the regimes where mode and *level* are prescribed by law, and the
 boundary-test triple that finds the bug class invisible at every input except one. Everything here assumes
 integer minor units or an exact decimal; a rounding argument over a `float` is about the wrong number.

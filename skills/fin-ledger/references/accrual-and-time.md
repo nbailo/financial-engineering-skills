@@ -184,6 +184,11 @@ server clock is not.
 An accrual is a balanced posting, not a mutation. The run's shipped invariant is `Σ credited to customer accounts == Σ
 debited to interest expense`, exact to the minor unit, per currency.
 
+Recognition is an event, which is why it posts. IFRS 9 defines the effective interest method as the method
+used in the *"allocation and recognition of the interest revenue or interest expense in profit or loss"*:
+allocation across periods and recognition within one, both of them things a journal records and a mutated
+balance field cannot.
+
 **Key the accrual on `(account, period)` and let the database refuse the second write.** The double-accrual bug is a
 job with at-least-once delivery doing `balance += balance * rate * dt` with no period marker.
 
