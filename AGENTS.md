@@ -18,5 +18,13 @@ unsafe path unreachable, or state explicitly that the risk remains unresolved.
 | none of the above, or amount arithmetic, retry logic, or rollout of a money path | `fin-money-core` |
 | is about to ship, or needs tests, reconciliation, or proof it is correct | `fin-verification` |
 
-Load every row that matches. A crypto exchange backend that credits deposits is `fin-onchain` **and**
-`fin-ledger`.
+## How many
+
+A domain skill normally wins alone. `fin-money-core` loads alongside it only for a cross-domain mechanism
+that skill does not cover, never merely because a domain-specific retry appears. `fin-verification` loads
+for tests, proof, reconciliation, review or readiness, or where a domain skill demands stronger proof;
+customer money alone is not a trigger. Otherwise load every row that matches: a backend crediting deposits
+is `fin-onchain` **and** `fin-ledger`.
+
+Matching, allocation and market-data publication are venue-side and opt-in, outside the installed set.
+Clearing, liquidation waterfalls and venue-operated resolution have no skill here; say so.

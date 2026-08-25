@@ -96,8 +96,8 @@ CI runs the same script, plus an idempotence and uninstall test for `scripts/ins
 
 ## Examples
 
-`examples/` holds four before/after reviews: a trading bot, a payment flow, a ledger, and an on-chain
-indexer. Each cites the rules it catches by the name the owning skill gives them. If a rule change alters
+`examples/` holds five before/after reviews: a trading bot, a payment flow, a ledger, an on-chain
+indexer, and a prediction-market bot. Each cites the rules it catches by the name the owning skill gives them. If a rule change alters
 what the agent should produce on one of those paths, update the example in the same PR. An example that
 disagrees with the skills is a defect in the example.
 
