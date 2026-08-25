@@ -341,7 +341,7 @@ system.**"
 3. **Back-dating fails the principle explicitly.** PFMI §3.8.5: a system not designed to settle on the value date "would not satisfy this
    principle, **even if the transaction's settlement date is adjusted back to the value date after settlement**".
 
-Concrete instances: T2 settles payment orders "one by one on a continuous basis in central bank money, with **immediate finality**"; FedNow
+Concrete instances: TARGET2 (T2) settles payment orders "one by one on a continuous basis in central bank money, with **immediate finality**"; FedNow
 "settles with finality when the FedNow Service records the debit and credit", and has **no reversal primitive**; a return is a new payment.
 
 ## 14. Liquidation, marks and the waterfall

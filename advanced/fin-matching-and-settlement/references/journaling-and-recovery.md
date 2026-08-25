@@ -18,7 +18,7 @@ restart invents a second history.
 7. **Snapshots and truncation**: snapshot content, its journal position, verify-by-replay, and what may be deleted.
 8. **Crash points**: the enumerated kill boundaries and the expected post-recovery state at each.
 9. **Failover and single-writer authority**: epochs, fencing at the storage layer, and the two-writers-briefly history fork.
-10. **Deterministic simulation testing**: what it costs, what it buys at T3, and what it still misses.
+10. **Deterministic simulation testing**: what it costs, what it buys when authority is SELF, and what it still misses.
 11. **Assertion policy**: live-in-release versus saturate-and-emit versus compiled-out, decided per path.
 12. **Recovery runbook artefacts**: what an operator needs to reproduce a production incident from the journal alone.
 
@@ -50,7 +50,8 @@ would this order have done", and has permanently frozen a matching bug into the 
 
 ## 2. Ordering and flush
 
-The write path is these four steps in this order. `docs/rules.md` MS1 states the rule; this is the mechanism.
+The write path is these four steps in this order. SKILL.md's *authoritative state is reproducible from durable,
+ordered inputs* states the rule; this is the mechanism.
 
 ```
 1  seq = sequencer.next()                      // inside the deterministic core, see §5
@@ -303,8 +304,8 @@ you are the oracle, so there is no reconciliation that resolves the fork.
 
 ## 10. Deterministic simulation testing
 
-At T3 no external oracle exists, so the proof burden moves before deployment. DST is the strongest available
-instrument and it is not free.
+When authority is SELF no external oracle exists, so the proof burden moves before deployment. DST is the
+strongest available instrument and it is not free.
 
 **What it costs.** FoundationDB runs *"a deterministic simulation of an entire FoundationDB cluster within a
 single-threaded process"* (all code deterministic, multithreading avoided, one node per core) and states the
@@ -387,7 +388,8 @@ here turns a deterministic engine into an undebuggable one at the worst possible
 | Emitted event capture | The wire bytes the engine actually sent, with their sequence numbers | The right-hand side of the byte-comparison. Capturing decoded events instead makes divergences invisible |
 | The replay tool itself | Shipped with the engine, same version, runs offline, prints a first-divergence diff | LMAX's stated debugging procedure is exactly this: copy the event sequence to a dev machine and replay it |
 
-The completeness test for this list is one sentence and it is the same question the ENGINE CONTRACT block asks:
+The completeness test for this list is one sentence and it is the same question the ENGINE CONTRACT block in
+SKILL.md asks:
 **hand an engineer these files and nothing else, and they reproduce the emitted event sequence byte for byte.**
 If they need a database dump, a log grep or a config file from a host, the journal is not the authority; it is
 a supplementary log, and the engine is not replayable regardless of what the design note says.

@@ -12,31 +12,19 @@ license: MIT
 # You are the venue
 
 This code **is** the record: it assigns the trade, the book, the sequence, the net or the payout that
-everyone else treats as fact. No outside party can confirm your state, so reconciliation against an external
-authority is structurally unavailable and the proof burden moves before deployment, into replay and
-simulation. When the change instead calls a venue you do not operate, that half is
-`fin-exchange-integration`. One question governs every change here: if this process dies now, does replaying
-the persisted inputs reproduce the identical emitted event sequence, byte for byte?
+everyone else treats as fact. Nothing outside can tell you that you are wrong, so reconciliation against an
+external authority is structurally unavailable and the proof burden moves before deployment, into replay,
+determinism and conservation. Its usual pair is `authority: SELF · exposure: record`. One question governs
+every change here: if this process dies now, does replaying the persisted inputs reproduce the identical
+emitted event sequence, byte for byte?
 
-## Workflow
+This skill is not installed with the six. It is maintained beside them and does not contradict them: where it
+names an invariant in italics, that invariant is stated in full in `fin-money-core`, and this file adds only
+what is different when you are the authority.
 
-1. Split the change: which half makes you the record, and which half makes you a client of someone else. Tier
-   and review the halves separately.
-2. Name the authoritative state you assign (execution, book, sequence, net, mark, payout) and the durable
-   inputs it must be reproducible from.
-3. Make the input durable and ordered before any authoritative state changes.
-4. Establish determinism: the same inputs produce the same outputs and the same published sequence, with
-   identity and sequence assignment inside the deterministic core.
-5. Enumerate the legal state transitions and reject everything else with an explicit, typed refusal.
-6. Bound every transformation and every emission with a counter keyed to the inbound unit and a hard limit
-   checked on the emit path, before the send.
-7. Decide halt scope, allocation residue, and what the published feed is allowed to say.
-8. Prove replay reconstructs the state, load only the references this change needs, and implement the
-   controls and their tests before declaring the path complete.
+## When to use
 
-## When this applies
-
-Your process assigns state that no counterparty can independently verify: it crosses resting orders and mints
+Your process assigns state that no counterparty can independently verify. It crosses resting orders and mints
 the execution, computes an auction or cross price, publishes the feed that is the market's view of the book,
 decides a mark, a net, a liquidation or a payout, or issues an identifier other systems consume because you
 issued it. The structural test: if you are wrong, no external statement exists that would show it. That is why
@@ -49,37 +37,70 @@ resting quantity; `order_book`, `OrderBook`, `price_level`, `PriceLevel`, `book.
 `MDIncrementalRefresh`, MoldUDP64, ITCH, OUCH, SBE, gap-fill, A/B feeds); `halt`, `resume`, `LULD`,
 `price_band`, `kill_switch`, `circuit_breaker`, a gate that **rejects** others' orders; `netting`,
 `net_position`, `DVP`, `settlement_batch`, `finality`, a `mark_price` **you compute**, `liquidate`,
-`insurance_fund`, `ADL`, and `reportPayouts`, `payoutNumerators` or complete sets for a resolution **you assign**;
-`ExecID`, match number, trade id, sequence number. Rename all of them and every rule below still fires.
+`insurance_fund`, `ADL`, and `reportPayouts`, `payoutNumerators` or complete sets for a resolution **you
+assign**; `ExecID`, match number, trade id, sequence number. Rename all of them and every rule below still
+fires.
 
-**Not this skill** when the code calls `create_order`, `ccxt`, a venue SDK or a FIX client session, or reconciles
-against somebody else's fills: that is `fin-exchange-integration`, and so is trading a prediction market somebody
-else resolves. If the same change also writes authoritative balances or postings, load `fin-ledger` alongside this
-file. If it is both venue and client, split it.
+## When not to
 
-## Seam S4: venue and client, split the change before you tier it
+- The code calls `create_order`, `ccxt`, a venue SDK or a FIX client session, or reconciles against somebody
+  else's fills. That is the client side, and `fin-exchange-integration` owns it. So does trading a prediction
+  market somebody else resolves.
+- The same change also writes authoritative balances or postings. `fin-ledger` owns that half; load it
+  alongside this file rather than deriving posting rules here.
+- The change is only amount arithmetic, rounding direction, operation identity or the retry classification of
+  an outbound call. `fin-money-core` states those in full.
+- The code reads recorded payloads and never assigns anything: a backtest over the command stream, a research
+  notebook, a volume query that republishes nothing.
 
-*The reciprocal of this rule lives in `fin-exchange-integration`, stated from the venue-client side.*
+If the change is both venue and client, split it. The next section says how.
 
-A client reconciles against the venue; a venue has nothing to reconcile against. Where one process is both (a
-broker OMS that is the system of record for its clients' orders and simultaneously a client of the exchange),
-split the change: the client half is T2 and requires reconciliation by client order identity; the venue half
-is T3 and requires order-by-order rejection on the last hop, a deterministic core, and deterministic
-simulation. Do not let one tier declaration cover both halves. Knight Capital sat exactly on this boundary.
+## Workflow
 
-## Core rules
+1. Split the change: which half makes you the record, and which half makes you a client of someone else.
+   Report `authority` and `exposure` per half, never one line covering both.
+2. Name the authoritative state you assign (execution, book, sequence, net, mark, payout) and the durable
+   inputs it must be reproducible from.
+3. Make the input durable and ordered before any authoritative state changes.
+4. Establish determinism: the same inputs produce the same outputs and the same published sequence, with
+   identity and sequence assignment inside the deterministic core.
+5. Enumerate the legal state transitions and reject everything else with an explicit, typed refusal.
+6. Bound every transformation and every emission with a counter keyed to the inbound unit and a hard limit
+   checked on the emit path, before the send.
+7. Decide halt scope, allocation residue, and what the published feed is allowed to say.
+8. Prove replay reconstructs the state, load only the references this change needs, and implement the
+   controls and their tests before declaring the path complete.
+
+## Invariants
 
 Cancel/fill races, cancel-remaining-quantity, idempotent cancel, rejecting a cancel on a terminal order,
 ownership checks and time priority are **absent from this file on purpose**. They are the well-known part of
 the problem and they get built correctly without a rule telling you to. What follows is the part that does not.
 
+### The venue half and the client half are assessed separately
+
+A client reconciles against the venue. A venue has nothing to reconcile against. Where one process is both,
+the classic shape being a broker OMS that is the system of record for its clients' orders while simultaneously
+trading as a client of an exchange, split the change and assess the halves separately. The client half is
+`authority: EXTERNAL (<venue>) · exposure: own | customer`, and its proof is reconciliation by client order
+identity. The venue half is `authority: SELF · exposure: record`, and its proof is order-by-order rejection on
+the last hop, a deterministic core, and deterministic simulation of that core. One declaration cannot cover
+both, because a merged declaration inherits the weaker obligation: the client half has a reconciliation
+available, and that availability reads as proof for the whole system.
+
+The tell that a codebase sits here: an order object that is sometimes an instruction you sent and sometimes an
+instruction somebody sent you, distinguished by a nullable field. A second tell is one reconciliation job that
+reads an exchange endpoint and an internal table and calls the result agreement, when it has in fact compared
+the client half against its authority and the record half against nothing. Knight Capital sat exactly on this
+boundary. `fin-exchange-integration` states the same seam from the client side.
+
 ### Authoritative state is reproducible from durable, ordered inputs
 
-The state you assign is only as recoverable as the inputs that produced it. Record the inbound command
-durably and in order before the state it changes is touched, commit the state change and the obligations it
-creates in one atomic step, and publish from the committed record rather than from memory. This specialises
-*durable intent before the external effect*: at a venue the intent is the inbound command, and the external
-effect is the execution everyone else books.
+The state you assign is only as recoverable as the inputs that produced it. This specialises *operation
+identity*: at a venue the intent is the inbound command, and the first externally visible effect is the
+execution everyone else books. Record the inbound command durably and in order before
+the state it changes is touched, commit the state change and the obligations it creates in one atomic step,
+and publish from the committed record rather than from memory.
 
 **Shape**
 
@@ -109,7 +130,7 @@ Same inputs, same outputs, same published sequence, including the identities you
 carries a gap-free sequence number, consumed on rejects as well as accepts, and the sequence generator lives
 **inside** the deterministic core alongside identity assignment, so replay reproduces both. Keep the core free
 of wall-clock reads, randomness, I/O and map-iteration-order dependence; inject time and randomness as
-explicit parameters. A design note claiming replayability with no test behind it is *a comment is a claim*:
+explicit parameters. A design note claiming replayability with no test behind it is a claim, not evidence:
 name the test and its seed, or delete the sentence.
 
 **Shape**
@@ -132,11 +153,12 @@ one. Either a replay test exists that names its seed and byte-compares the emitt
 
 ### Only enumerated transitions are legal, and every refusal is explicit
 
-Enumerate the legal `(state, event)` pairs and reject everything else with a typed error; never silently
-ignore. You are the authority, so never take an inbound message's assertion about state as the state:
-re-read the entity from the committed store inside the transaction that acts on it. This is *arrival order is
-not occurrence order* seen from the authority's side. You control the order, which is exactly why the order
-you assign is the one you have to enforce.
+Specialises *authority*, seen from the authority's side, and *concurrency on authoritative state*, because
+the re-read and the act have to sit in one transaction. Enumerate the legal `(state, event)` pairs and reject
+everything else with a typed error; never silently ignore. You are the authority, so never take an inbound
+message's assertion about state as the state: re-read the entity from the committed store inside the
+transaction that acts on it. You control the order, which is exactly why the order you assign is the one you
+have to enforce.
 
 **Shape**
 
@@ -157,11 +179,11 @@ resolution finality, below.
 
 ### An aggregate you publish is checked in the build you ship
 
-Any quantity that leaves the process as depth, volume, a net or a mark is checked where it is computed, in the
-binary you deploy, not by an assertion the release build strips. Treat an underflow or overflow as a
-conservation breach: halt that transformation at the smallest scope, do not publish, and do not clamp
-silently. If you saturate rather than check, **emit the saturation**. A saturated aggregate with no exception
-attached is a lie.
+Specialises *rounding and conservation*. Any quantity that leaves the process as depth, volume, a net or a
+mark is checked where it is computed, in the binary you deploy, not by an assertion the release build strips.
+Treat an underflow or overflow as a conservation breach: halt that transformation at the smallest scope, do
+not publish, and do not clamp silently. If you saturate rather than check, **emit the saturation**. A
+saturated aggregate with no exception attached is a lie.
 
 **Shape**
 
@@ -194,11 +216,12 @@ is neither of the two.
 
 ### A fan-out bound lives on the emit path, keyed to the inbound unit
 
-Every transformation that turns one input into many outputs carries a counter keyed to that inbound unit and a
-hard bound checked **before the send**, not by a monitor reading a metric afterwards. On breach: set a flag
-the emit path reads before every subsequent send, cancel resting orders, and disconnect the order-entry
-session, while risk, position and drop-copy stay alive. The flag must not be resettable by the component that
-tripped it, and disabling the failing check is never the mitigation.
+Specialises *hard limits*, with the aggregate keyed to the inbound unit rather than to a batch. Every
+transformation that turns one input into many outputs carries a counter keyed to that inbound unit and a hard
+bound checked **before the send**, not by a monitor reading a metric afterwards. On breach: set a flag the
+emit path reads before every subsequent send, cancel resting orders, and disconnect the order-entry session,
+while risk, position and drop-copy stay alive. The flag must not be resettable by the component that tripped
+it, and disabling the failing check is never the mitigation.
 
 **Shape**
 
@@ -223,12 +246,12 @@ their own policy's authorisation, still investigating.
 
 ### An inbound order is validated against its own instrument's economics
 
-Reject any order priced more than a configured band away from **that instrument's own** reference price, and
-reject or cancel-newest when both sides are the same economic party. The band derives per instrument from that
-instrument's own reference price, never from a cross-universe aggregate, and the same derivation applies on
-every session-state code path. A prevented match is not a trade: record it as a counterfactual, never as a
-fill to either side and never as volume. A book without both prints the fat-finger trade and then owes
-everyone a bust process.
+Specialises *hard limits* on the last hop before the book. Reject any order priced more than a configured band
+away from **that instrument's own** reference price, and reject or cancel-newest when both sides are the same
+economic party. The band derives per instrument from that instrument's own reference price, never from a
+cross-universe aggregate, and the same derivation applies on every session-state code path. A prevented match
+is not a trade: record it as a counterfactual, never as a fill to either side and never as volume. A book
+without both prints the fat-finger trade and then owes everyone a bust process.
 
 **Shape**
 
@@ -315,21 +338,21 @@ closing transaction, and LULD state is derived, not delivered: Limit State is th
 crossing* the band, so equals versus crosses, and wall-clock versus market-data seconds, are where the
 off-by-ones live.
 
-## Allocation, and the residue
+### Allocation is not finished until the residue has an owner
 
-**Rounding down cannot distribute everything, so the residue pass is part of the algorithm, not a follow-up.**
-Pro-rata allocation must never be the last step: define the leftover pass (FIFO by time priority, or the
-venue's documented rule) and assert `Σ allocations == aggressing quantity` before any execution is emitted.
-**Execution prints at the RESTING order's price, not the aggressor's.** Where aggressing quantity exceeds
-total resting quantity, the FIFO exception applies.
+Specialises *rounding and conservation*: rounding down cannot distribute everything, so the residue pass is
+part of the algorithm, not a follow-up. Pro-rata allocation must never be the last step: define the leftover
+pass (FIFO by time priority, or the venue's documented rule) and assert `Σ allocations == aggressing quantity`
+before any execution is emitted. **Execution prints at the RESTING order's price, not the aggressor's.** Where
+aggressing quantity exceeds total resting quantity, the FIFO exception applies.
 
 **How it appears:** three quantity conventions share one word (OUCH Cancel's intended total, OUCH Replace's
 chain-cumulative total, ITCH Modify's decrement), and the conversion table is in the allocation reference.
 
-## Publishing market data
+### A feed is a contract about identity, order and completeness
 
-**A feed is a contract about identity, order and completeness, and a consumer can only detect the gaps you
-taught it to detect.** Everything a consumer must infer, you have failed to publish.
+A consumer can only detect the gaps you taught it to detect. Everything a consumer must infer, you have failed
+to publish.
 
 - **Sequence per message, not per packet.** A MoldUDP64 packet header carries the sequence of the *first*
   message and the rest are implicit, so publish the message count and treat `count == 0` (heartbeat) and
@@ -344,8 +367,8 @@ taught it to detect.** Everything a consumer must infer, you have failed to publ
 - **A gap is declared after A/B arbitration, never before.** The same packet arrives first on either feed
   independently of you; a sequence gap means the packet was lost on **both**. One retransmission request does
   not necessarily close a gap: a response truncates at the messages that completely fit, and treating a
-  truncated response as a covered range is *proven coverage before the cursor advances* failing inside your
-  own publisher.
+  truncated response as a covered range is *durable dedupe* failing inside your own publisher, where the
+  cursor advances past a range it did not cover.
 - **Two filters, one feed.** Non-printable executions are excluded from **volume** to prevent double-counting
   with the later bulk print; Trade messages are excluded from the **book**. Publish the flag; document which
   downstream use takes which filter.
@@ -354,10 +377,10 @@ taught it to detect.** Everything a consumer must infer, you have failed to publ
   faster (disparities *"from single-digit milliseconds to, on occasion, multiple seconds"*), and could not
   prove compliance because it had not retained the transmission-timing files. Retain them.
 
-## Netting, DVP and finality
+### Netting is a conservation law with a legal consequence
 
-**Netting is a conservation law with a legal consequence, so assert the conservation before the instruction
-leaves.** Per cycle `C`, per currency `X`, before emitting any settlement instruction:
+Specialises *rounding and conservation* across participants: assert the conservation before the instruction
+leaves. Per cycle `C`, per currency `X`, before emitting any settlement instruction:
 
 - `Σ_p net(p, C, X) == 0`. Nonzero means the cycle created or destroyed money in `X`.
 - Every gross obligation belongs to **exactly one** cycle; double inclusion double-settles, omission drops it.
@@ -383,10 +406,10 @@ system's rules and the applicable insolvency law: your code records which side o
 it does not invent one. A system that books late and back-dates the value date has not achieved value-date
 finality; it has produced a record that looks like it did.
 
-## Liquidation, marks and the backstop
+### A number you publish and also act on is an input an adversary can pay to move
 
-**A number you publish and also act on is an input an adversary can pay to move.** Separate the price that
-reports from the price that decides.
+Specialises *authority*: separate the price that reports from the price that decides, and name which is the
+record for each calculation.
 
 - **Mark price, index price and last price are three numbers with three jobs.** A thin book, or a wick on one
   venue, moves last price; it must not move the number the liquidation engine uses. State in the code which
@@ -401,15 +424,15 @@ reports from the price that decides.
 - A liquidation is an execution: same journal, same sequence numbers, same checked aggregates and same publish
   check as any other match, not a side effect of a risk loop.
 
-## Resolution and complete sets
-
-**A payout is a vector over outcome slots with a denominator, and crediting it is a one-way door.**
+### A payout is a vector over outcome slots, and crediting it is a one-way door
 
 - **Persist `(numerators[], denominator)`**, never a winning-outcome enum or a `bool won`. The type must be
-  able to represent `[1,1]/2` (a 50/50) and `[3,1]/4`.
+  able to represent `[1,1]/2` (a 50/50) and `[3,1]/4`. This is *exact representation* applied to a payout
+  vector: a boolean cannot hold a fact the resolver is allowed to state.
 - **Credit only on the venue's explicit finality signal**: `payoutDenominator[conditionId] > 0` on the Gnosis
   CTF, `status == finalized` on Kalshi. `closed`, `determined`, `disputed`, `amended` and a proposed oracle
-  price are all not-final, and Kalshi's `amended` **restarts the settlement timer**.
+  price are all not-final, and Kalshi's `amended` **restarts the settlement timer**. Anything short of the
+  documented finality signal is *ambiguous outcomes*: the state does not prove the payout.
 - **Where the authority's resolution write has no correction path, the reversal path is built above it, never
   inside it: a new instrument, or an off-ledger make-whole.** Resolution is one-shot on the Gnosis CTF, where
   `reportPayouts` requires `payoutDenominator[conditionId] == 0` and there is no re-report, no correction and no
@@ -421,63 +444,11 @@ reports from the price that decides.
   the contract permanently; there is no sweep. Merge complete sets before redeeming whenever the payout vector
   is not `[1,0]`-shaped, and assert `collateral_held ≥ Σ_i supply_i × num_i / den` continuously.
 
-## Output
-
-Every economic change ends with this block. A change the economic-diff gate exempts needs none of it.
-
-```
-FINANCIAL CHECK
-tier:       T<n>, and the signal that placed it there
-effect:     what moves value, from whom to whom, in what unit
-identity:   the stable identity of the intent, durably recorded at file:line
-ambiguity:  which counterparty responses are UNKNOWN, and how they resolve
-authority:  whose copy of each quantity is the record
-recovery:   what a crash or restart between the effect and the local commit does
-controls:   <control> -> <file:line>, one per line; at T2 and above also `· <test name>`
-            UNRESOLVED: <control> (<why>), for anything not implemented
-```
-
-`controls:` is where *implemented, not described* is enforced: every control named is a real `file:line` or an
-explicit `UNRESOLVED:` line. A described control with no location is the finding.
-
-**At T2 and above, add the ENGINE CONTRACT block.** A change that touches state you assign is T3: no
-counterparty can confirm it, so there is no external authority to reconcile against and the evidence has to be
-internal. The journal, the replay test, the bound and the halt gate *are* the reconciliation.
-
-Two cases in this domain stay on the default block, and they are the ones to check the gate against. A venue
-deployed only to a sandbox, holding no participant funds and minting no identifier an outside system consumes,
-is T0: the engine is real, but nothing it assigns is yet anyone's record. A read-only path over
-already-published records (a report, a volume query, a backtest over the recorded command stream) that
-republishes nothing and creates no obligation is T0 as well. Both become T3 the day participant funds or an
-outside consumer arrive, or the day the number they produce becomes an index input, a mark or a settlement
-figure.
-
-Fill the block immediately before the `controls:` lines. **Fill only the slots this change touches.** A slot
-the change touches and cannot fill is the finding; a slot it does not touch is omitted, not left blank. The
-client-of-a-venue block is `VENUE CONTRACT` in `fin-exchange-integration`, and a process that is both a venue and
-a client of another venue emits both.
-
-```
-ENGINE CONTRACT
-- Venue half:  T3, <what makes you the record: assigns ExecID / crosses resting orders / mints the payout>
-- Client half: T2, <the venue you are also a client of, and the reconciliation key> | none
-- Journal:     <file:line where the inbound command is committed before the book is touched>
-- Replay test: <test name that replays the command stream and byte-compares the emitted event sequence>
-- Publish:     <file:line where the send result is bound and checked>
-- Emit bound:  <name>=<value> at <file:line>; trip flag reset owner: <component, not the emitter>
-- Halt level:  <1-6>; risk-reducing paths gated by <flag> at <file:line>; test: <name>
-- Published aggregates: <field> checked at <file:line>; saturation emitted at <file:line> | none saturates
-```
-
-At T3 add the per-technique evidence table whose shape `fin-verification` owns. The internal invariants
-(conservation, `Σ net == 0`, `collateral_held ≥ Σ obligations`, replay versus live sequence) still obey
-*reconciliation runs in production*: ship them as a scheduled entrypoint reading through a path independent of
-the writer, with an alert destination that has no default.
-
 ## References
 
 A literal from the middle column appears in the code, the repo or the task text → **read that file
-immediately and apply it in order. Do not summarise it.**
+immediately and apply it in order. Do not summarise it.** All four live beside this file, in
+`references/`.
 
 | File | Read it immediately when the code or task contains | Covers |
 |---|---|---|
@@ -485,3 +456,69 @@ immediately and apply it in order. Do not summarise it.**
 | [market-data-publication.md](references/market-data-publication.md) | `RptSeq`, `seq_num`, MoldUDP64, ITCH, SBE, `MDIncrementalRefresh`, `snapshot`, `retransmit`, `gap` | Per-message sequencing, channel reset, snapshot/incremental joins, A/B arbitration, printable flags, 603(a) timing evidence |
 | [journaling-and-recovery.md](references/journaling-and-recovery.md) | `wal`, `journal`, `outbox`, `replay`, `snapshot`, `recover`, `failover`, `sequencer`, `epoch`, `fencing` | Input journaling and flush ordering, replay harness, banned constructs in the core, snapshot/recovery, single-writer failover, deterministic simulation |
 | [risk-halts-and-settlement.md](references/risk-halts-and-settlement.md) | `halt`, `LULD`, `price_band`, `kill_switch`, `15c3-5`, `netting`, `DVP`, `finality`, `liquidate`, `ADL`, `reportPayouts` | 15c3-5 clause by clause with Knight and Goldman, band derivation, halt/resume state, netting invariants, DVP models, waterfalls, resolution |
+
+## Output
+
+Open an economic change with one line. This skill's usual pair follows from what it applies to:
+
+```
+authority: SELF · exposure: record
+```
+
+Then one entry per real finding, and nothing for a concept the change does not touch:
+
+```
+FINDING   <the wrong economic outcome, concretely>
+WHY       <the mechanism that produces it>
+EVIDENCE  <file:line>
+FIX       <the change that closes it>
+TEST      <the property to assert>
+```
+
+Add `VERDICT   SHIP | NO-SHIP: <the unresolved control>` as a final line only when the task is a review or a
+ship decision. No findings is one or two sentences saying so and why the change is safe. Never emit an empty
+slot. A claimed control points at executable code and, where the risk needs it, a named test; comments, TODOs,
+unused helpers and design prose are not evidence, and an absent control is reported as
+`UNRESOLVED: <control> (<why>)` rather than a completed row.
+
+**This skill also emits a fuller block, and it emits it by default.** Everywhere else in this suite the fuller
+block is a threshold that a change has to cross. Here it is the standing case, because authority is SELF:
+nothing outside can tell you that you are wrong, no reconciliation against an authority is available, and so
+the evidence has to be internal. The journal, the replay test, the emit bound, the halt gate and the
+conservation assertions *are* the reconciliation. A reviewer who sees findings alone cannot tell whether that
+internal evidence exists, and its absence is exactly the defect this domain produces.
+
+```
+ENGINE CONTRACT
+- Venue half:   authority SELF · exposure record. <what makes you the record: assigns ExecID /
+                crosses resting orders / mints the payout>
+- Client half:  authority EXTERNAL (<venue>) · exposure <own|customer>, reconciled by <key> | none
+- Journal:      <file:line where the inbound command is committed before the book is touched>
+- Replay test:  <test name that replays the command stream and byte-compares the emitted event sequence>
+- Publish:      <file:line where the send result is bound and checked>
+- Emit bound:   <name>=<value> at <file:line>; trip flag reset owner: <component, not the emitter>
+- Halt level:   <1-6>; risk-reducing paths gated by <flag> at <file:line>; test: <name>
+- Aggregates:   <field> checked at <file:line>; saturation emitted at <file:line> | none saturates
+- Conservation: <the assertion: Σ allocations == aggressing qty, Σ net == 0,
+                collateral_held ≥ Σ obligations> at <file:line>, scheduled at <entrypoint>
+```
+
+Fill only the slots this change touches. A slot the change touches and cannot fill **is the finding**, and it
+is reported as `UNRESOLVED:`. A slot the change does not touch is omitted, not left blank.
+
+Two cases in this domain drop back to findings alone, and they are the ones to check the gate against. A venue
+deployed only to a sandbox, holding no participant funds and minting no identifier an outside system consumes,
+has no reachable effect: the engine is real, but nothing it assigns is yet anyone's record. A read-only path
+over already-published records (a report, a volume query, a backtest over the recorded command stream) that
+republishes nothing and creates no obligation is the same. Both become `exposure: record` the day participant
+funds or an outside consumer arrive, or the day the number they produce becomes an index input, a mark or a
+settlement figure.
+
+The internal invariants still obey *reconciliation*: ship them as a scheduled entrypoint that runs in
+production, reading through a path independent of the writer, with a fail-closed delivery path for breaks and
+an alert destination that has no default. Where the change is also a client of another venue, that half emits
+the venue contract `fin-exchange-integration` owns, and where a process is both it emits both blocks, one per
+half, never one merged block covering the two. Where deeper proof is called for, the per-technique evidence
+table for `authority: SELF` is the one `fin-verification` owns; §10 of
+[journaling-and-recovery.md](references/journaling-and-recovery.md) states what deterministic simulation costs
+and buys for an engine specifically, and stands on its own if that skill is not installed.
