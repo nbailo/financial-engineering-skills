@@ -16,7 +16,9 @@ once, in the skill, and is not restated here.
 
 Nine candidate classes came out of a trading-only incident review: representation, identity, state,
 concurrency, ordering, partial-failure, reconciliation, pricing-execution, authority. Tested against the
-incident corpus in `incidents/`, that list became thirteen.
+incident corpus in `incidents/`, that list became thirteen. Two further classes, F14 and F15, come
+from reading generated code rather than from the incident corpus, and are marked as such where they
+are stated: no postmortem records a control that was named in a comment and never built.
 
 - **representation split three ways**: F1 representation, F2 rounding and residue, F3 sentinel and absence.
   Bitcoin 2010 is representation with no rounding, the arithmetic was exact and `uint64` could not hold the
@@ -42,10 +44,10 @@ incident falls into. The count of classes a diff fails is the best severity prox
 | NASDAQ Facebook IPO cross, 2012-05-18 | F7 + F6 + F10 | $10M penalty; $62M accommodation fund |
 | Balancer V2, 2025-11-03 | F2 + F13 | ~$128M across 8+ chains |
 
-Nine of the thirteen are owned by `fin-money-core`. That is why the core skill exists, and why a domain skill
+Nine of the fifteen are owned by `fin-money-core`. That is why the core skill exists, and why a domain skill
 must name a real API, error code or schema object rather than restate the general theory.
 
-## The thirteen classes
+## The fifteen classes
 
 ### F1 · Representation: *can the type hold the fact?*
 
@@ -393,7 +395,7 @@ three columns would not be in this taxonomy. The venue column is served by the m
 | **F12** Valuation and inputs | mark vs index vs last for stops, sizing and liquidation distance; freshness gates market data | the FX rate's provenance, side and timestamp recorded with the conversion | a displayed figure reads the authoritative ledger; revaluation rate provenance | `updatedAt` vs heartbeat; `minAnswer`/`maxAnswer`; sequencer uptime; AMM spot is not a valuation | settlement-price discretion; a self-referential mark the backstop's own position moves |
 | **F13** Change and config | one adapter change reaching one of N venue processes; a repurposed enum a live consumer reads | a processor migration where old and new keys have different retention | migration cutover with per-account balance preservation, shadow comparison, a verified reverse path | an immutable target with multi-day fix latency; one codebase x N chains = N x blast radius | a config edit turning a gate into a no-op; published rulebook vs implemented behaviour |
 
-## The classes that appear in generated and hastily-written code
+## Two classes, and three signatures, that appear in generated and hastily-written code
 
 **Different evidence, and it has to be read differently.** Nothing below is cited to an incident, because no
 postmortem describes any of it: a postmortem records the loss and attributes it to whichever class the missing
@@ -402,9 +404,11 @@ writing rather than of the economics, and they are read out of code as written. 
 one **looks, on the page, exactly like the thing it is not**, which is why they survive the author's own
 review, and why they cluster in code produced fast: by a model, or by a person against a deadline.
 
-Two of the five are new mechanisms. Three are new signatures of classes above.
+Two are new mechanisms and take their own numbers, F14 and F15. Three are new signatures of
+classes already stated above, so they carry no number of their own: a signature is a way a class
+shows up on the page, not a separate way to lose money.
 
-**A1 · The prose TODO: the named risk documented instead of implemented.** The author identifies the correct
+**F14 · The prose TODO: the named risk documented instead of implemented.** The author identifies the correct
 control, articulates the risk accurately, and then writes a note about it. The absence is **documented**, and
 that is precisely what lets it pass self-review: the diff contains a paragraph proving the risk was
 understood, and no code enforcing anything. The phrasings recur and are greppable: a reconciliation job marked
@@ -417,7 +421,7 @@ this suite: a rule must be an artifact requirement ("there MUST be a call to X f
 `UNRESOLVED: <control> (<why>)`. **Owner:** *implemented, not described*, stated in `fin-money-core` and
 carried by the output contract of every skill.
 
-**A2 · The documented invariant that is false.** A comment or docstring asserts a property the code does not
+**F15 · The documented invariant that is false.** A comment or docstring asserts a property the code does not
 have, and the assertion is what makes the defect survive review: the reader checks the claim against their
 model of what the code ought to do, never against the code. The recognisable shapes: "it flushes so the
 `OrderRefund` row exists before the Stripe call returns", where the flush sits forty lines *below* the call ·
@@ -430,7 +434,7 @@ unverified.
 at the test that proves it or delete the sentence. **Owner:** `fin-money-core`, mirrored in
 `fin-verification`.
 
-**A3 · The decorative transaction: the lock released before the section it protects (a signature of F7).**
+**A signature of F7 · The decorative transaction: the lock released before the section it protects.**
 Reviewing for the *presence* of a lock passes this every time; what fails is the *extent* of the critical
 section. The shapes: `with db.engine.begin() as conn: SELECT ... FOR UPDATE`, where the lock dies at the
 dedent, before the sign and broadcast it was meant to protect · `poll_batch()` doing
@@ -442,7 +446,7 @@ using `async with session_factory()` with no `session.begin()`, so `FOR UPDATE` 
 that performs the act; verify the transaction boundary, not the presence of a lock call. **Owner:**
 *concurrency on authoritative state*.
 
-**A4 · Dedupe state that evaporates on restart (a signature of F4).** The code dedupes on exactly the right
+**A signature of F4 · Dedupe state that evaporates on restart.** The code dedupes on exactly the right
 key and keeps the key set in memory, `_seen_trade_ids` as a `set`, `last_trade_id` as an attribute. The
 double-count then happens on precisely the path that recovers from a restart. The inverse shape is the same
 defect from the other side: an event that could not be resolved is still committed to `processed_events`, so
@@ -451,7 +455,7 @@ reviewer checking that dedupe exists.
 **Check.** Dedupe state is as durable as the state it protects and is written in the same transaction. Mark an
 event processed only when it was actually applied. **Owner:** *durable dedupe*.
 
-**A5 · The safety constraint that defeats the safety operation (a signature of F11).**
+**A signature of F11 · The safety constraint that defeats the safety operation.**
 `CHECK (balance_cents >= 0)` reads as an unimpeachable control, and it makes the adjacent safety operation
 structurally impossible: `allow_overdraft=True` on `reverse_transfer` is dead code because the constraint
 rejects the clawback debit. Account state shows the same shape: `_apply_movement` raising `AccountNotActive`
@@ -511,7 +515,7 @@ The walk, in order, with the question that opens each step:
   obligation (backtest statistics, greeks, implied vol, Monte Carlo), with no balance, order, payment or
   transfer written. The gate's job is to exempt, not to admit.
 - **Stop at the first class the diff fails, fix it, and re-walk from the top.** A fix in one class routinely
-  opens another: `CHECK (balance_cents >= 0)` is an F11 fix that creates an A5 defect.
+  opens another: `CHECK (balance_cents >= 0)` is an F11 fix that creates the safety-constraint signature of F11.
 - **Steps 1 to 7 are answerable from the diff alone; steps 8 to 11 need the repo.** With only the diff, say so
   rather than passing them silently.
 - **Do not walk steps 8 to 11 for a type-only change** unless the type crosses a module, storage or wire
@@ -520,7 +524,7 @@ The walk, in order, with the question that opens each step:
   compares it to an independent authority, that is the finding regardless of what else the walk turns up.
 - **Count the classes.** Two or more failing classes on one diff is this corpus's signature of a large loss.
 
-Before any of this, **A1 and A2 apply to your own output**: a control you named and did not implement is the
+Before any of this, **F14 and F15 apply to your own output**: a control you named and did not implement is the
 defect you named, and a property your comment asserts is a claim you must point at a test for.
 
 ## What this taxonomy does not do
@@ -538,5 +542,5 @@ defect you named, and a property your comment asserts is a claim you must point 
 - **It does not cover risk-model error.** A leveraged position against a central-bank peg is not a defect. The
   in-scope thread is narrow and already covered: a risk engine that cannot *represent* a market state is F1.
 - **It does not weight the classes for you.** How much a class *cost* and how often it is *written* are
-  different quantities, and they disagree: F8 is enormous in the incident corpus, while A1 is invisible to
+  different quantities, and they disagree: F8 is enormous in the incident corpus, while F14 is invisible to
   every postmortem ever written and is a defect you will meet in most of the code this suite reviews.
