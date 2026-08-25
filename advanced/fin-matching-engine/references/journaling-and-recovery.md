@@ -7,6 +7,13 @@ snapshots and fails over without emitting two different histories. This is the f
 the venue contract: the half that is routinely sequenced correctly in memory and then never persisted, so a
 restart invents a second history.
 
+**The journal, outbox and relay below are one worked implementation, not the only correct one.** What binds is
+the property: the command is durable and ordered before the state it changes is touched, the state change and
+the obligations it creates commit atomically, the publisher reads committed state, and exactly one writer may
+extend the record. A replicated log with quorum acknowledgement, or a consensus group whose commit point is
+that log, meets the same property by a different mechanism, and every mechanical detail here should be read
+as one way to satisfy it rather than as a required schema.
+
 ## Contents
 
 1. **What is an input**: the inbound command stream versus derived outputs; why journaling outputs does not give replay.
@@ -50,8 +57,9 @@ would this order have done", and has permanently frozen a matching bug into the 
 
 ## 2. Ordering and flush
 
-The write path is these four steps in this order. SKILL.md's *authoritative state is reproducible from durable,
-ordered inputs* states the rule; this is the mechanism.
+SKILL.md's *authoritative state is reproducible from durable, ordered inputs* states the property. Below is one
+write path that satisfies it, in the order the steps must occur. The ordering between the steps is what binds;
+that the durable record is a local journal and the outbound queue a database table is this example's choice.
 
 ```
 1  seq = sequencer.next()                      // inside the deterministic core, see §5
@@ -93,7 +101,9 @@ panics, and a send on a full unbuffered channel blocks the matching thread. **Ne
 is in-process" is true.** Bind the result; on `Err`, halt that transformation at the smallest scope (SKILL.md's
 level 2 or 3) rather than publishing an incomplete history.
 
-The channel is not the durability mechanism, though. The outbox is:
+The channel is not the durability mechanism, though. Something committed alongside the state change is, and a
+table in the same database is the cheapest version of that. Read the schema below as an illustration of the four
+properties beneath it, not as a prescription:
 
 ```sql
 CREATE TABLE feed_outbox (
@@ -158,7 +168,7 @@ only, so that replay reproduces it.
 struct Ids { next_seq: u64, next_exec: u64, next_match: u64 }
 
 fn on_command(ids: &mut Ids, book: &mut Book, cmd: &Command, now: Nanos) -> Vec<Event> {
-    let seq = ids.next_seq; ids.next_seq += 1;          // consumed on REJECT as well as accept
+    let seq = ids.next_seq; ids.next_seq += 1;          // this protocol numbers rejects too; see below
     match validate(cmd, book) {
         Err(reason) => vec![Event::Rejected { seq, cloid: cmd.cloid(), reason }],
         Ok(()) => {
@@ -175,10 +185,14 @@ fn on_command(ids: &mut Ids, book: &mut Book, cmd: &Command, now: Nanos) -> Vec<
 }
 ```
 
-- **Sequence numbers are consumed on rejects.** A gap-free stream that skips rejects is a stream whose consumers
-  cannot tell a reject from a lost packet. Gap-freedom is easy to assert in a design note and easy to lose on
-  the wire: a single `let _ = tx.send(ev)` that can drop an event makes the claim true of the generator and
-  false of the transport.
+- **Whether a reject consumes a sequence number is a protocol decision, not a correctness invariant.** Some
+  protocols number every outbound message on a session, rejects included; others carry rejects on a private
+  order-entry session that shares no numbering with the public stream. What is invariant is that the rule is
+  published, total and reproducible under replay, since a consumer can only distinguish a number you never
+  assigned from a message it lost if you told it which convention you use. The example above numbers rejects;
+  take yours from the protocol you speak and pin it with a replay test named for the choice. Gap-freedom is
+  also easy to assert in a design note and easy to lose on the wire: a single `let _ = tx.send(ev)` that can
+  drop an event makes the claim true of the generator and false of the transport.
 - **Recover `Ids` by replay, never from a counter table.** After a snapshot at journal position P, `Ids` comes
   from the snapshot and is advanced by replaying P+1..end. Reading a `MAX(exec_id)` from a table you also write
   gives you an ID space that diverges the moment a transaction rolls back.
@@ -295,9 +309,11 @@ you are the oracle, so there is no reconciliation that resolves the fork.
   has already appended. Kafka's `InitPidRequest` is the shape to copy: it *"Bumps up the epoch of the PID, so
   that any previous zombie instance of the producer is fenced off"*, with the invariant *"Exactly one active
   producer with a given TransactionalId."*
-- **Replicate the input stream, not the state.** LMAX multicasts the journaled input stream to followers, which
-  derive identical state by applying it. A follower promoted after a fence replays its tail and continues the
-  same sequence space: no renumbering, because renumbering re-issues identifiers consumers already booked.
+- **Replicate whatever the followers must replay, which for a deterministic core is the input stream.** LMAX
+  multicasts the journaled input stream to followers, which derive identical state by applying it; a consensus
+  group replicating its log achieves the same thing with the commit point moved into the protocol. Either way a
+  promoted follower continues the same sequence space rather than renumbering, because renumbering re-issues
+  identifiers consumers already booked.
 - **Do not order failover by wall clock.** Ordering financial events by timestamps taken on different hosts is
   a data-loss mechanism; the systems that do order by time buy it explicitly (Spanner's clock; TigerBeetle
   refuses node clocks and uses *"leader-based timestamping"*).

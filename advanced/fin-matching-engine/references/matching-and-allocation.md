@@ -5,12 +5,19 @@ rounding step leaves a residue that must be assigned by a named second pass, wha
 how a call auction or cross computes an uncrossing price over an input set that must be frozen or fully drained before the
 print. Every rule here assumes you are the matching side, not a participant reading the result.
 
+**Separate the two kinds of statement below.** Conservation, determinism and the residue bound are properties of allocation and
+hold wherever quantity is divided. Execution-price convention, the priority-destroying edit set, iceberg refresh eligibility,
+the auction tie-break ladder and self-match-prevention semantics are **rules of a model**, published by a venue, with more than
+one defensible answer shipping today. Every venue-specific claim here is attributed to the operator that published it, and is
+cited as an example of what such a rule looks like rather than as the answer for your engine. Yours comes from your own
+rulebook, and a test named for the choice is what proves the code implements the rule you published.
+
 ## Contents
 
 1. **The CME step pipeline**: the ordered allocation steps, what is configurable per product, and how to express the pipeline as data rather than branching code.
 2. **Pro-rata arithmetic and the residue**: integer floor division, the conservation assertion that precedes any emitted execution, the minimum-allocation threshold, why pro-rata is never terminal.
 3. **The leftover pass**: FIFO by time priority, the one-extra-lot bound, the determinism requirement on the tie-break key.
-4. **Execution price is the resting order's**: price improvement accrues to the aggressor; the FIFO exception when aggressing quantity exceeds resting quantity.
+4. **Execution price convention**: one price per execution, whose price it is per model, price improvement, the FIFO exception when aggressing quantity exceeds resting quantity.
 5. **Priority preservation matrix**: replace vs modify vs reducing cancel; CME's three priority-destroying edits including the account-number change.
 6. **Quantity conventions that share one word**: OUCH Cancel intended-total, OUCH Replace chain-cumulative, ITCH Modify decrement; conversion table and the assertion that catches a mis-read.
 7. **Iceberg and reserve orders**: display vs total, refresh arithmetic, requeue at the back, what the feed reveals.
@@ -123,10 +130,24 @@ Never iterate a `HashMap`/`dict` whose order is unspecified or randomised: Rust'
 processes or seeds, enough for two replicas to allocate the residue to different participants from one input stream. Use a
 `BTreeMap`, a sorted `Vec`, or an intrusive queue per level.
 
-## 4. Execution price is the resting order's
+## 4. Execution price convention
 
+**Whose price prints is a rule of the model you implement, not a property of matching.** What is universal is that an execution
+carries exactly one price, recorded identically to both sides, derived from the book state the match consumed. Which price that
+is comes from the venue's published rules, and the published answers differ:
+
+| Model | Execution price | Consequence |
+|---|---|---|
+| Continuous order book, where the operator documents it | the **resting** order's price | price improvement accrues to the aggressor |
+| Call auction or cross | the single uncrossing price | no execution in that cross carries any other price (§9) |
+| Midpoint or periodic-auction models | a reference-derived price | neither side's limit appears on the print |
+
+The continuous-book convention is the one the worked examples in this file use, and at least one operator states it explicitly:
 "Orders are matched against existing order book orders at the price of the order **on the book**, not at the price of the taker
-order" [Coinbase Exchange matching-engine documentation]. Price improvement accrues to the aggressor.
+order" [Coinbase Exchange matching-engine documentation]. It is not universal, it does not describe an auction, and it is not
+established for a venue by anything except that venue's own rules. Read yours, then pin it with a test named for the convention.
+
+Under the continuous-book convention:
 
 | Case | Book | Incoming | Prints |
 |---|---|---|---|
@@ -144,6 +165,11 @@ configured algorithm never runs it. Generate `aggressing_qty ∈ {Σ leaves − 
 where the off-by-one lives, and where a `Σ alloc == aggressing_qty` assertion (rather than `min(...)`) starts firing falsely.
 
 ## 5. Priority preservation matrix
+
+**The rows below are two operators' published answers, not a universal rule.** What does not vary is the structure: the
+priority-destroying set is one named constant, applied in one place, and the only writer of the priority key. Which edits belong
+in that set comes from your rulebook. A quantity increase and a price change destroy priority nearly everywhere; the
+economically invisible edits are where venues differ, and where a reader's assumption is most likely to be wrong.
 
 | Operation | Priority | Source |
 |---|---|---|
@@ -202,10 +228,12 @@ long before it surfaces as an exposure error.
 
 ## 7. Iceberg and reserve orders
 
-A display-quantity order rests with `display ≤ total`. Two rules from CME Globex Matching Algorithm Steps: **refresh quantity**
-is the lesser of the configured display quantity, the remainder when the remainder is ≤ display quantity, or the remaining
-display quantity on a partial fill; and **requeue at the back**: "the Display Quantity order's priority is refreshed to be the
-lowest of the remaining orders at the price level (order is placed at the end of the queue)."
+A display-quantity order rests with `display ≤ total`. The refresh arithmetic and the requeue position are **rulebook entries**,
+and the two below are CME's, quoted as an example of what such a rule states rather than as the answer for your engine. From CME
+Globex Matching Algorithm Steps: **refresh quantity** is the lesser of the configured display quantity, the remainder when the
+remainder is ≤ display quantity, or the remaining display quantity on a partial fill; and **requeue at the back**: "the Display
+Quantity order's priority is refreshed to be the lowest of the remaining orders at the price level (order is placed at the end
+of the queue)." What is universal is only what follows.
 
 1. The refresh happens in the **same deterministic step** as the match that consumed the slice: never a timer, never a
    background task; either produces a book replay cannot reproduce. The refreshed slice takes a **new** `priority_seq` from the
@@ -222,8 +250,9 @@ quantity exists and how a refresh appears.
 
 ## 8. Self-trade prevention as the implementer
 
-Four incompatible semantics ship today, with **no neutral default**. Resting R = 500 and incoming I = 300, both account family
-X, same price:
+Four incompatible semantics ship today, with **no neutral default**, which makes this a rulebook entry rather than an
+implementation detail: whichever you choose is observable in the print and in what the counterparty is told. Resting R = 500 and
+incoming I = 300, both account family X, same price:
 
 | Mode | Resting after | Incoming after | Aggressor continues? |
 |---|---|---|---|
@@ -279,9 +308,9 @@ top-of-book for over two hours on 18 May 2012 (SEC 34-69655 ¶31).
 **Indicative price and imbalance.** What you publish pre-cross is a promise about the computation: publish indicative price,
 indicative volume, imbalance quantity and side, and **assert the print against the last indicative**. NASDAQ's indicative volume
 was 82 million against a 75.7 million share print, a 6.3 million share gap "NASDAQ did not address … during the minutes and
-hours following the cross" (¶27). Indicative state is resettable state: a CME MDP 3.0 Channel Reset (`35=X`,
-`269-MDEntryType=J`) empties book, trade volume, high/low **and the indicative opening price**, and resets `83-RptSeq` to 1 per
-instrument. If you publish an IOP, publish its clearing.
+hours following the cross" (¶27). Indicative state is also resettable state: a channel reset that empties the book empties the
+indicative opening price with it, and CME MDP 3.0 documents exactly that behaviour for its own reset message. If you publish an
+indicative price, publish its clearing; the reset mechanics themselves belong to the feed, not to this file.
 
 **LULD auction collar.** A reopening auction after a LULD pause prices inside a published collar, and Nasdaq TotalView-ITCH 5.0
 carries a dedicated **LULD Auction Collar** message so the collar is *delivered*, not derived downstream: publish the reference
@@ -385,7 +414,7 @@ with no arrival, and the freshness assertion is what proves that happened.
 | Priority monotonicity | equal `leaves` at one price ⇒ `priority_seq_i < priority_seq_j` implies `alloc_i ≥ alloc_j` | residue assigned to the wrong end of the queue; reversed comparator |
 | Determinism under shuffle | shuffling the input list, priority keys preserved, yields an identical allocation map | `HashMap` iteration; dependence on arrival container order |
 | Residue bound | `residue < participant_count`, and each participant gains **at most one** extra lot | a residue pass that runs twice; a pro-rata denominator error |
-| Price | every execution's price is one of the resting prices consumed | charging the aggressor its own limit (§4) |
+| Price | every execution's price is the one your published convention selects: a consumed resting price in a continuous book, the single uncrossing price in a cross | charging the aggressor its own limit under a resting-price convention (§4) |
 | Pipeline termination | `pipeline[-1].exact` for every configured product | a product configured to end in Pro-Rata |
 | Replay identity | same command stream + same seed ⇒ byte-identical emitted event sequence | a clock read, RNG or unordered iteration inside the core |
 

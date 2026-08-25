@@ -3,25 +3,35 @@
 The six skills under `skills/` are the product. They cover code that trades through a venue, integrates a
 payment processor, keeps a ledger, or moves value on-chain.
 
-What lives here is for a much smaller audience: engineers whose code **is** the venue.
+What lives here is for a much smaller audience: engineers whose code **is** the venue. Neither skill below
+is installed by `npx skills add`, neither is in the default routing, and neither consumes the shared
+description budget.
 
-## fin-matching-and-settlement
+## fin-matching-engine
 
-Matching against resting orders, pro-rata allocation, auctions, self-trade prevention, price bands and
-halts, market-data publication, netting, settlement and liquidation.
-
-It is not installed by default, and it is not part of the default routing, because including it would make
-the package look like a toolkit for building institutional trading venues. It is not one. If you are
-writing a trading bot, you want `fin-exchange-integration` instead: that skill is about being a venue's
-client, which is the common case.
-
-Install it deliberately:
+Code that owns an order book and mints the executions everyone else books: durable ordered input,
+deterministic replay, enumerated order-state transitions, allocation conservation and residue, priority and
+iceberg refresh, auction computation, self-match prevention, checked aggregates, fan-out bounds, pre-trade
+risk controls, halt and resume, single-writer recovery.
 
 ```bash
-cp -r advanced/fin-matching-and-settlement ~/.claude/skills/
+cp -r advanced/fin-matching-engine ~/.claude/skills/
 ```
 
-The distinction that decides which you need: `fin-exchange-integration` is for code whose authority is
-EXTERNAL, where the venue holds the truth and you reconcile against it. This skill is for code whose
-authority is SELF, where nothing outside can tell you that you are wrong, and replay and determinism are
-the only proof available.
+## fin-market-data-publication
+
+Code that publishes a feed it originates: message and packet sequencing, snapshot and incremental joins,
+resets and session identity, A/B arbitration, gap detection and recovery, conflation and backpressure, book
+and volume filters, timestamp semantics, deterministic publication.
+
+```bash
+cp -r advanced/fin-market-data-publication ~/.claude/skills/
+```
+
+## Which one you want
+
+If you are writing a trading bot, neither: you want `fin-exchange-integration`, which is about being a
+venue's client, and that is the common case. The distinction that decides it is authority.
+`fin-exchange-integration` is for code whose authority is EXTERNAL, where the venue holds the truth and you
+reconcile against it. These two are for code whose authority is SELF, where nothing outside can tell you
+that you are wrong, and replay and determinism are the only proof available.
