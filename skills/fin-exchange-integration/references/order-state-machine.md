@@ -194,8 +194,14 @@ stays in flight, pending reconciliation**.
 `INFLIGHT_UNKNOWN` must be a **real state on the order row**, not a `None` and not an exception in a log.
 Anything that sizes, hedges or flattens reads position including in-flight notional; an order in this state
 that risk cannot see is exactly the naked residual the client-order-ID rule exists to prevent. The state
-carries a **wall-clock budget declared as a config value**; past it the system takes the risk-*reducing*
-action automatically (cancel-by-client-ID, then flatten the instrument) rather than waiting for a human.
+carries a **wall-clock budget declared as a config value**, and what the budget expires into is ordered by
+whether the action reduces risk in every state still possible. Stopping the sends and cancelling by client ID
+is always safe, because a cancel against an order that never existed is a no-op and a cancel against one that
+rests removes exposure you did not intend. Querying that identity and reconciling against the venue's own
+position number is safe once the venue answers. A hedge or a flatten is conditional: only where the venue has
+confirmed a position, or exposure is bounded so the hedge cannot invert the sign. Flattening on the expiry of
+the timer alone is not a risk-reducing action, because the instruction may never have filled, and flattening
+against a position that does not exist opens the opposite one.
 
 Timeouts resolve asymmetrically. Unconfirmed-submit past its retries can be settled as rejected only after a
 **single targeted order query** returns a definite answer; `PendingCancel`/`PendingUpdate` past their retries
