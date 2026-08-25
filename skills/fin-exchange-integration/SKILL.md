@@ -1,19 +1,20 @@
 ---
 name: fin-exchange-integration
 description: >-
-  Financial correctness for trading bots, market makers and execution systems trading through a venue you do not
-  operate: ambiguous order submission, duplicate-order risk, venue constraints, fills, reconnect recovery, stale
-  market data, fees, funding, position and PnL reconciliation. Use when building or reviewing a client of Binance,
-  Bybit, OKX, Kraken, Hyperliquid, Alpaca, ccxt or FIX. A 50-line bot counts.
+  Financial correctness for trading through a venue you do not operate: ambiguous order
+  submission, duplicate orders, venue constraints, fills, reconnect recovery, stale market data,
+  fees, funding, position and PnL. Also prediction-market settlement and payout credit. Use when
+  reviewing a client of Binance, OKX, Bybit, Kraken, Hyperliquid, ccxt, FIX, or a prediction
+  market such as Polymarket, Kalshi or Limitless.
 license: MIT
 ---
 
 # Trading against a venue you do not operate
 
-This is the primary use case of this suite: trading bots, market makers, arbitrage and execution systems that instruct Binance,
-Bybit, OKX, Kraken, Hyperliquid, Alpaca, ccxt or FIX to act. The venue, not you, holds the authoritative copy of your orders,
-fills, position and PnL, and it answers if you ask. Every rule here follows from one question: if this response never arrives,
-what does the venue now believe, and how do you find out without sending a second instruction?
+This is the primary use case of this suite: trading bots, market makers, arbitrage and execution systems that instruct a spot,
+derivatives or prediction-market venue to act, over its own API, ccxt or FIX. The venue, not you, holds the authoritative
+copy of your orders, fills, position and PnL, and it answers if you ask. Every rule here follows from one question: if this
+response never arrives, what does the venue now believe, and how do you find out without sending a second instruction?
 
 ## When to use
 
@@ -29,10 +30,10 @@ Routing literals, evidence rather than definition: imports of `ccxt`, `python-bi
 
 ## When not to
 
-- You own the book and match incoming against resting orders, compute allocation or priority, publish a sequenced feed, or run a
-  clearing or liquidation batch. That is the venue side, where your authority is SELF rather than EXTERNAL, and its skills
-  live in the repository's advanced area rather than this installed set. Deciding what an instrument is worth at expiry is
-  venue-side too; trading an instrument somebody else settles belongs here.
+- You own the book and match incoming against resting orders, compute allocation or priority, or publish a sequenced feed.
+  That is the venue side, where your authority is SELF rather than EXTERNAL, and it is opt-in material outside this installed
+  set. Clearing, liquidation waterfalls and deciding what an instrument is worth at expiry have no skill in this suite at all:
+  say that plainly rather than routing to one. Trading an instrument somebody else settles belongs here.
 - Fills become double-entry postings: `fin-ledger`.
 - The change is only amount arithmetic, rounding direction, or the retry classification of an outbound call: `fin-money-core`,
   which otherwise loads alongside this skill only for a cross-domain mechanism this one does not already specialise.
@@ -170,6 +171,12 @@ pointer to a test plan is the missing control, not a plan for it.
 
 ## References
 
+Coverage is uneven by venue. A venue named below has a dedicated reference carrying its field names, error
+codes and assertions; the prediction-market files add a provenance block with a verified_at date and an
+explicit unverified list, and the others do not yet. A venue not named is covered by the invariants above plus
+ccxt or FIX, and nothing venue-specific about it may be asserted. The repository README carries the
+provider-support matrix stating the level for each.
+
 - [venues/binance-orders.md](references/venues/binance-orders.md): the diff sends, cancels or recovers a Binance order: `newClientOrderId`, `-1006`/`-1007`/`-2010`/`-2013`, `recvWindow`, `countdownCancelAll`, order-count limits
 - [venues/binance-filters.md](references/venues/binance-filters.md): the diff rounds a Binance price or size: `exchangeInfo`, `tickSize`, `stepSize`, `LOT_SIZE`, `MARKET_LOT_SIZE`, `NOTIONAL`, `pricePrecision`, COIN-M contracts
 - [venues/binance-streams.md](references/venues/binance-streams.md): the diff reads a Binance private stream or a fee: `listenKey`, `executionReport`, `ORDER_TRADE_UPDATE`, `z`/`l`/`t`, `commissionAsset`, the BNB discount
@@ -188,7 +195,12 @@ pointer to a test plan is the missing control, not a plan for it.
 - [execution-algorithms.md](references/execution-algorithms.md): the diff defines a parent/child order, a TWAP/VWAP/POV/IS schedule, `participation_rate`, `slice`, or a benchmark price
 - [ccxt.md](references/ccxt.md): the diff imports `ccxt`/`ccxt.pro`, or touches `precisionMode`/`amountToPrecision`/`createMarketBuyOrderRequiresPrice`
 - [fix.md](references/fix.md): the diff speaks FIX: `35=D`, `PossDupFlag`, `PossResend`, `OrigClOrdID`, `ResendRequest`, `ExecRefID`, iLink 3 / FIXP
-- [prediction-markets-client-trading.md](references/prediction-markets-client-trading.md): the diff quotes, sizes or books a trade on a binary venue: `polymarket`, `kalshi`, `clobTokenIds`, `neg_risk`, a tick grid or `price_ranges`, a YES/NO position keeper, or a fee that is not `bps × notional`
+- [prediction-market-core.md](references/prediction-market-core.md): the diff prices, sizes, reserves, quotes, submits, books or keeps a position on a prediction market of any venue, including any bot or client that places outcome orders: `clobTokenIds` or another outcome token or contract id, a YES/NO or multi-outcome payout, a complement price, a signed YES/NO position keeper, a two-book crossing or top-of-book check, a per-market tick grid or a `[tick, 1 - tick]` bound, or a fee that is not `bps × notional`
+- [prediction-market-settlement-integration.md](references/prediction-market-settlement-integration.md): the diff handles a prediction market closing, resolving or paying out: `determined`/`amended`/`finalized`, a `MATCHED`/`MINED` settlement frame, `payoutNumerators`, a settlement or redeem credit, or `redeemPositions`/`/portfolio/redeem`
+- [prediction-market-polymarket-v2.md](references/prediction-market-polymarket-v2.md): the diff signs, posts or books a Polymarket CLOB V2 order: `py-clob-client-v2`, `@polymarket/clob-client-v2`, `builderCode`/`builder_code`, pUSD, `getClobMarketInfo`, `feeSchedule`, `orderPriceMinTickSize`, a `0.005`/`0.0025` tick, or a signed order still carrying `feeRateBps`, `nonce` or `taker`
+- [prediction-market-kalshi.md](references/prediction-market-kalshi.md): the diff trades, books or settles a Kalshi event contract: `outcome_side`/`book_side`, `orderbook_fp`, `use_yes_price`, `price_ranges`, a `*_dollars` or `*_fp` fixed-point field, `client_order_id`, an amend `count`, `open_interest_fp`, `exchange_index`, or `determined`/`amended`/`finalized`
+- [prediction-market-limitless.md](references/prediction-market-limitless.md): the diff names `limitless`, `api.limitless.exchange`, `lmts-api-key`, `venue.exchange`/`venue.adapter`, a `"Limitless CTF Exchange"` EIP-712 domain, `orderEvent`, `subscribe_order_events`, `settlementStatus`, or `clientOrderId` on Base
+- [prediction-market-hyperliquid-hip4.md](references/prediction-market-hyperliquid-hip4.md): the diff touches a Hyperliquid outcome market: `outcomeMeta`, `settledOutcome`, `outcomeMetaUpdates`, `settleFraction`, `sideSpecs`, `userOutcome`, `splitOutcome`/`mergeOutcome`/`negateOutcome`, a `#<encoding>` coin or an asset id above `100_000_000`
 - [test-properties.md](references/test-properties.md): you are writing or reviewing the tests for any of the five properties above
 - [seams.md](references/seams.md): the same process posts fills into a ledger, or is both a venue for its own clients and a client of another venue
 
@@ -196,10 +208,10 @@ pointer to a test plan is the missing control, not a plan for it.
 
 On any economic change, one line: `authority: EXTERNAL (<venue>) · exposure: own`, the usual pair here because the venue can
 always tell you that you are wrong. Exposure rises to `customer` when the bot trades money that is not yours, and to `record`
-where this process is also the system of record for somebody else's orders. Authority is a property of a quantity, not of a
-codebase: where one authority covers everything in scope emit that single line, and where it does not, emit `authority: MIXED ·
-exposure: <e>` followed by one indented line per quantity that differs, two or three at most, such as `fills, position, PnL
-EXTERNAL (Binance)` above `unresolved intent rows   SELF`.
+where this process is also the system of record for somebody else's orders. Authority is per quantity: where one covers
+everything in scope emit that single line, and where it does not, emit `authority: MIXED · exposure: <e>` and one indented
+line per quantity that differs, two or three at most, such as `fills, position, PnL   EXTERNAL (Binance)` above
+`unresolved intent rows   SELF`.
 
 Then one entry per real finding, which may carry its own authority where that is what makes it a finding:
 
@@ -212,8 +224,6 @@ TEST      <the property to assert>
 ```
 
 Add `VERDICT   SHIP | NO-SHIP: <the unresolved control>` only when the task is a review or a ship decision. No findings means
-one or two sentences saying so and why the change is safe. Never emit a slot for a concept the change does not touch. A claimed
-control points at executable code, and where the risk requires it a test; comments, TODOs, unused helpers and design prose are
-not evidence, and an absent control is `UNRESOLVED: <control> (<why>)` rather than a completed row. Emit the fuller venue
-contract from [seams.md](references/seams.md), whose slots and dual-role rules it carries, only when exposure is `customer` or
+one or two sentences saying so and why the change is safe. An absent control is `UNRESOLVED: <control> (<why>)`, never a
+completed row. Emit the fuller venue contract from [seams.md](references/seams.md) only when exposure is `customer` or
 `record`, or the change adds a second venue adapter.
