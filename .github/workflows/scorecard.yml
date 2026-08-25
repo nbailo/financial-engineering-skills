@@ -40,6 +40,10 @@ jobs:
           persist-credentials: false
 
       - name: run analysis
+        # The SHA pins the action definition. That definition is a Docker action which names
+        # its image by tag, docker://ghcr.io/ossf/scorecard-action:v2.4.4, so the image behind
+        # this step is not pinned by digest here. SECURITY.md states that limit rather than
+        # leaving the pin to imply more than it delivers.
         uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
         with:
           results_file: results.sarif
