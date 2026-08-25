@@ -1,5 +1,14 @@
 # OKX, Bybit and Kraken: identity, recovery, units and limits
 
+> **Provenance**
+> provider: OKX, Bybit and Kraken · surface: client order id scope and post-terminal retention, recovery endpoints and their windows, unit models, self-trade prevention and rate-limit shapes
+> version: as stated in this file's own header, all venue text read 2026-08-24. No documentation version is published by any of the three.
+> verified_at: not established
+> sources: https://www.okx.com/docs-v5/trick_en/ · https://bybit-exchange.github.io/docs/v5/order/create-order · https://bybit-exchange.github.io/docs/v5/websocket/trade/guideline · https://docs.kraken.com/api/docs/guides/spot-clordid/ · https://docs.kraken.com/api/docs/guides/spot-ratelimits
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. One exception is worth stating precisely rather than leaving implied: Kraken's client order id guide was opened on 2026-08-25 for a single sentence, the one extending the uniqueness check across open orders and the FIX session, which was needed for the order-entry FIX reference in this skill. No other page above was opened, no window in the table below was re-read, and the retention bounds are the claims that decide a retry.
+> revalidate_when: OKX changes the two-hour orders-history retention or its `clOrdId` reuse rule; Bybit changes the realtime order cap or the cancelled-order window; Kraken changes either published `cl_ord_id` window, or accepts it on a query endpoint that does not take it today; any of the three changes its unit model or limiter shape.
+
 The three venues whose client-order-ID and recovery semantics are most often assumed to match Binance's and do
 not. OKX states its own reuse rule outright and keeps cancelled-incomplete orders in orders-history for only
 **2 hours**. Bybit documents uniqueness with no retention window at all. Kraken publishes two different windows

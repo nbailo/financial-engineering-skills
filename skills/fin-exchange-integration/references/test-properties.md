@@ -47,8 +47,8 @@ could not have become externally visible.** Those are the failures that occur be
 Everything else is UNKNOWN: a timeout, a socket error once transmission may have begun, any 5xx, a 429, and
 any rejection the venue does not document as "not enqueued" for that exact code. ccxt's default retry funnel
 re-POSTs a create-order under the identical client order ID; set `options['maxRetriesOnFailure']` to 0 and
-read the `ccxt-and-fix.md` reference before relying on any of its recovery behaviour, including its documented
-`fetchBalance()` procedure, which races against fees, funding and other strategies.
+do not rely on any of its recovery behaviour, including its documented `fetchBalance()` procedure, which
+races against fees, funding and other strategies.
 
 So the test injects a failure from the table above and asserts that the retry happens. It asserts the retry
 happens **because the failure is one the production code can classify**, not because the harness knows the
@@ -76,22 +76,20 @@ concern the retired test was reaching for.
 Generate over the **boundary region of the real constraint set**, for each instruction type, from a fixture
 captured from production rather than hand-written. For every generated input the output is either an explicit
 skip signal or legal against all constraints at once, and never larger than what was asked for. Parametrising
-over order type is what exercises `MARKET_LOT_SIZE` as distinct from `LOT_SIZE`. The constraint mechanics are in the
-`pre-trade-controls.md` reference.
+over order type is what exercises `MARKET_LOT_SIZE` as distinct from `LOT_SIZE`.
 
 ## Property 4: reconnect and backfill neither lose nor double-count a fill
 
 Kill the client mid-session with fills arriving, restart it, and assert that each fill appears exactly once in
 the persisted set, that running the same recovery twice produces identical state, and that no order is
-submitted before the ready gate opens. The recipe is in the `reconnect-and-backfill.md` reference.
+submitted before the ready gate opens.
 
 ## Property 5: local position and PnL converge to the venue's state
 
 Drive a session of fills, funding, and at least one venue-originated event such as a liquidation or a
 settlement, then run the scheduled reconciliation and assert convergence per position key, within a tolerance
 expressed in the instrument's own tick or lot. Then plant a break and assert the reconciliation **detects**
-it, closes the gate, and does not reopen the gate on a timer. The comparison design is in the `position-and-pnl.md`
-reference.
+it, closes the gate, and does not reopen the gate on a timer.
 
 Replay the same session shuffled, duplicated and interrupted by a restart, and assert it reaches the state the
 arrival-order run reached. The property is convergence, not commutativity: both runs agree because both sort the

@@ -3,9 +3,9 @@
 Taking a number off a local book and handing it to the order path. Everything here is about the *consumer* of
 a book rather than its construction: what a depth-limited snapshot does not tell you, what an empty or a
 crossed book actually means, which of the several available numbers is a price you may quote or size from, and
-the wall-clock freshness gate that decides whether any of them is still true. The sibling file
-`orderbook-sync.md` covers the other half: how the book is built, how a sequence gap is detected, and the
-re-snapshot that clears one. **The venue-specific facts here are dated (read 2026-08-24) and volatile:
+the wall-clock freshness gate that decides whether any of them is still true. The other half, how the book
+is built, how a sequence gap is detected and the re-snapshot that clears one, is book synchronisation and is
+not covered here. **The venue-specific facts here are dated (read 2026-08-24) and volatile:
 re-verify against the venue's current documentation before relying on any of them.**
 
 ## Contents

@@ -16,7 +16,6 @@ rule that turns a truncated page into a detected hole rather than an apparent en
 - Cursor durability: `last_trade_id` and `last_update_id` outlive the process
 - Pagination: a page at the documented cap is a hole, not the end
 - Session credentials that expire while you are connected: `listenKey` and friends
-- Where the rest lives: book rebuild, synthesised ids, reconnect storms
 - Test recipe
 
 ## The dead-man switch you do not hold
@@ -35,9 +34,7 @@ because you reconnect first and the venue never observes a gap long enough to ac
 
 Deribit's heartbeat deserves its own line: it is documented as an order-cancellation mechanism, so failing to
 respond to it cancels resting orders. That is the desired behaviour when you are dead and the wrong behaviour
-when you are merely slow, and the timeout has to be chosen with both in mind. Panel F of
-`venues/divergence-matrix.md` carries the per-venue detail, and `venues/coinbase-deribit-hyperliquid.md` carries the
-shutdown paths that do **not** trigger it.
+when you are merely slow, and the timeout has to be chosen with both in mind.
 
 ## Local invalidation is a different failure
 
@@ -86,9 +83,10 @@ has to be computed and **materialised as events**, not skipped:
   difference. Recovering net position alone leaves realized PnL permanently short, because realized PnL is a
   function of the individual fills, not of the net.
 - Synthesised ids must be **deterministic over venue-supplied fields including a venue timestamp**, so the
-  same inference made again after a restart dedupes against itself instead of double-booking. The mechanics and the
-  code locations are in `order-state-machine.md` under "Synthesised events, deferred reports, orders you never sent".
-- A sequence gap in the stream is discarded and re-snapshotted, never patched.
+  same inference made again after a restart dedupes against itself instead of double-booking.
+- A sequence gap in the stream is discarded and re-snapshotted, never patched, and the re-snapshot uses your
+  venue's own snapshot/incremental join algorithm: Binance Spot and Binance USDⓈ-M Futures do not share one,
+  and the wrong algorithm is the most-copied incorrect snippet in the ecosystem.
 
 ## Cursor durability
 
@@ -116,9 +114,9 @@ while True:
 ```
 
 `len(page) == PAGE` is the cap condition, and it means there is more, always, even when there is not: one
-extra request is the cost of never mistaking a cap for an end. Venue-specific retention bounds, which decide
-how far back the backfill can reach at all, are in each venue file: the recovery-endpoint tables in
-`venues/binance.md`, `venues/okx-bybit-kraken.md` and `venues/coinbase-deribit-hyperliquid.md` name the windows.
+extra request is the cost of never mistaking a cap for an end. Venue-specific retention bounds decide how
+far back the backfill can reach at all, so read your venue's documented recovery-endpoint window before
+assuming an outage longer than it is recoverable from the venue rather than from your own store.
 
 ## Session credentials that expire while you are connected
 
@@ -129,17 +127,6 @@ failed renewal as a resync trigger rather than a retryable background error.
 
 The general form: any credential, token or subscription with a lifetime shorter than your intended session is
 a scheduled outage. Handle it on your own clock, before it fires.
-
-## Where the rest lives
-
-Each file named here is a sibling reference with its own trigger row in the skill. Load it from there, not from here.
-
-- The **book** rebuild is venue-specific, and the wrong algorithm is the most-copied incorrect snippet in the
-  ecosystem: Binance Spot and Binance USDⓈ-M Futures use different snapshot/incremental join algorithms. Follow
-  your venue's exactly, from `orderbook-sync.md`, which also carries gap detection, snapshot depth horizons, the
-  `SYNCED`/`UNSYNCED`/`NEVER_RECEIVED` states and reconnect storms.
-- **Fill dedupe** and the fold that makes replay safe are in `order-state-machine.md`.
-- **Reconciling the recovered state** against the venue's own position and PnL figures is in `position-and-pnl.md`.
 
 ## Test recipe
 

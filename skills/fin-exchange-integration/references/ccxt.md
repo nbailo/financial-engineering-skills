@@ -1,5 +1,21 @@
 # ccxt: a client layer with its own failure modes
 
+> **Provenance**
+> provider: ccxt · surface: the TypeScript source under `ts/src/` and the manual pages the repository ships in `wiki/`
+> version: git commit `6059cf4724ea9134b6c75194a341a1bb32e503a6`, authored 2026-08-24, the commit this file's citations were written against
+> verified_at: 2026-08-25
+> sources: https://github.com/ccxt/ccxt/tree/6059cf4724ea9134b6c75194a341a1bb32e503a6
+> · https://github.com/ccxt/ccxt/blob/6059cf4724ea9134b6c75194a341a1bb32e503a6/ts/src/base/Exchange.ts
+> · https://github.com/ccxt/ccxt/blob/6059cf4724ea9134b6c75194a341a1bb32e503a6/ts/src/base/errorHierarchy.ts
+> · https://github.com/ccxt/ccxt/blob/6059cf4724ea9134b6c75194a341a1bb32e503a6/wiki/Manual.md
+> · https://github.com/ccxt/ccxt/issues/13554 · https://github.com/ccxt/ccxt/issues/23516
+> · https://github.com/ccxt/ccxt/issues/23370 · https://github.com/ccxt/ccxt/issues/8245
+> pinned: the tree at `6059cf47` was fetched on 2026-08-25 and every file and line anchor below was re-run against it.
+> verified: the retry funnel, read at that commit: `fetch2` at `Exchange.ts:6403`, `request` at `:6456`, the binding at `:629`, and the catch block at `:6431` whose entire retry predicate is `e instanceof OperationFailed`, with no method or path test in it and no read of `request['method']` anywhere in the body of `fetch2`, which was read end to end; the class declarations at `errors.ts:171`, `:177`, `:219` and the whole of `errorHierarchy.ts`, which is what the closing table maps; `handleOptionAndParams` at `:6796` and its global fall-through at `:6814`; `precisionMode` at `:413`; `newUpdates` defaulting to `true` at `:440` and overridden from options at `:631`; ROUND for price at `:7327` and TRUNCATE for amount at `:7339`, each with its `InvalidOrder` guard on the string `'0'` at `:7329` and `:7341`; the client-order-id block at `binance.ts:5791-5801`; `TICK_SIZE` at `binance.ts:1340`, `kraken.ts:536` and `hyperliquid.ts:221`; `bybit.ts:4404-4425` with the call-site default at `:4407` and the option set to `false` at `:1142`; `okx.ts:3120`; the count of exchange files carrying `createMarketBuyOrderRequiresPrice`, which is 21; `pro/binance.ts:161` and `:5550-5551`. Every manual sentence quoted here was read at the line cited: `wiki/Manual.md:8816`, `:8820`, `:8824-8826`, `:8867`, `:1219`, `:7470`, `:902`, and `wiki/ccxt.pro.manual.md:353` and `:427`. All four issues resolve and say what they are cited for, including #13554's line recording binance skipped and explicitly set to `DECIMAL_PLACES`, and #23516's transcript showing `decimal_to_precision` returning `0`.
+> corrected: five line anchors were off by one against this commit and were moved to the lines that now hold the code (`fetch2`, `request`, the catch block, and the two `decimalToPrecision` calls). Two claims were wrong and were rewritten: no KuCoin file carries `createMarketBuyOrderRequiresPrice` at this commit, and the fee warnings at `wiki/Manual.md:1171` and `:7510` are separate warnings about fee data, not repetitions of the `calculateFee` sentence at `:7470`.
+> unverified: the transpiled Python, PHP, C# and Go builds were not read, so every anchor here is a TypeScript-source anchor and the generated languages may differ in line numbers and occasionally in behaviour; the stripe-python comparison was not re-opened, and nothing in that repository was checked in this pass; the claim about how Binance treats a repeated `newClientOrderId` is a venue behaviour, not a ccxt fact, and was not tested; of the 21 files carrying the market-buy flag only `bybit.ts` and `okx.ts` were read, so the other nineteen are counted, not characterised.
+> revalidate_when: your lockfile moves off `6059cf47`; `fetch2` gains method or path discrimination, or `maxRetriesOnFailure` stops defaulting to zero; a class moves between the `OperationFailed` and `ExchangeError` subtrees; `priceToPrecision` stops rounding or `amountToPrecision` stops truncating; a venue file adds or drops `createMarketBuyOrderRequiresPrice`.
+
 An abstraction layer that adds failures the venue does not have. ccxt's own manual says a `RequestTimeout`
 leaves the outcome unknown and, fifty lines earlier, that its *parent class* "can be blindly re-tried"; the
 single funnel every signed REST call passes through predicates on the parent class with no HTTP-method
@@ -21,12 +37,12 @@ against the version in your lockfile before relying on any of them.
 
 ## The retry funnel
 
-`fetch2` (`ts/src/base/Exchange.ts:6404`) is the single funnel: `request()` (`:6455`) calls it, and every
+`fetch2` (`ts/src/base/Exchange.ts:6403`) is the single funnel: `request()` (`:6456`) calls it, and every
 generated implicit endpoint (`privatePostOrder` included) is bound to `request` by
 `this.defineRestApi(this.api, 'request')` (`:629`). Inside the loop, three checkable facts follow it:
 
 ```ts
-// ts/src/base/Exchange.ts:6435
+// ts/src/base/Exchange.ts:6431
 } catch (e) {
     if (e instanceof OperationFailed) {          // <-- the entire retry predicate
         if (i < retries) { ... await this.sleep (retryDelay); }
@@ -159,9 +175,9 @@ magnitude of the number.**
 The rounding directions are not symmetric, and this is load-bearing:
 
 ```ts
-// ts/src/base/Exchange.ts:7328   priceToPrecision
+// ts/src/base/Exchange.ts:7327   priceToPrecision
 const result = this.decimalToPrecision (price, ROUND,    market['precision']['price'],  ...);
-// ts/src/base/Exchange.ts:7340   amountToPrecision
+// ts/src/base/Exchange.ts:7339   amountToPrecision
 const result = this.decimalToPrecision (amount, TRUNCATE, market['precision']['amount'], ...);
 ```
 
@@ -175,8 +191,8 @@ and `str(1e-05) == '1e-05'` reaches the wire as illegal characters.
 
 ## `createMarketBuyOrderRequiresPrice`
 
-On 21 exchange implementations at this commit (Bybit, OKX, Coinbase, Gate, HTX, Bitget, KuCoin-family and
-others) a **spot market buy** takes the **quote cost**, not the base quantity. `ts/src/bybit.ts:4404-4425`:
+On 21 exchange implementations at this commit (Bybit, OKX, Coinbase, Gate, HTX, Bitget, Poloniex, Woo and
+others, but not KuCoin) a **spot market buy** takes the **quote cost**, not the base quantity. `ts/src/bybit.ts:4404-4425`:
 
 ```ts
 } else if (market['spot'] && isMarketOrder && (side === 'buy')) {
@@ -216,7 +232,7 @@ the resolved value at startup and never write a spot market buy without it.** OK
   the venue held your client order ID. Grep `ts/src/<venue>.ts` for where your ID lands in `request`.
 - **`calculateFee` is disclaimed by ccxt itself** (`wiki/Manual.md:7470`): "**WARNING! This method is
   experimental, unstable and may produce incorrect results in certain cases.** … Do not rely on precalculated
-  values" (repeated at `:1171` and `:7510`). Never let a computed fee reach a ledger; book
+  values" (with separate fee-data warnings at `:1171` and `:7510`). Never let a computed fee reach a ledger; book
   `commission`/`commissionAsset` as reported, and record an explicit absence.
 
 ## ccxt.pro

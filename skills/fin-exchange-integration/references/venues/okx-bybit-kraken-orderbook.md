@@ -1,5 +1,14 @@
 # OKX, Bybit and Kraken order books
 
+> **Provenance**
+> provider: OKX, Bybit and Kraken · surface: the three book-integrity models: OKX `seqId` and `prevSeqId` after the checksum retirement, Bybit's restart signal and cross-depth comparator, and Kraken's CRC32 over the top ten levels
+> version: as stated in this file's own header, all venue text read 2026-08-24. No documentation version is published by any of the three.
+> verified_at: not established
+> sources: https://www.okx.com/en-sg/help/okx-order-book-channels-checksum-field-deprecation · https://bybit-exchange.github.io/docs/v5/websocket/public/orderbook · https://docs.kraken.com/api/docs/websocket-v2/book · https://docs.kraken.com/api/docs/guides/spot-ws-book-v2/
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The checksum arithmetic written out for Kraken is reproducible against a live frame and that is the cheapest way to recheck it; nobody did so for v0.5.0. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: OKX restores a meaningful checksum, or changes `seqId` and `prevSeqId` semantics or the affected channel list; Bybit changes the restart signal or what `seq` compares; Kraken changes the checksum input, the level count or the string formatting it is computed over.
+
 Three book-integrity models that share no algorithm and no failure mode: OKX's `seqId`/`prevSeqId` after its
 checksum was retired to a constant `0`, Bybit's `u == 1` restart signal and the separate `seq` that compares
 across depths, and Kraken's CRC32 over exactly the top ten levels in their string forms. All venue text was

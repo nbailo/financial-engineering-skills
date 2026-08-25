@@ -1,5 +1,14 @@
 # Coinbase Advanced Trade, Deribit and Hyperliquid
 
+> **Provenance**
+> provider: Coinbase Advanced Trade, Deribit and Hyperliquid · surface: order identity and recovery on the three venues whose semantics break the default, plus units, post-only behaviour, cancel-on-disconnect and price validity
+> version: as stated in this file's own header, the 2026-08-24 research pass. No API version was recorded per venue.
+> verified_at: not established
+> sources: https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/orders/create-order · https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-overview · https://docs.deribit.com/api-reference/trading/private-buy · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The body already carries its own list of what the original research did not establish, and that list is still the right one to read before asserting anything from here; this block adds only that nothing on the rest of the file has been re-read since. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: Coinbase removes or restores the lookup by client order id, or changes what a replayed create returns; Deribit adds a uniqueness check to `label`; Hyperliquid documents a dedup guarantee for `cloid`, or changes the nonce window or the significant-figure price rule; any of the three changes its cancel-on-disconnect triggers.
+
 The three venues whose identity semantics break the default. Coinbase Advanced Trade is the **only** venue in
 scope with true create-order idempotency (a duplicate `client_order_id` returns the original order) and
 because the lookup-by-client-id path is deprecated, the re-POST *is* the query. Deribit has no client order ID

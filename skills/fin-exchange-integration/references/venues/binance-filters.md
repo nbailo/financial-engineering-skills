@@ -1,5 +1,14 @@
 # Binance instrument metadata and filters
 
+> **Provenance**
+> provider: Binance · surface: spot and USDⓈ-M `exchangeInfo` instrument metadata, the symbol and exchange filter sets, and the futures-only precision fields
+> version: as stated in this file's own header, the spot documentation repository at "Last Updated: 2026-07-27" and the derivatives documentation read 2026-08-24. Neither dating was re-checked here.
+> verified_at: not established
+> sources: https://github.com/binance/binance-spot-api-docs · https://developers.binance.com/docs/binance-spot-api-docs · https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it, including the dating in the header above. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: `exchangeInfo` adds a filter type or a `symbolStatus` value; `MARKET_LOT_SIZE`, `NOTIONAL` or `PERCENT_PRICE_BY_SIDE` changes its field set or its predicate; the futures notional floor moves off the value quoted here; Binance moves the spot documentation off its public repository.
+
 The filter set and its exact predicates, which order type each one validates, the metadata refresh
 discipline behind them, and the futures-only fields that are not what their names suggest.
 Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),

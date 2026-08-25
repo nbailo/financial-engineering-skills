@@ -6,8 +6,8 @@ snippet in the ecosystem. The two durable rules (use your venue's exact algorith
 sequence gap discard the book and re-snapshot rather than patch) hold regardless of what the per-venue detail
 says. **The venue-specific facts here are dated (read 2026-08-24) and volatile: re-verify against the venue's
 current documentation before relying on any of them.** Reading a price *out* of a synced book, the depth
-horizon, the absent-versus-empty distinction and the `max_age` freshness gate are the sibling file
-`prices-and-staleness.md`.
+horizon, the absent-versus-empty distinction and the `max_age` freshness gate are price staleness, a
+separate subject from book construction and not covered here.
 
 ## Contents
 

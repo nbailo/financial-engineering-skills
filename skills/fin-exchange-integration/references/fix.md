@@ -1,5 +1,21 @@
 # FIX: the two replay flags and the session layer
 
+> **Provenance**
+> provider: FIX Trading Community, plus Binance and Kraken for the venue rows · surface: the FIX 4.4 session layer and the order-entry application messages
+> version: FIX 4.4; Binance spot API documentation at repository commit `976cc580553890e92031b77306147c0ed1de5a46`, dated 2026-08-14, cloned 2026-08-25
+> verified_at: 2026-08-25
+> sources: https://www.onixs.biz/fix-dictionary/4.4/compBlock_StandardHeader.html
+> · https://www.onixs.biz/fix-dictionary/4.4/msgType_4_4.html · https://www.onixs.biz/fix-dictionary/4.4/msgType_8_8.html
+> · https://www.onixs.biz/fix-dictionary/4.4/msgType_9_9.html · https://www.onixs.biz/fix-dictionary/4.4/tagNum_11.html
+> · https://www.onixs.biz/fix-dictionary/4.4/tagNum_19.html · https://www.onixs.biz/fix-dictionary/4.4/tagNum_41.html
+> · https://github.com/binance/binance-spot-api-docs · https://docs.kraken.com/api/docs/guides/spot-clordid/
+> · https://www.fixtrading.org/standards/
+> pinned: the Binance quotes are from `fix-api.md` in the spot documentation repository at `976cc580`; the FIX 4.4 text is a dictionary edition served on 2026-08-25 and carries no revision number of its own.
+> verified: read in the FIX 4.4 Standard Message Header on 2026-08-25, verbatim, both tag comments and both receiver-processing rules for `PossDupFlag(43)` and `PossResend(97)`, and the `OrigSendingTime(122)` comment; in the SequenceReset page, the disaster-only text, the lost-messages warning and the rule that a reset can only increase the sequence number; `ClOrdID(11)` on uniqueness within a trading day and on embedding a date; `OrigClOrdID(41)` on the previous order rather than the first of the day; in Order Cancel Reject, the unknown-order literal and "Filled orders cannot be changed"; in Execution Report, the `OrdStatus(39)` precedence ordering, the rule that execution information is not carried in the same report as a state change, the `OrderQty = CumQty + LeavesQty` identity, and `ExecRefID(19)` pointing at the last corrected report. Binance's "Resend requests are currently not supported." at `fix-api.md:597`, its monotonic sequence sentence at `:179` and the `MessageHandling(25035)` values at `:514` were read in the clone. Kraken's sentence extending the uniqueness check across open orders and the FIX session was read on the client-order-id guide.
+> corrected: two claims failed this check. The literal `NONE` in Order Cancel Reject belongs to `OrderID(37)`, not to `OrigClOrdID(41)`, and the same message sets `OrdStatus` to Rejected in that case; and the quantity identity is not unconditional, since the dictionary names exceptions when `ExecType` or `OrdStatus` is Canceled, DoneForTheDay, Expired, Calculated or Rejected. Both are fixed in the prose below.
+> unverified: the FIX 4.4 text was re-read in a third-party dictionary rather than in the FIX Trading Community's own specification, which is behind a login, and the b2bits edition the file originally cited was not re-opened, so a venue-specific dictionary that overrides these comments would not be visible here. Deribit's tags `9001` and `9003` and its graceful-logout behaviour, the CME iLink 3 and FIXP quotations, the business-layer sequence note, and FIX 4.4 Appendix D were not read in this pass; the Appendix D caveat already stated in the body still stands.
+> revalidate_when: your counterparty moves above FIX 4.4 or publishes a dictionary that overrides the header comments; Binance's FIX API starts supporting Resend Request; Kraken changes the `cl_ord_id` uniqueness scope; a venue you trade implements or drops the application-layer `PossResend` check.
+
 An abstraction layer that adds failures the venue does not have. FIX splits the ambiguous-outcome problem
 into two orthogonal flags (`PossDupFlag(43)` is a session-layer assertion, `PossResend(97)` an
 application-layer one) and handling either with the other's mechanism drops orders in one direction and
@@ -84,16 +100,24 @@ that persists only the latest one cannot resolve a fill that was in flight acros
 chain, and reconcile against the whole chain.
 
 `OrderCancelReject(35=9)` echoes the request's `ClOrdID(11)` and the `OrigClOrdID(41)` of the order being
-cancelled or replaced, **except** that when `CxlRejReason` = Unknown Order, `OrigClOrdID` is set to the
-literal string `"NONE"`. Code that keys a lookup on `OrigClOrdID` without that check will search for an order
-called `NONE`. The same message notes "Filled orders cannot be changed."
+cancelled or replaced. The field that goes strange on an unknown order is **`OrderID(37)`**, not
+`OrigClOrdID`: the dictionary requires *"If `CxlRejReason(102)` = 'Unknown order', specify 'NONE'"*, and the
+same message sets `OrdStatus(39)` to Rejected in that case. So a lookup keyed on the echoed `OrderID` will
+search for an order called `NONE`, and a client that reads `OrdStatus` off this message learns the state of
+the *reject*, not of an order it has. The same message notes "Filled orders cannot be changed."
 
 ## `OrderQty = CumQty + LeavesQty`
 
-The identity holds on every `ExecutionReport(35=8)`, and **`CumQty` and `AvgPx` are cumulative across the
-whole replace chain**: they reflect all versions of the order, not the current one. A client that resets
-`CumQty` to zero on a replace mis-states its own position by exactly the pre-replace fills. Assert the
-identity on every report and treat a violation as a break, not a rounding issue.
+The identity holds on an `ExecutionReport(35=8)` reporting a live order, and **`CumQty` and `AvgPx` are
+cumulative across the whole replace chain**: they reflect all versions of the order, not the current one. A
+client that resets `CumQty` to zero on a replace mis-states its own position by exactly the pre-replace fills.
+
+It is not unconditional, and asserting it as though it were turns ordinary terminal reports into false breaks.
+The dictionary states the exceptions in the same sentence as the rule: *"There can be exceptions to this rule
+when `ExecType` and/or `OrdStatus` are Canceled, DoneForTheDay (e.g. on a day order), Expired, Calculated, or
+Rejected"*, where `LeavesQty` goes to zero without `CumQty` rising to meet `OrderQty`. Assert the identity on
+every report whose `ExecType`/`OrdStatus` is outside that set, treat a violation there as a break rather than
+a rounding issue, and book the terminal reports from `CumQty` alone.
 
 `OrdStatus(39)` has a precedence ordering: `PendingCancel` is highest, then `PendingReplace`, `DoneForDay`,
 `Calculated`, `Filled`, `Stopped`, `Suspended`, `Canceled`/`Expired`, `PartiallyFilled`,

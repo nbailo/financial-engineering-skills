@@ -1,5 +1,14 @@
 # Binance orders: identity, recovery, error classes and limits
 
+> **Provenance**
+> provider: Binance · surface: spot and USDⓈ-M order entry: client order id rules, the query endpoints that resolve a lost response and their retention, error classification, `recvWindow`, rate limits, self-trade prevention, hedge mode and cancel-on-disconnect
+> version: as stated in this file's own header, the spot documentation repository at "Last Updated: 2026-07-27" and the derivatives documentation read 2026-08-24. Neither dating was re-checked here.
+> verified_at: not established
+> sources: https://github.com/binance/binance-spot-api-docs · https://developers.binance.com/docs/binance-spot-api-docs · https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
+> unverified: all of it, including the dating in the header above. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. That applies with most force to the error-code table and the retention bounds, which are the two things here that decide whether a retry is safe. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> revalidate_when: an error code in the ambiguous set changes meaning, or a new one appears; a query endpoint's retention window moves; the client order id charset or uniqueness scope changes; the spot FIX API starts supporting Resend Request; a rate-limit header or ban escalation rule changes.
+
 Everything Binance-specific about instructing the venue that a correct client cannot infer: the
 client-order-ID uniqueness scope and the query endpoints that recover an order whose response was lost, the
 error codes that mean UNKNOWN versus the ones that mean rejected, the timing and rate-limit rules that decide
