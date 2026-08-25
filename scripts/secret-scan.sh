@@ -22,9 +22,10 @@
 # format, an exchange API key that is a bare hex blob, or a secret split across lines. A clean
 # run is evidence about these patterns over this range, and nothing wider. It reads commits
 # reachable from local refs: objects that exist only on the remote, or only in a reflog, are
-# not scanned. GitHub's own push protection, enabled on this repository, is the control that
-# covers provider-issued patterns at push time; this script is what runs before a tag and what
-# fails a pull request.
+# not scanned. GitHub secret scanning push protection, where a repository has it turned on,
+# is the control that blocks provider-issued patterns at push time. This script is the part
+# that runs before a tag and the part that fails a pull request. SECURITY.md records which of
+# those settings this repository had turned on, and on which date they were read.
 #
 # Usage:
 #   scripts/secret-scan.sh                 every commit reachable from any ref, plus the tree
@@ -50,7 +51,7 @@ PATTERNS_CS=(
   'npm-token npm_[A-Za-z0-9]{36}'
   'pypi-token pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20}'
   'json-web-token eyJ[A-Za-z0-9_-]{10}\.eyJ[A-Za-z0-9_-]{10}\.'
-  'ssh-private-key-body PuTTY-User-Key-File'
+  'putty-private-key PuTTY-User-Key-File-[0-9]'
 )
 
 # Case insensitive: a credential assigned to a name that says what it is. Two things keep the
@@ -155,5 +156,6 @@ if [ "$findings" -gt 0 ]; then
   echo "the commit does not un-publish it."
   exit 1
 fi
-echo "secret-scan: no match over $scanned, for ${#PATTERNS_CS[@]} literal-prefix patterns and"
-echo "${#PATTERNS_CI[@]} assignment patterns. This is evidence about those patterns only."
+echo "secret-scan: no match over $scanned."
+echo "Patterns checked: ${#PATTERNS_CS[@]} literal-prefix, ${#PATTERNS_CI[@]} assignment."
+echo "That is evidence about these patterns over this range, and nothing wider."
