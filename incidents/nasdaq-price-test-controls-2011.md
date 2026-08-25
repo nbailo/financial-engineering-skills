@@ -1,6 +1,6 @@
 # NASDAQ Trade Through and SHO Through — a configuration edit that starved two compliance gates of their input, then a shared misreading that removed one (2011-10 and 2012-08)
 
-**Domain:** Exchange pre-trade compliance controls | **Loss:** 2,004 trade-throughs initially reported as "no trade-throughs"; 3,820 executions / 1,745,623 shares / 92 securities in the second episode; "over 4,400 short sales that did not comply with the price test" across both; part of NASDAQ's $10,000,000 penalty | **Failure class:** Change, deploy & configuration (with missing control) | **Skill:** advanced/fin-matching-and-settlement
+**Domain:** Exchange pre-trade compliance controls | **Loss:** 2,004 trade-throughs initially reported as "no trade-throughs"; 3,820 executions / 1,745,623 shares / 92 securities in the second episode; "over 4,400 short sales that did not comply with the price test" across both; part of NASDAQ's $10,000,000 penalty | **Failure class:** Change, deploy & configuration (with missing control) | **Skill:** advanced/fin-matching-engine
 
 ## What happened
 

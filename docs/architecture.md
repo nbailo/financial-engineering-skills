@@ -186,10 +186,11 @@ reconciliation design or deterministic simulation.
 
 ## 9. What is in `advanced/`, and why it is not installed
 
-`advanced/fin-matching-and-settlement/` holds the skill for code that **is** the venue: matching against
-resting orders, allocation, auctions, self-trade prevention, price bands, market-data publication, netting,
-settlement and liquidation. It is not installed by `npx skills add`, is not in the routing table, and does not consume the shared
-description budget. Its audience is a small fraction of the users of the other six, and a description that
+`advanced/fin-matching-engine/` holds the skill for code that **is** the venue: matching against resting
+orders, allocation and residue, auctions, self-trade prevention, price bands, halt and resume, and
+single-writer recovery. `advanced/fin-market-data-publication/` holds the skill for code that publishes a
+feed it originates. Neither is installed by `npx skills add`, neither is in the routing table, and neither
+consumes the shared description budget. Its audience is a small fraction of the users of the other six, and a description that
 sits in every listing is paid for by everyone. Shipping it by default would also make the package read as a
 toolkit for building trading venues, which it is not: the common case is being a venue's *client*, and that
 is `fin-exchange-integration`. Nothing in `skills/` may link into it, because an installed copy would not

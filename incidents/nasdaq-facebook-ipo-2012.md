@@ -1,6 +1,6 @@
 # NASDAQ Facebook IPO cross — a revalidation loop that consumed one event per pass, then a mitigation that deleted the check (2012-05-18)
 
-**Domain:** Exchange auction/cross computation and market data | **Loss:** $10,000,000 penalty; $62M voluntary accommodation fund; $10.8M error-account profit; a $35.3M haircut producing a $26.5M net-capital deficiency at NES | **Failure class:** Concurrency & ordering | **Skill:** advanced/fin-matching-and-settlement
+**Domain:** Exchange auction/cross computation and market data | **Loss:** $10,000,000 penalty; $62M voluntary accommodation fund; $10.8M error-account profit; a $35.3M haircut producing a $26.5M net-capital deficiency at NES | **Failure class:** Concurrency & ordering | **Skill:** advanced/fin-matching-engine
 
 ## What happened
 
