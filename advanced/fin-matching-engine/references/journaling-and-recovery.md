@@ -14,6 +14,13 @@ extend the record. A replicated log with quorum acknowledgement, or a consensus 
 that log, meets the same property by a different mechanism, and every mechanical detail here should be read
 as one way to satisfy it rather than as a required schema.
 
+**And one rule that binds before any of the mechanism does.** Recovery has to reproduce what this engine
+actually decided, not what today's build would decide from the same inputs. So either the authoritative
+decisions are persisted immutably and recovery loads them, or every journal record is covered by a journaled
+reducer identity and replay applies the version that was in force. Replaying a command stream through
+changed matching logic is shadow analysis or migration verification, never authoritative recovery. §13
+states this in full, and nothing earlier in the file overrides it.
+
 ## Contents
 
 1. **What is an input**: the inbound command stream versus derived outputs; why journaling outputs does not give replay.
@@ -28,6 +35,7 @@ as one way to satisfy it rather than as a required schema.
 10. **Deterministic simulation testing**: what it costs, what it buys when authority is SELF, and what it still misses.
 11. **Assertion policy**: live-in-release versus saturate-and-emit versus compiled-out, decided per path.
 12. **Recovery runbook artefacts**: what an operator needs to reproduce a production incident from the journal alone.
+13. **Authoritative recovery versus shadow replay**: persisted decisions or a pinned reducer; why replay under changed logic is a different artefact with a different name.
 
 ---
 
@@ -36,9 +44,9 @@ as one way to satisfy it rather than as a required schema.
 An **input** is anything that, if you did not have it, would make the next state transition unreproducible.
 For a matching engine that is a strictly larger set than "orders".
 
-| Journal as input | Never journal as the record | Why |
+| Journal as input | Not an input | Why |
 |---|---|---|
-| New / cancel / replace / mass-cancel commands, with the arrival order the sequencer assigned | Executions, book deltas, top-of-book | Outputs are a *function* of inputs; journaling them bakes the current matching logic into the durable record |
+| New / cancel / replace / mass-cancel commands, with the arrival order the sequencer assigned | Executions, book deltas, top-of-book | These are outputs, a *function* of the inputs, so they cannot serve as the input stream: from outputs alone you cannot say what a command was, and you cannot replay. They are still persisted, as immutable authoritative decisions (§13), which is a second record with a different job |
 | Session events: logon, logout, disconnect, cancel-on-disconnect trigger | The in-memory `Vec<Execution>` you built this pass | It vanishes on crash by definition |
 | Admin/control commands: halt, resume, band change, instrument definition, config load | The config *file* read at startup | A file re-read at recovery time may differ from the one the pre-crash process read |
 | Injected time: a `TimeTick` event carrying the timestamp the core is allowed to see | `Instant::now()` inside the core | See §4 |
@@ -51,9 +59,15 @@ replay-from-snapshot; a production bug is diagnosed by copying the event sequenc
 replaying it there. The Business Logic Processor is single-threaded and in-memory, with **no automated rollback
 facility**, which is the reason validation must complete *before* state mutation, not after.
 
-**Journaling outputs is the failure mode with the longest half-life.** It looks like event sourcing, passes a
-"we have a durable log" review, and then cannot rebuild state after a matching-logic fix, cannot answer "what
-would this order have done", and has permanently frozen a matching bug into the only record you own.
+**Journaling outputs *instead of* inputs is the failure mode with the longest half-life.** It looks like event
+sourcing, passes a "we have a durable log" review, and then cannot rebuild state after a matching-logic fix,
+cannot answer "what would this order have done", and has permanently frozen a matching bug into the only
+record you own.
+
+**Its mirror image is subtler and ships more often**: journaling the inputs correctly, and then re-deriving
+authoritative state at recovery time through whatever build happens to be deployed. That passes the same
+review, keeps passing it, and produces a history that is internally consistent, digest-clean and **not the
+one the venue published**. §13 is the rule that separates the two.
 
 ## 2. Ordering and flush
 
@@ -194,8 +208,10 @@ fn on_command(ids: &mut Ids, book: &mut Book, cmd: &Command, now: Nanos) -> Vec<
   also easy to assert in a design note and easy to lose on the wire: a single `let _ = tx.send(ev)` that can
   drop an event makes the claim true of the generator and false of the transport.
 - **Recover `Ids` by replay, never from a counter table.** After a snapshot at journal position P, `Ids` comes
-  from the snapshot and is advanced by replaying P+1..end. Reading a `MAX(exec_id)` from a table you also write
-  gives you an ID space that diverges the moment a transaction rolls back.
+  from the snapshot and is advanced by replaying P+1..end, under the reducer that was in force for that range
+  (§13). Reading a `MAX(exec_id)` from a table you also write gives you an ID space that diverges the moment a
+  transaction rolls back. Where the design persists decisions immutably (§13, option A), the identifiers come
+  back with those records and the replay checks them rather than mints them.
 - **The generator lives beside the matcher, not in the gateway.** A gateway-assigned sequence orders arrivals;
   it does not order *executions*, and executions are what the replay must reproduce.
 
@@ -206,10 +222,11 @@ This is the artefact that licenses the word "replayable". Without it, delete the
 ```python
 def test_replay_is_byte_identical(tmp_path):
     seed = 0xC0FFEE                       # named in the test, not derived from the clock
-    cmds = load_journal("fixtures/2026-03-11-open.journal")   # captured from production
-    live = read_emitted("fixtures/2026-03-11-open.events")    # what the engine actually sent
+    # Synthetic. Both sides are built by tests/fixtures/build_opening_cross.py; neither is a capture.
+    cmds = load_journal("fixtures/synthetic/opening-cross-residue.journal")
+    live = read_emitted("fixtures/synthetic/opening-cross-residue.golden-events")
 
-    engine = Engine(seed=seed, snapshot=None)
+    engine = Engine(seed=seed, snapshot=None, reducer=REDUCER_UNDER_TEST)   # pinned; see §13
     replayed = []
     for rec in cmds:
         assert crc32c(rec.raw) == rec.crc          # the fixture itself is verified
@@ -221,6 +238,11 @@ def test_replay_is_byte_identical(tmp_path):
             raise AssertionError(diff_report(i, a, b))   # index, field-by-field, hex of both
 ```
 
+- **Fixtures are synthetic and built by a checked-in generator.** A dated capture from a production session is
+  a debugging artefact, not a fixture: it carries participant identity, a reviewer cannot regenerate it, and
+  its right-hand side is whatever build emitted it on the day, so re-baselining it silently absorbs exactly
+  the divergence §13 exists to surface. Name each fixture for the scenario it exercises, generate both sides
+  from a named builder, and regenerate the golden side only through a reviewed command that records why.
 - **Byte-compare the wire encoding, not a decoded struct.** Comparing decoded structs hides padding, encoding
   and field-order divergence: the class §4 row "uninitialised memory" produces.
 - **Report the first divergence with context**, not a boolean: sequence index, the two payloads in hex, and the
@@ -264,9 +286,13 @@ snapshot_manifest {
 - **Truncation rule:** a journal segment may be deleted only when (a) it is entirely below the position of a
   snapshot that has been verified by the replay above, and (b) at least one older verified snapshot survives.
   One snapshot plus truncation to it is a single point of failure for the entire history.
-- **A snapshot does not free you from keeping the journal.** LMAX snapshots nightly and keeps the input stream;
-  the input stream is what lets you re-derive state under *changed* logic, which is the whole reason for
-  journaling inputs rather than outputs.
+- **A snapshot does not free you from keeping the journal.** LMAX snapshots nightly and keeps the input stream.
+  The input stream is what lets you ask what *changed* logic would have done, which is a different question
+  from what you did: that run is shadow analysis or migration verification, and §13 keeps it apart from
+  authoritative recovery.
+- **The `build` field above is necessary and not sufficient.** A journal spans deploys, so one build identity
+  attached to a snapshot cannot say which reducer applied record 4,000,001. The reducer-epoch event in §13 is
+  what makes that mapping total.
 
 ## 8. Crash points
 
@@ -280,7 +306,7 @@ unused on the exact crash it exists for.
 | 1 | Command received, before append | absent | untouched | n/a | n/a | Nothing. The command is lost; the sender's timeout is indeterminate and resolves by its own client-order-id query, not by your guessing |
 | 2 | After append, before flush returns | torn or absent tail | untouched | n/a | n/a | Truncate at the last valid CRC. Same outcome as 1 |
 | 3 | After flush, before mutation | present | untouched | n/a | n/a | **Replay applies it.** This is the case the flush exists for |
-| 4 | Mid-match, before commit | present | in-memory only, gone | none | n/a | Replay re-matches from the pre-command book; result must equal what the pre-crash process would have produced |
+| 4 | Mid-match, before commit | present | in-memory only, gone | none | n/a | Replay re-matches from the pre-command book, **with the reducer that was in force** (§13); the result must equal what the pre-crash process would have produced, which is a claim about that reducer and not about the current build |
 | 5 | After commit, before publish | present | durable | rows unpublished | nothing sent | Relay resumes from the lowest unpublished `seq`; consumers see a delayed, gap-free stream |
 | 6 | Mid-publish: sent, `published_at` not updated | present | durable | row unpublished | sent once | Relay resends; **consumer dedupes on `seq`**. This is why the dedupe key must be consumer-visible |
 | 7 | During recovery replay | present | partially rebuilt | n/a | n/a | Restart recovery from the snapshot; replay is idempotent, so a partial replay leaves nothing to undo |
@@ -399,6 +425,8 @@ here turns a deterministic engine into an undebuggable one at the worst possible
 | Journal segments | Length-prefixed, CRC'd input records, with the epoch in each segment header | The inputs. Without the CRC you cannot tell where a torn tail ends |
 | Snapshot + manifest | State, `journal_seq_applied`, `ids`, `book_digest` | The starting point; the position is what makes replay reproducible |
 | Build identity | git sha, compiler version, optimisation level, lockfile digest. Recorded **in the snapshot manifest**, not inferred | "Same journal, same build, same state" has three terms; the second is the one nobody records |
+| Reducer epochs | The journaled `matcher_version`, `config_digest` and `build` covering every range of the journal (§13) | Without it the operator replays through today's build and gets a history that is not the one the venue published, with nothing in the output saying so |
+| Authoritative decisions | The executions, priority assignments and minted identifiers as persisted immutable records, if the design takes §13's option A | They are what recovery loads. If they exist, the replay is a check on them rather than the source of them |
 | Config as journaled events | Every band, tick, limit and instrument definition entered the core as an input event | A config file re-read at replay time is a different config, and the divergence looks like a matching bug |
 | Injected time and seeds | The `TimeTick` values and the RNG seed, in-band in the journal | Replay must feed the same time; a laptop's clock is not the pre-crash clock |
 | Emitted event capture | The wire bytes the engine actually sent, with their sequence numbers | The right-hand side of the byte-comparison. Capturing decoded events instead makes divergences invisible |
@@ -409,3 +437,61 @@ SKILL.md asks:
 **hand an engineer these files and nothing else, and they reproduce the emitted event sequence byte for byte.**
 If they need a database dump, a log grep or a config file from a host, the journal is not the authority; it is
 a supplementary log, and the engine is not replayable regardless of what the design note says.
+
+## 13. Authoritative recovery versus shadow replay
+
+Recovery must reproduce what this engine **decided**, not what the currently deployed build would decide from
+the same inputs. Those are the same thing only while the matching logic, the configuration and the binary are
+all unchanged, and they stop being the same thing the first time any of the three moves. Journaling inputs
+and re-deriving is the right architecture; it becomes a correctness bug the moment the reducer that
+re-derives is not the reducer that decided. The bug is silent by construction, which is what makes it worth a
+section: the replay completes, the digests agree with each other, and nothing in the run compares its output
+to what was actually emitted to participants.
+
+Two designs satisfy the property. A system may use both, and a venue usually should.
+
+**A. Persist the decisions.** The executions, the priority assignments and every identifier you minted are
+written as immutable authoritative records in the same commit that produced them, and recovery **loads**
+them rather than re-deriving them. Replay then rebuilds only what is needed to keep going: the book, the
+queues, the counters. Reach for this whenever the answer to "what did we execute" has to survive a
+matching-logic change, which for a venue is always, and note that it is not in tension with journaling
+inputs. The input stream is still the record of what you were asked to do; the decision store is the record
+of what you did.
+
+**B. Pin the reducer.** Every journal record is covered by a preceding journaled event carrying the identity
+of the reducer that applied it, and recovery applies each record with the version that was in force. The
+cost is real and should be stated at the design review: the deployable set of reducer versions is retained
+for as long as the journal is, and a build you can no longer produce is a range of history you can no longer
+recover.
+
+```
+reducer_epoch {                    // journaled as an input event on every deploy and every config change
+  effective_from_seq: u64,         // the first input record this reducer version applies to
+  matcher_version:    "2026.08.3", // the version of the matching logic itself
+  config_digest:      [u8; 32],    // over every band, tick, limit and instrument definition in force
+  build:              { git_sha, compiler_version, opt_level, lockfile_digest }
+}
+```
+
+**What you may not do** is replay the command stream through the current build and treat the result as the
+authoritative history. It is a *different* history that happens to start from the same inputs, and every
+downstream consumer has already booked the first one. Where the two disagree, the participants are right and
+the recovered state is wrong, and no assertion inside the recovering process can detect that.
+
+Replay under changed logic is still worth running. It is a different artefact, and the fix is to name it as
+one at the point it is produced, in the tool's output and in the file name, so nothing downstream can mistake
+the third row here for the first:
+
+| Run | Reducer | What the output is | What it may be used for |
+|---|---|---|---|
+| **Authoritative recovery** | the one that decided, or the persisted decisions themselves | the history the venue already published | resuming, answering a participant, settling, reporting |
+| **Migration verification** | a candidate reducer, against a captured command stream | a diff against the emitted sequence | deciding whether a change is behaviour-preserving before it ships |
+| **Shadow analysis** | any reducer | a counterfactual | "what would this have done", capacity work, incident forensics |
+
+A byte-comparison that fails after a deliberate matching change is **migration verification reporting
+correctly**. Re-baselining the golden file to make CI green deletes the only description of what the change
+did to the tape. The divergence is the change's specification: someone reads it, and someone signs it off.
+
+**This does not weaken the determinism harness in §6, it scopes it.** That harness proves one reducer version
+is reproducible. It says nothing about whether version N+1 agrees with version N, and a suite that only ever
+replays the current build against a golden file regenerated by the current build proves nothing at all.

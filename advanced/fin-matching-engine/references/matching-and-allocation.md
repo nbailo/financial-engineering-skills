@@ -1,5 +1,31 @@
 # Matching, allocation and auction computation
 
+> **Provenance**
+> provider: Nasdaq, US equities · surface: OUCH 5.0 order entry and TotalView-ITCH 5.0 market data ·
+> version: OUCH 5.0, "Updated October, 2025", revision 1.05 dated 7 October 2025; TotalView-ITCH 5.0,
+> revision log ends 28 April 2023
+> verified_at: 2026-08-25
+> sources: https://www.nasdaqtrader.com/content/technicalsupport/specifications/TradingProducts/OUCH5.0.pdf
+> · https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/NQTVITCHspecification.pdf
+> verified: fetched and read directly today. OUCH 5.0: Replace always resetting time priority and the
+> 500/600 double-liability worked example; Replace `Quantity` being "Total number of shares liable,
+> inclusive of previous executions and Self Match Prevention decremented shares on this order chain";
+> Cancel carrying an "intended order size" with zero cancelling the balance; Modify type M being
+> priority-preserving, decrease-only, with the S/T/E side changes only; superfluous cancels being silently
+> ignored; the AIQ Canceled fields and their divergence note; the AIQ Strategy enumeration, five strategies
+> across four scope levels plus a port default and an AIQ Group ID; Order Priority Update assigning a new
+> order reference number. TotalView-ITCH 5.0: Order Replace omitting side, symbol and attribution; Modify
+> effects being cumulative and display-shares-zero killing the order.
+> unverified: every CME Globex claim in sections 1, 2, 4, 5 and 7 was NOT re-fetched in this pass;
+> cmegroup.com timed out on two attempts on 2026-08-25, so the step vocabulary, the algorithm identifier
+> set, the priority-destroying edit set, the Pro-Rata Minimum test, the FIFO exception and the
+> display-quantity refresh and requeue rules rest on their inline attribution alone. Also NOT re-fetched:
+> the Coinbase Exchange STP vocabulary and resting-price convention, Kalshi's `self_trade_prevention_type`
+> values, Binance `preventedQuantity` and its `TRANSFER` mode, the Databento one-lot bound, FIX
+> `OrderQty`/`LeavesQty`, SEC Rel. 34-69655, SEC Rel. 34-74032 and CFTC v. Coinbase.
+> revalidate_when: Nasdaq publishes an OUCH or TotalView-ITCH revision, or the AIQ Strategy enumeration
+> changes; or before any CME-derived rule here is copied into code.
+
 The allocation pipeline of a venue that owns its book: how an aggressing quantity is split across resting orders, why every
 rounding step leaves a residue that must be assigned by a named second pass, what preserves and what destroys time priority, and
 how a call auction or cross computes an uncrossing price over an input set that must be frozen or fully drained before the
@@ -21,11 +47,11 @@ rulebook, and a test named for the choice is what proves the code implements the
 5. **Priority preservation matrix**: replace vs modify vs reducing cancel; CME's three priority-destroying edits including the account-number change.
 6. **Quantity conventions that share one word**: OUCH Cancel intended-total, OUCH Replace chain-cumulative, ITCH Modify decrement; conversion table and the assertion that catches a mis-read.
 7. **Iceberg and reserve orders**: display vs total, refresh arithmetic, requeue at the back, what the feed reveals.
-8. **Self-trade prevention as the implementer**: four incompatible semantics, no neutral default, counterfactual reporting, account-family scope.
+8. **Self-trade prevention as the implementer**: scope and strategy as two separate published choices, no neutral default, counterfactual reporting.
 9. **Auction and cross computation**: the uncrossing algorithm, the tie-break ladder, indicative price and imbalance, the LULD auction collar.
 10. **The freeze-or-drain contract**: closing the ports vs draining the queue, the freshness assertion at commit, the Facebook IPO interleaving step by step.
 11. **Worked interleavings**: aggressor vs cancel, aggressor vs replace, cross recomputation vs a cancel burst, each with the emitted event sequence.
-12. **Property tests for an allocator**: conservation, cap, priority monotonicity, determinism under shuffle, the residue invariant.
+12. **Property tests for an allocator**: conservation, cap, priority monotonicity, determinism under shuffle, the residue invariant, the published STP pair, exposure conservation across a fill.
 
 ---
 
@@ -250,22 +276,37 @@ quantity exists and how a refresh appears.
 
 ## 8. Self-trade prevention as the implementer
 
-Four incompatible semantics ship today, with **no neutral default**, which makes this a rulebook entry rather than an
-implementation detail: whichever you choose is observable in the print and in what the counterparty is told. Resting R = 500 and
-incoming I = 300, both account family X, same price:
+**There is no neutral default, and the strategy is only half the decision.** Two things are published separately: the **scope**,
+which decides whose orders count as the same party, and the **strategy**, which decides what happens when two of them meet.
+Getting either from memory produces a print your own rulebook does not authorise, and it is observable both in the tape and in
+what the counterparty is told. So this is a rulebook entry, not an implementation detail, and the pair is pinned by a test named
+for the exact choice.
 
-| Mode | Resting after | Incoming after | Aggressor continues? |
+Nasdaq OUCH 5.0 publishes both as order-level options with a port default, and this is the part read directly on 2026-08-25:
+the `AIQ Strategy` tag enumerates **Decrement Both**, **Decrement Both No Details**, **Cancel Oldest**, **Cancel Newest** and
+**Use Remover**, offered at each of four scope levels, **Firm**, **Organization**, **Affiliate** and **Match Any**, with
+`N = Disabled` and `* = use port default`; a separate `AIQ Group ID` tag exists "to enable self match prevention at a more
+granular level within a given matching level". Five strategies over four scopes is twenty published combinations on one venue,
+which is the measure of how little a default is worth here. **Use Remover's semantics were not established in this pass**: the
+name is in the enumeration and the behaviour is not stated on the pages read, so do not infer it.
+
+Resting R = 500 and incoming I = 300, the same party under whatever scope you published, same price:
+
+| Strategy | Resting after | Incoming after | Aggressor continues? |
 |---|---|---|---|
-| **decrement-both** (Nasdaq AIQ "Decrement both"; Coinbase `dc`, the default) | 200 | 0 | no (I exhausted) |
-| **cancel-oldest** (AIQ "Cancel oldest"; Coinbase `co`) | cancelled in full (500 removed) | 300 | **yes** |
-| **cancel-newest** (Coinbase `cn`) | 500, untouched | cancelled in full | no |
-| **cancel-both** (Coinbase `cb`) | cancelled in full | cancelled in full | no |
+| **decrement-both** | 200 | 0 | no (I exhausted) |
+| **cancel-oldest** | cancelled in full (500 removed) | 300 | **yes** |
+| **cancel-newest** | 500, untouched | cancelled in full | no |
+| **cancel-both** | cancelled in full | cancelled in full | no |
 
-Coinbase's `dc` has a degenerate case: **equal sizes cancel both orders**. Where the sides carry different instructions,
-Coinbase documents that **the taker's instruction takes precedence**. Kalshi requires the field on entry
-(`self_trade_prevention_type ∈ {taker_at_cross, maker}` on create-order-v2), a fifth vocabulary for the same decision. Binance
-reports a cumulative `preventedQuantity` separately from executed quantity and ships a `TRANSFER` mode moving prevented quantity
-and notional *between accounts sharing a `tradeGroupId`*.
+Vendor vocabularies differ for the same four rows, and the following were **not re-fetched in this pass**; they are carried on
+their earlier attribution and must be re-read before being relied on. Coinbase Exchange is recorded as spelling them `dc`, `co`,
+`cn` and `cb`, with `dc` the default, with the degenerate case that **equal sizes cancel both orders**, and with the **taker's
+instruction taking precedence** where the two sides differ. Kalshi is recorded as requiring the field on entry with
+`self_trade_prevention_type ∈ {taker_at_cross, maker}`, a fifth vocabulary for the same decision. Binance is recorded as
+reporting a cumulative `preventedQuantity` separately from executed quantity, and as shipping a `TRANSFER` mode that moves
+prevented quantity and notional *between accounts sharing a `tradeGroupId`*. Treat each as a claim about a venue you must check,
+not as a fact you may implement against.
 
 **Report the counterfactual, as a counterfactual.** Nasdaq's AIQ Canceled message carries `Decrement Shares` ("incremental, not
 cumulative"), `Quantity prevented from trading` ("Shares that would have executed if the trade would have occurred"), the price
@@ -278,10 +319,12 @@ and `prevented = 300`.
   volume**. CFTC v. Coinbase (March 2021, $6.5M): two internally operated programs "matched orders with one another … resulting
   in trades between accounts owned by Coinbase", and that volume propagated into CME's Bitcoin Real Time Index, CoinMarketCap
   and the NYSE Bitcoin Index.
-- **Scope is the account family**, not the strategy, the session or the API key. The decision is made **before** any execution
-  is emitted for that pair, inside the deterministic step, and prevented quantity enters the remaining-quantity identity (§6:
-  OUCH Replace's total is "inclusive of previous executions **and Self Match Prevention decremented shares**"). Decrementing for
-  STP without recording `stp_decremented` computes the wrong exposure on the chain's next replace.
+- **Scope is published, not assumed.** "The account family" is not a universal scope, and neither is the session, the strategy
+  or the API key: OUCH 5.0's Firm, Organization, Affiliate and Match Any levels plus a Group ID are one venue's answer, and a
+  different venue partitions differently. Whatever you publish, the decision is made **before** any execution is emitted for that
+  pair, inside the deterministic step, and prevented quantity enters the remaining-quantity identity (§6: OUCH Replace's total is
+  "inclusive of previous executions **and Self Match Prevention decremented shares**"). Decrementing for STP without recording
+  `stp_decremented` computes the wrong exposure on the chain's next replace.
 
 ## 9. Auction and cross computation
 
@@ -381,10 +424,19 @@ cancel of `O1` (cmd `1002`).
 | Sequenced order | Emitted event sequence |
 |---|---|
 | `1002` before `1001` | `5001 CancelAck(O1, leaves=0)` → `5002 OrderAccepted(sell 300)`; the sell rests, no execution. The ack is truthful |
-| `1001` before `1002` | `5001 Execution(match=77, O1, 200 @ 100)` → `5002 Execution(match=77, aggressor, 200 @ 100)` → `5003 CancelReject(O1, ORDER_TERMINAL)`. **CancelReject, never CancelAck**: a cancel on a terminal order is rejected |
+| `1001` before `1002` | `5001 Execution(match=77, O1, 200 @ 100)` → `5002 Execution(match=77, aggressor, 200 @ 100)` → then whatever your protocol publishes for a cancel of an order that is already terminal. **Never a CancelAck** |
 
 The forbidden third outcome is `CancelAck` followed by an execution on that order. A design that acks optimistically must be
 able to **retract** the ack before the execution is emitted (NASDAQ ¶24 fn 4, where notifying members "was not discussed").
+
+**What the wire carries instead is a rulebook entry, and at least two answers ship.** A typed reject naming the terminal state
+is one. Silence is the other, and Nasdaq OUCH 5.0 chooses it explicitly: "Note that the only acknowledgment to a Cancel Order
+Message is the resulting Canceled Order Message. There is no “too late to cancel” message since by the time you received it, you
+would already have gotten the execution. Superfluous Cancel Order Messages are silently ignored." Read directly on 2026-08-25.
+Note what that does and does not license. Internally the `(terminal, cancel)` pair is still enumerated and still refused, and
+the refusal is still counted and still visible to an operator; the protocol decides only what leaves the process. An engine that
+omits the pair from its transition table, rather than deciding to emit nothing for it, will eventually take the branch that
+mutates a terminal order.
 
 **(b) Aggressor versus concurrent replace**, from the venue side (Nasdaq's own interleaving):
 
@@ -416,6 +468,8 @@ with no arrival, and the freshness assertion is what proves that happened.
 | Residue bound | `residue < participant_count`, and each participant gains **at most one** extra lot | a residue pass that runs twice; a pro-rata denominator error |
 | Price | every execution's price is the one your published convention selects: a consumed resting price in a continuous book, the single uncrossing price in a cross | charging the aggressor its own limit under a resting-price convention (§4) |
 | Pipeline termination | `pipeline[-1].exact` for every configured product | a product configured to end in Pro-Rata |
+| Self-trade prevention | the published scope and strategy, exercised at `R > I`, `R = I` and `R < I`, with the counterfactual recorded and excluded from volume | a strategy assumed from memory; the equal-size degenerate case; a scope that is narrower than the one published |
+| Exposure conservation | after each fill, `Δ working_leaves == −Δ filled_position`, and both change in the same commit as the execution | a position booked without decrementing `leaves`, which double-counts against a credit limit |
 | Replay identity | same command stream + same seed ⇒ byte-identical emitted event sequence | a clock read, RNG or unordered iteration inside the core |
 
 ```python

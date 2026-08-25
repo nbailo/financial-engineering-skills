@@ -1,5 +1,27 @@
 # Pre-trade risk controls, halts and resumption
 
+> **Provenance**
+> provider: Nasdaq, US equities · surface: TotalView-ITCH 5.0, the Broken Trade message and the Clearly
+> Erroneous Policy it names · version: TotalView-ITCH 5.0, revision log ends 28 April 2023
+> verified_at: 2026-08-25
+> sources: https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/NQTVITCHspecification.pdf
+> · https://www.onixs.biz/fix-dictionary/4.4/tagNum_856.html (third-party FIX dictionary, not a primary source)
+> verified: fetched and read directly today, section 1.5.3 of TotalView-ITCH 5.0: the Broken Trade message
+> is sent "whenever an execution on Nasdaq is broken", an execution "may be broken if it is found to be
+> “clearly erroneous” pursuant to Nasdaq’s Clearly Erroneous Policy", "A trade break is final; once a trade
+> is broken, it cannot be reinstated", the message carries the Match Number "of the execution that was
+> broken" referencing a previously transmitted Order Executed, Order Executed With Price or Trade Message,
+> and a book-building consumer "may ignore these messages as they have no impact on the current book".
+> unverified: whether any venue other than Nasdaq makes a bust final; whether a rulebook that adjusts a
+> trade price instead of cancelling it exists (cmegroup.com timed out on two attempts today, so CME Rule 588
+> was NOT read); the FIX TradeReportType enumeration in section 7 was read only in a third-party FIX
+> dictionary, never in a FIX Trading Community document. NOT re-fetched in this pass, and carried on their
+> inline attributions alone: SEC Rel. 34-63241, SEC Rel. 34-70694, the SEC order against Goldman Sachs of
+> 20 August 2013, FCA Final Notice Citigroup Global Markets 17 May 2024, Compound Proposal 62, the TSE
+> report of 1 October 2020.
+> revalidate_when: Nasdaq revises TotalView-ITCH or its Clearly Erroneous Policy; or before section 7 is
+> relied on for any venue other than Nasdaq.
+
 The controls that must run before an order reaches the book, and what happens to the obligations already
 outstanding when one of them trips. Every rule here is a property, not an operating model: the specific
 thresholds, the escalation path and the people involved belong to the venue that runs the engine, and this
@@ -9,8 +31,8 @@ again. Public enforcement actions appear as illustrations of a property, never a
 
 ## Contents
 
-1. **Reject before the effect**: synchronous rejection in the path that creates the obligation, and why the
-   measurement basis is what was entered rather than what came back.
+1. **Reject before the effect**: synchronous rejection in the path that creates the obligation, why the
+   measurement basis is what was entered rather than what came back, and the three exposures a fill moves.
 2. **Band derivation**: per instrument, per session state, the cross-universe bound, and the sentinel price
    that a missing feed substitutes.
 3. **Per-item limits need an aggregate companion**: counters keyed to the inbound unit, and the basket that
@@ -18,9 +40,9 @@ again. Public enforcement actions appear as illustrations of a property, never a
 4. **Separate gates**: risk-increasing and risk-reducing paths, and what stays callable while halted.
 5. **Automatic to trip, independent and auditable to reset**: exercise latency, bulk override, and who is
    allowed to clear a flag.
-6. **The six meanings of halt**: the obligation state each level leaves behind.
-7. **Resumption and busts**: reconstruct from the authority before accepting again; the bust is out of band
-   and final.
+6. **One decomposition of the word halt**: six levels, and the obligation state each leaves behind.
+7. **Resumption, busts and corrections**: reconstruct from the authority before accepting again; whether a
+   bust is final, and whether it is even the remedy, comes from the protocol and the rulebook.
 
 ---
 
@@ -39,15 +61,42 @@ rather than executions obtained". A US rule is cited here because it says the th
 is not jurisdictional. An engine that sums executions measures a quantity smaller than its own exposure by
 the size of the open working book, and the gap grows exactly when the book grows.
 
-So the exposure counter increments at submit, and decrements on an acknowledged cancel, a reject or an
-expiry. Never on a fill alone: a fill converts working exposure into a position, it does not reduce what
-has been committed. The counter-example is a firm whose capital utilisation was "only calculated … every 30
-minutes", alerting on a percentage threshold, with "no automated process to prevent the entry of additional
-orders" on breach (SEC order against Goldman Sachs, 20 August 2013, ¶12). Every number in that sentence was
-correct. None of them rejected anything.
+The counter-example is a firm whose capital utilisation was "only calculated … every 30 minutes", alerting
+on a percentage threshold, with "no automated process to prevent the entry of additional orders" on breach
+(SEC order against Goldman Sachs, 20 August 2013, ¶12). Every number in that sentence was correct. None of
+them rejected anything.
 
 Duplicate detection belongs in the same path and is calibrated per counterparty rather than globally: what
 is a duplicate for one participant is normal traffic for another.
+
+### Three exposures, not one
+
+The word "exposure" names three different quantities, and a fill moves two of them in a single step. A gate
+keeping one counter is wrong in one direction or the other, and which direction depends on which of the
+three the author had in mind when they wrote it.
+
+| Exposure | What it counts | What a fill does to it | What else moves it |
+|---|---|---|---|
+| **Working order** | `Σ leaves` over live orders, at the price each would execute at | **decrements** it by the filled quantity | increments at accept; decrements on an acknowledged cancel, a reject, an expiry, and on a self-match-prevention decrement |
+| **Filled position** | the net position and its notional | **increments** it by the same filled quantity, signed | a bust or a correction, retroactively; nothing else |
+| **Settlement** | delivery and payment obligations already created, until clearing or settlement finality | creates one on each side | settlement, novation to a clearing house, or an explicit void |
+
+Three consequences, and they are the whole of it.
+
+- **A fill is one atomic transition, not two events.** The execution, the `leaves` decrement and the
+  position move commit together. A design that emits the execution and moves the position in one step and
+  decrements `leaves` in another has a window in which the same quantity is committed twice, and a crash
+  inside that window makes the double permanent.
+- **Do not net the first two into one counter.** Incrementing a position without decrementing `leaves`
+  double-counts the same quantity; decrementing `leaves` without booking the position under-counts it. A
+  credit or capital check is written against working **plus** filled, and it says so at its definition.
+- **Settlement exposure outlives the other two.** A round trip that ends flat is zero position and two live
+  delivery obligations. A gate reading net position alone reports no exposure at exactly the moment two
+  deliveries are outstanding, which is the moment a counterparty failure costs the most.
+
+A fourth number is often kept beside these: cumulative notional entered over a session, used as a throughput
+or credit-consumption cap. It is monotone by construction and it is not exposure. Gating it as if it were
+produces a limit that can only ever tighten, and an engine that refuses orders on a flat book.
 
 ## 2. Band derivation
 
@@ -98,10 +147,21 @@ owner, an aging policy and a threshold wired to a gate that rejects.
 
 ## 4. Separate gates
 
-Risk-increasing and risk-reducing paths are gated by **different** flags. When the increasing gate is shut,
-cancel, replace-down, close, flatten, settle and reconcile stay callable, and a test exercises them in the
-shut state. A single boolean covering both turns every incident into a choice between accepting new risk and
-being unable to reduce the risk already held.
+Risk-increasing and risk-reducing paths are gated by **different** flags. A single boolean covering both
+turns every incident into a choice between accepting new risk and being unable to reduce the risk already
+held.
+
+**Which risk-reducing paths must stay callable is decided per component, not universally.** The matching
+engine's list is short, and it is the only one this file requires: while the increasing gate is shut,
+`cancel` and a replace that only reduces quantity or moves a price away from the market stay callable for
+every resting order, and a test exercises them in the shut state.
+
+`close`, `flatten`, `settle` and `reconcile` belong to whatever component holds the positions, the cash or
+the clearing relationship. In an engine that matches and does not clear, they are somebody else's
+entrypoints; requiring the matcher to expose them adds surface that then has to be correct under exactly the
+conditions the gate exists for, and a `flatten` implemented inside a matcher is a matcher that can create
+exposure while its increasing gate is shut. Name the component that owns each risk-reducing path, and gate
+it there, with the test in that component.
 
 The design worth copying is a market-wide pause that still runs its closing transaction and still
 disseminates a quote marked unexecutable rather than withholding it: stopping new exposure is separable from
@@ -133,16 +193,26 @@ dismissed all of them; ¶4.15 notes the system "did not require a trader to scro
 One action clearing N warnings has an effective threshold of infinity. If a warning is worth raising, it is
 either blocking or it is per-item acknowledgeable.
 
-## 6. The six meanings of halt
+## 6. One decomposition of the word halt
 
-`halt ⇒ engine quiesced ∧ everything already produced delivered or explicitly voided`, at the smallest scope
-that contains the breach. The word is ambiguous, so name the level in the code and in the incident channel.
+Three different things get called a halt, and they are not levels of each other: an **incident risk gate**
+inside your own system, a **venue or session halt** that is a published trading state for an instrument, and
+**engine quiescence**, where the process stops accepting and producing and drains. A venue halt is a
+rulebook entry with participants reading it off a feed; an incident gate is an operational decision nobody
+outside sees. Deciding one and implementing the other is the recurring mistake.
+
+**The six levels below are this file's decomposition. They are not an industry standard, no venue publishes
+them, and nothing downstream will recognise the numbers.** Their value is that they force the two questions
+a bare "halt" hides: what is still being produced, and what happens to what was already produced. Use these
+names or your own, but name the level in the code and in the incident channel, and say which of the three
+kinds above it is. Only level 5 is quiescence and only level 6 stops the process; levels 1 to 4 leave the
+engine running and stop something specific.
 
 | # | Level | Existing obligations | Reset authority |
 |---|---|---|---|
 | 1 | Reject this operation, typed | untouched | none needed, per call |
 | 2 | Freeze one aggregate (symbol, account) | untouched | scoped to that aggregate |
-| 3 | Fail-closed: no new or increasing exposure; cancel, close, flatten, settle and reconcile stay hot | actively managed | successful reconciliation, never a timer |
+| 3 | Fail-closed: no new or increasing exposure. `cancel` and reduce-only replace stay hot in the matcher; position-closing and settlement paths stay hot in whichever component owns them (§4) | actively managed | successful reconciliation, never a timer |
 | 4 | Cancel-all and disconnect order entry; risk, position and drop-copy stay up | actively managed | independent of the tripping component |
 | 5 | Quiesce: stop accepting **and** producing, drain in-flight, deliver or explicitly void everything produced | drained, then frozen | independent of the tripping component |
 | 6 | Process abort | **abandoned** | none; only where nothing is in flight |
@@ -153,7 +223,7 @@ and the post-incident report records that no contingency plan existed for haltin
 Cutting the network does not stop the matching engine; it stops you finding out what the matching engine
 did.
 
-## 7. Resumption and busts
+## 7. Resumption, busts and corrections
 
 Resumption is a state-reconstruction problem, not a switch. Decide the fate of in-flight and undelivered
 executions **before** resuming, not during, and reconstruct from the durable record rather than from memory
@@ -162,8 +232,11 @@ that happened to survive.
 1. Every execution produced before the halt is either delivered to both counterparties or explicitly voided
    with a cancellation referencing its original match identity. There is no third state.
 2. The published sequence has no gap and no committed-but-unemitted event, and replaying the persisted
-   command stream reproduces the emitted sequence byte for byte.
-3. Book state is derived from the journal, not from process memory that survived the incident.
+   command stream **through the reducer version that produced it** reproduces the emitted sequence byte for
+   byte. A replay through the build you are about to resume with answers a different question and must not
+   be accepted as this one.
+3. Book state is derived from the durable record, whether that is the journal replayed under its own reducer
+   or a store of persisted authoritative decisions, and never from process memory that survived the incident.
 4. The trip flag is cleared by the independent authority of §5, with the cause recorded.
 5. Every check bypassed during the incident is back on, and every output produced while one was off is
    quarantined and reconciled before it is treated as authoritative again.
@@ -182,8 +255,28 @@ including cancellation. Pick one, publish it, and pin it with a test. Acknowledg
 filling the order is not among the three: an acknowledgement is a published state, and contradicting it is a
 correctness failure rather than a race.
 
-**A bust is out of band from the book and it is final.** It references the match identity of a previously
-transmitted execution, it does not rewrite the book, and it cannot be reinstated once applied. The
-consequence for everything downstream is that position, margin, P&L and tax are revisable after the fact
-while the book and the journal are not, so any component deriving a number from fills must accept a
-retroactive bust rather than assuming its inputs are stable.
+**Whether a bust is final, and whether a bust is even the remedy, is a protocol and rulebook question.**
+What is universal is only the shape: a correction is out of band from the book, it references the match
+identity of an execution already transmitted, and it neither rewrites the book nor renumbers anything.
+
+Nasdaq publishes the strict answer for its own market, and this repo read it directly on 2026-08-25. The
+Broken Trade message is sent "whenever an execution on Nasdaq is broken"; an execution "may be broken if it
+is found to be “clearly erroneous” pursuant to Nasdaq’s Clearly Erroneous Policy"; and **"A trade break is
+final; once a trade is broken, it cannot be reinstated"** [Nasdaq TotalView-ITCH 5.0, section 1.5.3]. The
+message carries the Match Number of the broken execution, referencing a previously transmitted Order
+Executed, Order Executed With Price or Trade Message, and the specification tells a consumer that builds
+only a book that it may ignore breaks entirely because they "have no impact on the current book".
+
+**Do not generalise that sentence to your venue.** Two things this file did not establish, and therefore
+does not assert: whether rulebooks that adjust a trade's price instead of cancelling it exist and how they
+bound the adjustment (cmegroup.com timed out on both attempts on 2026-08-25, so no rule text was read); and
+the FIX enumeration, where a third-party FIX dictionary lists `TradeReportType(856)` values including
+`6 = Trade Report Cancel` and `5 = No/Was`, which if correct would mean a correction is itself something
+that can be superseded rather than a terminal act. Neither claim was verified against a primary source.
+Treat both as prompts to read your own rulebook, not as facts about it, and write down three answers before
+the first correction is ever emitted: which remedy your rules permit, whether a remedy can be revoked, and
+whether a correction can itself be corrected.
+
+The consequence downstream does not depend on which answer you picked: position, margin, P&L and tax are
+revisable after the fact while the book and the journal are not, so any component deriving a number from
+fills must accept a retroactive bust or correction rather than assuming its inputs are stable.
