@@ -11,7 +11,7 @@ Spec limits enforced (agentskills.io/specification):
 Repo budgets (docs/architecture.md):
   - SKILL.md <= 500 lines; description <= 430 chars; suite total <= 3000 chars,
     because the skill listing budget is shared with every other suite installed.
-  - AGENTS.md <= 8 KB: it is in context on every turn.
+  - AGENTS.md <= 2 KB: it carries routing discipline only, never financial rules.
   - references/ one level deep; any reference over 100 lines carries its own
     table of contents, because a partially-read file must still reveal structure.
 
@@ -37,7 +37,7 @@ SPEC_MAX_DESC = 1024
 TOTAL_DESC_BUDGET = 3000
 MIN_REF_LINES = 120
 MIN_REF_PROSE_WORDS = 400
-AGENTS_BUDGET = 8192
+AGENTS_BUDGET = 2048   # routing reinforcement only; a rule layer cannot fit in 2 KB
 
 RED, YEL, GRN, BLD, OFF = "\033[31m", "\033[33m", "\033[32m", "\033[1m", "\033[0m"
 if not sys.stdout.isatty():
@@ -141,8 +141,12 @@ def check_skill(skill_md: Path) -> int:
             warn(f"description is {n} chars (repo budget {MAX_DESC})")
         if re.search(r"<[A-Za-z/][^>]*>", desc):
             err("description contains XML-like tags (rejected by Claude-side loaders)")
-        if not re.match(r"(?i)^(use when|trigger)", desc):
-            warn("description should lead with trigger conditions ('Use when …' / 'TRIGGER …')")
+        # v0.2: descriptions lead with the semantic router (what kind of correctness this is)
+        # and carry the trigger clause after it, because a description that opens with a grep
+        # pattern routes on spelling. The trigger clause still has to be there: a description
+        # that never says when to use the skill leaves the agent to guess.
+        if not re.search(r"(?i)\buse (it |them )?(when|alongside|for)\b|\btrigger\b", desc):
+            warn("description never says when to use the skill — add a 'Use when …' clause")
 
     lines = text.count("\n") + 1
     if lines > MAX_SKILL_LINES:
@@ -189,6 +193,120 @@ def check_skill(skill_md: Path) -> int:
     return len(desc)
 
 
+
+FINANCIAL_CHECK_LABELS = ("tier", "effect", "identity", "ambiguity", "authority",
+                          "recovery", "controls")
+
+RULE_NAMES = (
+    "the economic-diff gate",
+    "implemented, not described",
+    "a comment is a claim",
+    "durable intent before the external effect",
+    "arrival order is not occurrence order",
+    "proven coverage before the cursor advances",
+    "reconciliation runs in production",
+)
+
+
+
+def em_dashes_outside_quotes(text: str) -> list[int]:
+    """Positions of em dashes that are the author's own punctuation.
+
+    An em dash inside a quotation stays. Editing punctuation inside quoted text falsifies
+    the quote, and this repo's whole argument is that a citation you cannot check is worth
+    nothing. Six of these are real: BitGo's nonce-hole causes, Fireblocks'
+    DROPPED_BY_BLOCKCHAIN sub-statuses, Chainlink's answeredInRound deprecation note, and
+    Square Books on signed amounts.
+
+    Fenced blocks and inline code spans are masked before counting quote marks, because a
+    JSON example full of double quotes would otherwise flip the parity for the rest of the
+    file and hide every later em dash.
+    """
+    masked = list(text)
+    in_fence = False
+    i = 0
+    while i < len(text):
+        if text.startswith("```", i):
+            in_fence = not in_fence
+            for k in range(i, min(i + 3, len(text))):
+                masked[k] = " "
+            i += 3
+            continue
+        if in_fence:
+            if text[i] != "\n":
+                masked[i] = " "
+        elif text[i] == "`":
+            j = text.find("`", i + 1)
+            if j == -1:
+                j = i
+            for k in range(i, j + 1):
+                if masked[k] != "\n":
+                    masked[k] = " "
+            i = j + 1
+            continue
+        i += 1
+
+    out, open_quote = [], False
+    for idx, ch in enumerate(masked):
+        if ch == '"':
+            open_quote = not open_quote
+        elif ch == "—" and not open_quote:
+            out.append(idx)
+    return out
+
+def check_prose(md: Path, binding: bool) -> None:
+    """Style and vocabulary rules that survived a refactor and must not regress.
+
+    The G1-G7 ids were retired in v0.2. They were opaque, they only resolved against an
+    always-installed block, and a rule that needs an external glossary to be read is a rule
+    that stops working when the glossary is absent. Rules are now cited by name.
+    """
+    text = md.read_text(encoding="utf-8")
+    rel = md.relative_to(ROOT)
+    report = err if binding else warn
+
+    # G2-item and G-single are Adya isolation-anomaly names, not the retired rule ids.
+    for m in re.finditer(r"(?<![A-Za-z0-9])G[1-7](?![0-9A-Za-z-])", text):
+        line = text[: m.start()].count("\n") + 1
+        report(f"{rel}:{line} cites the retired id {m.group(0)} — cite the rule by name")
+
+    if binding and "install-guardrails" in text:
+        line = text[: text.index("install-guardrails")].count("\n") + 1
+        err(f"{rel}:{line} implies the guardrail install is needed — skills are self-sufficient")
+
+    for pos in em_dashes_outside_quotes(text):
+        line = text[:pos].count("\n") + 1
+        report(f"{rel}:{line} contains an em dash")
+
+
+def check_structure(skill_md: Path) -> None:
+    """The workflow is the first thing an agent reads, so it is the first H2."""
+    text = skill_md.read_text(encoding="utf-8")
+    rel = skill_md.relative_to(ROOT)
+    h2s = re.findall(r"(?m)^## (.+)$", text)
+    if not h2s:
+        err(f"{rel} has no H2 sections")
+        return
+    if h2s[0].strip().lower() != "workflow":
+        err(f"{rel} opens with '## {h2s[0]}' — the first H2 must be '## Workflow', "
+            f"because it is what tells the agent what to do")
+    if "FINANCIAL CHECK" not in text:
+        err(f"{rel} never shows the FINANCIAL CHECK block — it is the default output at T0 and T1")
+    else:
+        # Eight independent rewrites converged on this block. Pin it: a reader who has two
+        # skills loaded must not be shown two different default output contracts, and `tier`
+        # has to be emitted because it is what gates the T2+ escalation.
+        block = text.split("FINANCIAL CHECK\n", 1)[1].split("```", 1)[0]
+        labels = re.findall(r"(?m)^([a-z]+):", block)
+        if labels != list(FINANCIAL_CHECK_LABELS):
+            err(f"{rel} FINANCIAL CHECK labels are {labels}, expected "
+                f"{list(FINANCIAL_CHECK_LABELS)}")
+        if "UNRESOLVED: <control> (<why>)" not in block:
+            err(f"{rel} FINANCIAL CHECK is missing the UNRESOLVED form "
+                f"'UNRESOLVED: <control> (<why>)' — a described control with no location "
+                f"is the defect this line exists to catch")
+
+
 def main() -> int:
     skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
     if not skills:
@@ -230,14 +348,25 @@ def main() -> int:
         for path in sorted(cited_paths(md)):
             warn(f"cited path does not exist: {path} (in {md.relative_to(ROOT)}) — mark it as proposed")
 
+    for md in binding:
+        check_prose(md, binding=True)
+    for ref in sorted(ROOT.glob("skills/*/references/**/*.md")):
+        check_prose(ref, binding=True)
+    for skill_md in skills:
+        check_structure(skill_md)
+    for md in sorted((ROOT / "docs").glob("*.md")) + sorted(ROOT.glob("examples/**/*.md")) \
+            + [ROOT / "README.md"]:
+        if md.is_file():
+            check_prose(md, binding=False)
+
     agents = ROOT / "AGENTS.md"
     if not agents.is_file():
-        err("AGENTS.md is missing — the always-on layer is the highest-value artefact")
+        err("AGENTS.md is missing — it carries the optional routing block")
     else:
         size = agents.stat().st_size
         print(f"  AGENTS.md: {size} bytes (budget {AGENTS_BUDGET})")
         if size > AGENTS_BUDGET:
-            err("AGENTS.md exceeds 8KB — it is in context on every turn")
+            err("AGENTS.md exceeds 2KB — substantive rules belong in the skills, not in an\n            always-installed block. Move the content into the skill that owns it.")
 
     print()
     if errors:

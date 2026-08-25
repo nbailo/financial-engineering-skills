@@ -12,23 +12,45 @@ jobs:
       # falls back to a lenient parser that accepts frontmatter real loaders reject.
       - run: pip install pyyaml
       # Enforces the Agent Skills spec (frontmatter keys, name rules, description
-      # limits) and this repo's budgets: 500 lines per SKILL.md, 8KB for AGENTS.md,
-      # 3000 chars of description across the suite.
+      # limits) and this repo's budgets: 500 lines per SKILL.md, 2KB for AGENTS.md,
+      # 3000 chars of description across the suite. It also enforces that each skill
+      # opens with a Workflow section and cites the cross-cutting rules by name.
       - run: python3 scripts/validate.py
-  guardrails-installer:
+  routing-block-installer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: install is idempotent and uninstall is a clean round-trip
+      - name: install is idempotent and uninstall restores the host file
         run: |
           set -euo pipefail
-          mkdir -p /tmp/host && printf '# Host\n\npara one\n\npara two\n' > /tmp/host/AGENTS.md
-          cp /tmp/host/AGENTS.md /tmp/original
-          ./scripts/install-guardrails.sh /tmp/host
-          a=$(sha256sum < /tmp/host/AGENTS.md)
-          ./scripts/install-guardrails.sh /tmp/host
-          b=$(sha256sum < /tmp/host/AGENTS.md)
-          [ "$a" = "$b" ] || { echo "install is not idempotent"; exit 1; }
-          ./scripts/install-guardrails.sh --uninstall /tmp/host
-          diff /tmp/original /tmp/host/AGENTS.md || { echo "uninstall is not a clean round-trip"; exit 1; }
-          echo "ok"
+          # Three host shapes. The first is what an editor writes and is the guarantee the
+          # README states: byte-identical. The other two document the normalisation, so a
+          # change that alters it fails here instead of quietly breaking the claim.
+          mkdir -p /tmp/host
+          printf '# Host\n\npara one\n\npara two\n' > /tmp/host/normal
+          printf '# Host\n\npara one\n\n\n\n'      > /tmp/host/trailing-blanks
+          printf '# Host\n\npara one'                 > /tmp/host/no-final-newline
+
+          run_case () {
+            d=/tmp/host/$1.d; rm -rf "$d"; mkdir -p "$d"
+            cp "/tmp/host/$1" "$d/AGENTS.md"
+            ./scripts/install-guardrails.sh "$d"
+            a=$(sha256sum < "$d/AGENTS.md")
+            ./scripts/install-guardrails.sh "$d"
+            b=$(sha256sum < "$d/AGENTS.md")
+            [ "$a" = "$b" ] || { echo "install is not idempotent for $1"; exit 1; }
+            ./scripts/install-guardrails.sh --uninstall "$d"
+          }
+
+          run_case normal
+          diff /tmp/host/normal /tmp/host/normal.d/AGENTS.md \
+            || { echo "uninstall is not byte-identical for the normal case"; exit 1; }
+
+          # Normalised cases: content must survive, whitespace may not.
+          for c in trailing-blanks no-final-newline; do
+            run_case "$c"
+            diff <(sed -e 's/[[:space:]]*$//' "/tmp/host/$c" | grep -v '^$') \
+                 <(sed -e 's/[[:space:]]*$//' "/tmp/host/$c.d/AGENTS.md" | grep -v '^$') \
+              || { echo "uninstall lost content for $c"; exit 1; }
+          done
+          echo ok
