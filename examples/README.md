@@ -1,8 +1,13 @@
 # Worked examples
 
-Five before/after code reviews. Each one starts from code a competent engineer would plausibly ship under
-time pressure, names the specific defects the suite catches with the rule cited by the name the owning
-skill gives it, and shows the corrected version.
+Four before/after code reviews and one runnable example. Each review starts from code a competent engineer
+would plausibly ship under time pressure, names the specific defects the suite catches with the rule cited
+by the name the owning skill gives it, and shows the corrected version.
+
+[prediction-market-bot](prediction-market-bot/) is the runnable one. It is not prose: a fake venue in this
+process, a safe bot, a counter-example, a frozen event log and a test suite that denies itself a socket.
+Run `python3 examples/prediction-market-bot/demo.py` and watch the unsafe version credit a payout twice
+while the safe one credits it once.
 
 Rules are cited by name, never by an id. `fin-money-core` states ten invariants in full and each domain
 skill specialises them under its own heading, so every name in a "What the suite catches" table is a string
@@ -32,10 +37,10 @@ where tests, proof or reconciliation are actually being changed, where the ask i
 where the domain skill requires stronger proof for the mechanism in scope. Customer exposure alone never
 loads it.
 
-Each example ends with the review output: the `authority` and `exposure` line, one entry per real finding,
-and a `VERDICT`, because every page here is framed as a review. There is no seven-label block and no tier
-number. Each also ends with a section on what was **not** changed. That second section is the point. A
-correctness suite that rewrites everything it touches is a suite nobody runs twice.
+Each of the four reviews ends with the review output: the `authority` and `exposure` line, one entry per
+real finding, and a `VERDICT`, because those four pages are framed as reviews. There is no seven-label
+block and no tier number. Each also ends with a section on what was **not** changed. That second section is
+the point. A correctness suite that rewrites everything it touches is a suite nobody runs twice.
 
 | Example | The code | authority · exposure | What it demonstrates |
 |---|---|---|---|
@@ -43,29 +48,31 @@ correctness suite that rewrites everything it touches is a suite nobody runs twi
 | [payment-flow](payment-flow/) | A Stripe refund endpoint and its webhook | MIXED · customer | `db.rollback()` on the exact timeout the row exists for while BIGSERIAL keeps advancing, acting on the webhook payload instead of re-fetching, no dispute check, and a `>=` guard against a second-granularity clock |
 | [ledger](ledger/) | A transfer with a fee, and its reversal | MIXED · customer | A journal that does not balance because the fee has no counterparty leg, an idempotency key made `Optional = None`, conservation as SQL in a comment, and `CHECK (balance >= 0)` blocking the clawback |
 | [onchain-indexer](onchain-indexer/) | An ERC-20 deposit crediting service | MIXED · customer | A cursor that advances past ranges it never covered, a dedupe key without block identity, `1e18` against USDC's six decimals, and the empty-address branch that strands every customer registered later |
-| [prediction-market-bot](prediction-market-bot/) | A Limitless quoter that books its fills and credits the payout | MIXED · own | A YES sell modelled as a short instead of a purchase of the complement, a retry that mints a fresh identity so the venue cannot recognise it, a provisional `MATCHED` booked as a fill, subscriptions that replace each other, and a payout credited twice on reconnect and zero on every split market |
+| [prediction-market-bot](prediction-market-bot/) | Runnable. A fake in-process venue, a safe bot and a counter-example, with tests | MIXED · own | Collateral held while an order rests, a lost response left UNKNOWN instead of retried under a fresh key, fee amount, fee rate and fee asset kept apart across maker and taker fills, deterministic rebuild from the log, and a payout credited once rather than twice on reconnect or zero on a split |
 
 Authority is a property of a quantity, not of a codebase. Where one authority covers every quantity in
 scope the page emits the single line, `authority: EXTERNAL (<who>) · exposure: <e>`. None of these five is
-that case, because each one keeps durable local state that decides something economic, so each emits
+that case, because each one keeps local state that decides something economic, so each review emits
 `authority: MIXED` and qualifies only the quantities that differ, on one line each and never more than
 three. What each page holds alone is different every time: the unresolved intent rows on `trading-bot`,
 the in-flight refund reserve on `payment-flow`, the postings and the transaction ids on `ledger`, the
-customer liabilities and the address mapping on `onchain-indexer`, the unresolved intents and the
-provisional fills on `prediction-market-bot`.
+customer liabilities and the address mapping on `onchain-indexer`, the committed intents and the collateral
+held against them on `prediction-market-bot`. That last one emits no review line: the same two facts are
+visible in its code, where the fake venue answers for positions and this process alone holds the intents.
 
-The two fields are the reason the five pages end differently. Exposure decides how much evidence a page has
+The two fields are the reason the pages end differently. Exposure decides how much evidence a page has
 to show; authority decides which kind: where an external party holds the number the proof is a comparison,
 and where nothing outside holds it the proof is replay, conservation and a planted break. `trading-bot`
 trades its own capital against a venue that answers any question about its orders. `ledger` assigns the ids
 and decides the balances, and only its aggregate has a custodian on the other side. `payment-flow` and
 `onchain-indexer` sit between: an external authority holds the money, and somebody else's money is what is
-lost. `prediction-market-bot` is the one where the two authorities are a venue and a chain, and where the
-venue publishes no sandbox, so its evidence is an offline double and a size cap rather than a paper account.
+lost. `prediction-market-bot` is the one that ends with neither a verdict nor a finding list, because its
+evidence is executable: an offline double of the venue, and cases that run.
 
-Two of the five end `NO-SHIP`, deliberately. `payment-flow` has no settlement-report reconciliation and
+Two of the four reviews end `NO-SHIP`, deliberately. `payment-flow` has no settlement-report reconciliation and
 `onchain-indexer` has one nobody has ever seen fire, and no amount of correct code upstream closes either
 gap.
 
 Read `trading-bot` first if you want the shortest path to deciding whether this suite is real; read `ledger`
-first if you want the one where the fix is a schema change rather than a code change.
+first if you want the one where the fix is a schema change rather than a code change; run
+`prediction-market-bot` if you would rather watch the difference than read about it.

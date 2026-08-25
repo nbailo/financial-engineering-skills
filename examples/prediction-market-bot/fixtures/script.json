@@ -1,0 +1,10 @@
+[
+  {"action": "place",  "client_key": "ck-buy-yes-1",  "outcome": "YES", "side": "BUY",  "qty": 100, "price_micro": 400000},
+  {"action": "fill",   "client_key": "ck-buy-yes-1",  "qty": 60, "price_micro": 400000, "liquidity": "MAKER"},
+  {"action": "fill",   "client_key": "ck-buy-yes-1",  "qty": 40, "price_micro": 400000, "liquidity": "TAKER"},
+  {"action": "place",  "client_key": "ck-buy-no-1",   "outcome": "NO",  "side": "BUY",  "qty": 50,  "price_micro": 550000},
+  {"action": "place",  "client_key": "ck-sell-yes-1", "outcome": "YES", "side": "SELL", "qty": 30,  "price_micro": 700000},
+  {"action": "fill",   "client_key": "ck-sell-yes-1", "qty": 30, "price_micro": 700000, "liquidity": "TAKER"},
+  {"action": "cancel", "client_key": "ck-buy-no-1"},
+  {"action": "resolve", "payout_numerators": [1, 0], "payout_denominator": 1}
+]

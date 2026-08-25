@@ -1,0 +1,17 @@
+{
+  "market_id": "FAKE-BINARY-1",
+  "question": "Invented market. Nothing here describes a real event or a real venue.",
+  "outcomes": ["YES", "NO"],
+  "collateral_asset": "FUSD",
+  "collateral_decimals": 6,
+  "payout_per_share_micro": 1000000,
+  "tick_micro": 10000,
+  "min_size_shares": 5,
+  "fee": {
+    "asset": "FPOINT",
+    "asset_decimals": 6,
+    "model": "expected_profit",
+    "maker_rate_ppm": 0,
+    "taker_rate_ppm": 70000
+  }
+}

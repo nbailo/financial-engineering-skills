@@ -1,0 +1,8 @@
+{"client_key":"ck-buy-yes-1","event_id":"ev-001","market_id":"FAKE-BINARY-1","order_id":"ord-001","outcome":"YES","price_micro":400000,"qty":100,"seq":1,"side":"BUY","type":"ORDER_ACCEPTED"}
+{"client_key":"ck-buy-yes-1","event_id":"ev-002","fee":{"amount_micro":0,"asset":"FPOINT","rate_ppm":0},"liquidity":"MAKER","market_id":"FAKE-BINARY-1","order_id":"ord-001","outcome":"YES","price_micro":400000,"qty":60,"seq":2,"side":"BUY","type":"FILL"}
+{"client_key":"ck-buy-yes-1","event_id":"ev-003","fee":{"amount_micro":672000,"asset":"FPOINT","rate_ppm":70000},"liquidity":"TAKER","market_id":"FAKE-BINARY-1","order_id":"ord-001","outcome":"YES","price_micro":400000,"qty":40,"seq":3,"side":"BUY","type":"FILL"}
+{"client_key":"ck-buy-no-1","event_id":"ev-004","market_id":"FAKE-BINARY-1","order_id":"ord-002","outcome":"NO","price_micro":550000,"qty":50,"seq":4,"side":"BUY","type":"ORDER_ACCEPTED"}
+{"client_key":"ck-sell-yes-1","event_id":"ev-005","market_id":"FAKE-BINARY-1","order_id":"ord-003","outcome":"YES","price_micro":700000,"qty":30,"seq":5,"side":"SELL","type":"ORDER_ACCEPTED"}
+{"client_key":"ck-sell-yes-1","event_id":"ev-006","fee":{"amount_micro":441000,"asset":"FPOINT","rate_ppm":70000},"liquidity":"TAKER","market_id":"FAKE-BINARY-1","order_id":"ord-003","outcome":"YES","price_micro":700000,"qty":30,"seq":6,"side":"SELL","type":"FILL"}
+{"client_key":"ck-buy-no-1","event_id":"ev-007","market_id":"FAKE-BINARY-1","order_id":"ord-002","remaining":50,"seq":7,"type":"ORDER_CANCELLED"}
+{"event_id":"ev-008","market_id":"FAKE-BINARY-1","payout_denominator":1,"payout_numerators":[1,0],"seq":8,"type":"MARKET_RESOLVED","winning_outcome_index":0}
