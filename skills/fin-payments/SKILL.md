@@ -38,6 +38,12 @@ on a trading venue go to `fin-exchange-integration`. Chain deposits, confirmatio
 `fin-onchain`. Amount arithmetic, retry classification and rollout on a money path with no processor in it go
 to `fin-money-core`.
 
+This skill already specialises the money-core invariants that apply on a processor path, so load
+`fin-money-core` alongside it only for a cross-domain mechanism this skill does not cover, and load
+`fin-verification` only when tests, proof or reconciliation are actually changing, when the ask is a review or a
+ship decision, or when an invariant below calls for stronger proof of the mechanism in scope. Customer exposure
+alone triggers neither.
+
 ## Workflow
 
 1. Name the economic effect and who is out of pocket when it goes wrong: the payer, the merchant, the platform,
@@ -71,12 +77,17 @@ carries the last applied value **and** the identities already applied at that va
 identity at the same value. A comparison that rejects at equality drops the sibling event that says the money
 actually moved, and the object then sits non-terminal forever, with no error and no log line.
 
-### Record durably what you applied, never that you saw it
+### The event identity dedupes the delivery; the object and the transition dedupe the effect
 
-Specialises *durable dedupe*: the dedupe row is written in the same transaction as the effect. The domain
-difference is redelivery. An event you could not resolve, because the object is unknown or a dependency does
-not exist yet, is a hole in your state rather than a processed event; committing it to the dedupe table stops
-all redelivery and makes the miss permanent. Dead-letter it, alert, and leave it undeduped.
+Specialises *durable dedupe*: the dedupe row is written in the same transaction as the effect. Two identities
+are in play. A provider redelivering a notification sends the **same** event identity, so a unique index on that
+identity is correct and cheap, and it solves transport redelivery and nothing else. Separately generated event
+objects carry distinct identities and can describe one underlying object transition, and one object can be
+reported under more than one event type, so the effect has to be idempotent on the **object identity and the
+transition**, which is what actually protects the balance. Record durably what you applied, never that you saw
+it: an event you could not resolve, because the object is unknown or a dependency does not exist yet, is a hole
+in your state rather than a processed event, and committing it to the dedupe table stops all redelivery and
+makes the miss permanent. Dead-letter it, alert, and leave it undeduped.
 
 ### The refund ceiling is the processor's number, net of everything in flight
 
@@ -94,21 +105,25 @@ error, never silence. A terminal state accepts exactly the events by which the c
 already booked, and nothing else; a *status* message never re-opens it. The correction lands as a new balancing
 entry against the closed record, never as an edit to the original.
 
-### The processing fee is not returned by a reversal
+### Reversal fee treatment is a term of the contract, confirmed against settlement
 
-Specialises *rounding and conservation*: the parts still sum to the total, but the reversal is not the mirror of
-the original. The principal comes back, the original processing cost stays expensed, a reversal fee may be added
-on top, and a reversal of a split payment reverses each share proportionally rather than wholesale. Mirroring
-the original group credits back fee expense the processor never returned. Both sides of your own entry balance,
-so nothing fails; the gap surfaces only in the settlement reconciliation, per reversal, forever.
+Specialises *rounding and conservation*: the parts still sum to the total, but a reversal is not automatically
+the mirror of the original. Whether the original processing cost comes back, whether the reversal carries a fee
+of its own, and how a split reverses are properties of the provider and the rail, and they vary by merchant
+agreement and over time. Take the treatment from the contract and confirm it against the settlement lines for
+that reversal. Never assume the reversal mirrors the principal, and never hardcode either answer: mirroring
+credits back a fee the processor may not have returned, and assuming retention when it was returned overstates
+expense by the same mechanism. Both sides of your own entry balance either way, so nothing fails; the gap
+surfaces only in the settlement reconciliation, per reversal, forever.
 
 ### The identity you send the counterparty expires and is scoped
 
 Specialises *operation identity* and *ambiguous outcomes*: minted from the intent instance, committed before the
 call, reused unchanged by every retry of that decision. What a processor adds is that its memory of the identity
-is finite and partitioned by region, credential and endpoint. Bound the same-key retry loop well inside the
-documented retention and assert that bound against the provider's own number. Past it, stop, mark the attempt
-UNKNOWN, and resolve by reading. Never mint a fresh identity for the same intent.
+is finite and scoped, and both the retention and the scope boundary are that provider's own numbers rather than
+a property of idempotency keys. Read them per provider, pin the key to the scope it was minted under, bound the
+same-key retry loop well inside the documented retention, and assert that bound against the provider's number.
+Past it, stop, mark the attempt UNKNOWN, and resolve by reading. Never mint a fresh identity for the same intent.
 
 ### Finality is a property of the rail, not of your API surface
 
@@ -122,7 +137,8 @@ money is recoverable, and the modelling error becomes a support promise you cann
 
 Specialises *reconciliation*: the comparison ships as a scheduled entrypoint, reads through a path independent
 of the writer, and fails closed to a destination with no default. Two things differ here. Join on the
-counterparty's own identifier, never on yours, because yours is a grouping attribute you chose and can repeat.
+counterparty's own identifier: yours is a grouping attribute you chose, and unless the provider enforces
+uniqueness on it, one of yours maps to several of theirs.
 And close the books on settlement data with the rail's reversal tail, never on payment-object state, or late
 reversals land against a period you already closed.
 
@@ -132,11 +148,18 @@ Each row is a standing instruction: when its predicate holds, read the file and 
 
 | file | read it when |
 |---|---|
-| [processor-lifecycles.md](references/processor-lifecycles.md) | the change names `PaymentIntent`, `requires_capture`, `capture_method`, `capture_before`, `increment_authorization`, `multicapture`, `final_capture`, an Adyen result code or modification endpoint (`/captures`, `/cancels`, `cancelOrRefund`), or an `Idempotency-Key`, `PayPal-Request-Id`, replay or 409 branch |
-| [webhooks.md](references/webhooks.md) | the change defines or edits a route that receives provider events, or names `Stripe-Signature`, `construct_event`, `constructEvent`, `HmacValidator`, `notificationItems`, `[accepted]`, `processed_events`, or a sweeper over changed objects |
-| [refunds-and-disputes.md](references/refunds-and-disputes.md) | the change contains `refund`, `Refund.create`, `/refunds`, `refundable`, `dispute`, `chargeback`, `charge.dispute.`, `NOTIFICATION_OF_CHARGEBACK`, `evidence`, or an early-fraud-warning handler |
-| [settlement-and-reconciliation.md](references/settlement-and-reconciliation.md) | the change reads `balance_transaction`, `reporting_category`, `payout`, `transfer_group`, `source_transaction`, a settlement or payout report, an ARN, or closes an accounting period |
-| [rails.md](references/rails.md) | the code names a rail or scheme message: `ACH`, `nacha`, an R-code (`R01`, `R10`), `SEPA`, `pain.001`, `pacs.008`, `pacs.004`, `camt.056`, `EndToEndId`, `TxId`, `UETR`, wire, `RTP`, `FedNow` |
+| [lifecycle-states.md](references/lifecycle-states.md) | the change branches on a processor status: `PaymentIntent` `status`, `requires_capture`, `payment_intent.payment_failed`, `canceled`, an Adyen `resultCode` (`Received`, `Authorised`, `PartiallyAuthorised`), `originalReference`, or `cancelOrRefund` |
+| [capture-and-amounts.md](references/capture-and-amounts.md) | the change captures, sizes or times a capture: `capture`, `capture_method`, `amount_to_capture`, `final_capture`, `multicapture`, `capture_before`, `increment_authorization`, `overcapture`, `/captures`, or a currency minor-unit or amount-ceiling table |
+| [idempotency-keys.md](references/idempotency-keys.md) | the change mints, reuses or bounds a key sent to a processor: `Idempotency-Key`, `PayPal-Request-Id`, `apiRequestKey`, `Idempotent-Replayed`, a retry loop around a processor call, or a 409 or Adyen 704 branch |
+| [webhook-endpoint.md](references/webhook-endpoint.md) | the change defines or edits the route that receives provider events, or names `Stripe-Signature`, `construct_event`, `constructEvent`, `HmacValidator`, `notificationItems`, `[accepted]`, raw-body access, `APPEND_SLASH`, `force_ssl`, or a checkout success or `return_url` page |
+| [webhook-processing.md](references/webhook-processing.md) | the change applies a stored event: `event.id`, `(event.type, data.object.id)`, `(eventCode, pspReference)`, `processed_events`, `event.created` or `eventDate` ordering, a watermark or applied-ids guard, a dead-letter path, or a `retrieve` before a value-moving write |
+| [webhook-recovery.md](references/webhook-recovery.md) | the change adds or edits a job that lists provider events since a cursor or re-reads non-terminal objects, or depends on a delivery horizon, a manual resend window, or key retention |
+| [refunds.md](references/refunds.md) | the change contains `refund`, `Refund.create`, `/refunds`, `refundable`, `amount_captured`, `refund.failed`, `failure_reason`, `REFUND_FAILED`, or books a reversal's principal or fee |
+| [disputes.md](references/disputes.md) | the change contains `dispute`, `chargeback`, `charge.dispute.`, `evidence_details`, `NOTIFICATION_OF_CHARGEBACK`, `CHARGEBACK_REVERSED`, `funds_reinstated`, or an early-fraud-warning handler |
+| [rails-reversibility.md](references/rails-reversibility.md) | the code names a rail or a pull-back: `ACH`, `nacha`, an R-code (`R01`, `R10`), `SEPA`, Recall, RFRO, wire, `RTP`, `FedNow`, `camt.056`, or a destination check or amount bound before an irreversible send |
+| [iso20022-messages.md](references/iso20022-messages.md) | the change builds, parses or correlates a scheme message: `pain.001`, `pacs.008`, `pacs.002`, `pacs.004`, `camt.029`, `camt.053`, `EndToEndId`, `TxId`, `UETR`, `MsgId`, `TxSts`, `CdtDbtInd` or `XchgRate` |
+| [settlement-feeds.md](references/settlement-feeds.md) | the change reads settlement data: `balance_transaction`, `reporting_category`, `available_on`, an `adjustment` description, a Settlement details CSV, `Modification Reference`, a payout batch, or presentment-versus-settlement currency columns |
+| [reconciliation-and-close.md](references/reconciliation-and-close.md) | the change writes or edits the reconciliation job, a break or suspense table, a period close or revenue-recognition gate, an auth-to-clearing matcher, or a transfer (`source_transaction`, `transfer_group`, `reverse_transfer`) |
 | [controls-and-evidence.md](references/controls-and-evidence.md) | the task is a review or a ship decision on a payments path, or you need the test property for a control you are about to claim |
 
 ## Output
@@ -147,9 +170,18 @@ When the change is economic, open with two fields on one line, and omit the line
 authority: EXTERNAL (Stripe) · exposure: customer
 ```
 
-The usual pair here is authority EXTERNAL, the processor, and exposure customer. Exposure becomes `record` when
-your books rather than the processor's report are what other systems consume. Authority becomes SELF only for a
-quantity no processor report can contradict, such as an internal store credit.
+Authority is a property of a quantity, not of the codebase. The usual pair here is EXTERNAL, the processor, with
+exposure customer. Where one authority covers every quantity in scope, emit the single line. Where it does not,
+emit `authority: MIXED` and qualify the quantities that differ, one line each, two or three at most:
+
+```
+authority: MIXED · exposure: customer
+  settlement state       EXTERNAL (Stripe)
+  internal store credit  SELF
+```
+
+Exposure becomes `record` when your books rather than the processor's report are what other systems consume. A
+finding may carry its own authority where that is what makes it a finding.
 
 Then one entry per real finding:
 

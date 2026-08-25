@@ -21,11 +21,11 @@ Emit only the rows whose predicate this change matches. Each emitted row carries
 
 | emit when the diff… | the control | the property to assert |
 |---|---|---|
-| issues or sizes a reversal | refund ceiling computed from the authority's captured amount (`amount_captured`), net of reversals in flight (`pending` and `requires_action`) and gated on open claims | a refund exceeding the ceiling is refused, and a refund is refused outright while a dispute on the charge is open |
+| issues or sizes a reversal | refund ceiling computed from the authority's captured amount (Stripe: `amount_captured`), net of reversals in flight (Stripe: `pending` and `requires_action`) and gated on open claims | a refund exceeding the ceiling is refused, and a refund is refused outright while a dispute on the charge is open |
 | handles a pushed event | the object is re-read from its own authority inside the handler, before the first value-moving decision | with a payload whose status disagrees with the live object, the effect follows the live object |
 | handles a pushed event | per-object watermark on the authority's own sequence value **plus** the identities already applied at that value, the guarded `UPDATE` being the write | two events sharing one coarse timestamp on one object both apply, exactly once each |
 | handles a pushed event | an event that cannot be resolved is dead-lettered and alerted, and is **not** marked processed | after an unresolvable delivery, a redelivery of the same event still reaches the handler |
-| posts a reversal or a fee to the books | the reversal ledger group reverses principal and leaves the original processing fee expensed | after a partial refund, the processor clearing account still ties to the settlement net |
+| posts a reversal or a fee to the books | the reversal ledger group books the fee treatment the provider or rail contract states, confirmed against that reversal's settlement lines | after a partial reversal, the processor clearing account still ties to the settlement net |
 | writes, reports or closes a settled quantity | a scheduled settlement reconciliation reading through a path independent of the writer, with a fail-closed alert destination | a planted discrepancy in one row is detected and blocks the close |
 | creates or reverses an onward disbursement | the disbursement reversal commits in the same unit of work as the refund | a refund whose transfer reversal fails leaves no committed refund without a recorded receivable |
 | sends over an irreversible rail | destination verification and a hard maximum-plausible-amount bound before the send, blocking rather than warning | a payment above the bound is refused, not flagged |
@@ -62,8 +62,8 @@ payments-specific ones; the generic identity and retry properties belong to the 
    in order and then reversed; the terminal state is reached exactly once in both orderings.
 5. **Redelivery after an unresolvable event still works.** Deliver an event whose dependency does not exist,
    then create the dependency and redeliver; the effect applies.
-6. **The fee stays expensed.** After a partial refund, the sum of ledger movements on the processor clearing
-   account equals the settlement net for that charge, to the unit.
+6. **The fee treatment ties to settlement.** After a partial reversal, the sum of ledger movements on the
+   processor clearing account equals the settlement net for that charge, to the unit.
 7. **A terminal state accepts its corrections.** A refund reported `succeeded` and later `failed` restores the
    customer obligation, the store credit and the order state that the success closed.
 8. **A planted break is detected.** Alter one settled amount on the local side; the reconciliation reports it,
@@ -87,7 +87,7 @@ skill when a capture, refund or dispute becomes a posting.
 - Authorizations are **reserved amounts in the payments layer, not ledger entries**. Only captures, refunds,
   disputes, fees and settlement adjustments post.
 - The reversal tail decides when the books may close, not the payment object's lifecycle state. The tail is in
-  settlement-and-reconciliation.md, per rail.
+  `reconciliation-and-close.md`, per rail.
 
 ## When a richer evidence block is warranted
 
