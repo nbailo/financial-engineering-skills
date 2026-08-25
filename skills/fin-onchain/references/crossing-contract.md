@@ -33,9 +33,7 @@ one. Key on what is observable in the repository, never on a general prior about
 | `UTXO`, `outpoint`, `vout`, `PSBT`, coin selection, `changeAddress` | UTXO | Identity is the **input set**, not the txid. Change below `min_viable_change` is **paid to the miner**, a total silent loss with no error. |
 
 "Spendable is not confirmed" is true on forwarders and **false** on memo-ID chains: shipped unconditionally, it
-is wrong half the time. The mechanics of each model live in
-[custody-and-wallets.md](custody-and-wallets.md); the identity rules live in
-[transaction-identity.md](transaction-identity.md).
+is wrong half the time.
 
 ## The routing field
 
@@ -60,9 +58,8 @@ the same set. Nothing rejects, because nothing in the path knows a routing field
 un-creditable at a shared address. Gate the set itself: a pair may not enter `SUPPORTED` unless the column,
 the API field and the per-chain validator all exist for it.
 
-The two protocol instances, with their enforcement asymmetry, are in
-[custody-and-wallets.md](custody-and-wallets.md): XRPL's `DestinationTag` is a 32-bit unsigned integer the
-**ledger itself** can require (`asfRequireDest`, rejecting with `tecDST_TAG_NEEDED`), while Stellar's typed
+The two protocol instances differ in who enforces the requirement. XRPL's `DestinationTag` is a 32-bit
+unsigned integer the **ledger itself** can require (`asfRequireDest`, rejecting with `tecDST_TAG_NEEDED`), while Stellar's typed
 `Memo` and SEP-29 `memo_required` are enforced by the **sending** SDK only, so a Stellar integration needs an
 operational path for untagged deposits. Publishing an X-address or an `M…` muxed account folds the tag into
 the address and removes the class.
@@ -78,7 +75,7 @@ DEPOSIT   (emit only when the change touches a crediting path)
   cursor guard         same predicate as the query, advanced only over a proven range    file:line
   reorg detector       the parent link chained against the stored block identity         file:line
   unwind               reversing entry keyed on the orphaned identity                    file:line
-  amount source        measured delta or delivery metadata, not the event field          file:line
+  amount source        the asset's own accounting for it, not the event field            file:line
   self-transfer guard  originator not in the set of addresses we control                 file:line
   finality gate        depth, the loss budget it buys, and the unit it counts in         file:line
   routing field        column + API field + per-chain validation, or "model: n/a"        file:line
@@ -92,11 +89,13 @@ WITHDRAWAL   (emit only when the change touches a broadcast path)
 
 ## What fills each deposit slot
 
-**dedupe key.** All four parts under one constraint: chain, block hash, transaction hash, position. Two parts
+**dedupe key.** Where history can be rewritten, all four parts under one constraint: chain, block hash,
+transaction hash, position. Where the ledger's own finality is categorical there is no branch to key on and
+the transaction-level identity is the whole key. Two parts on a chain that reorgs
 is above the bad bar and still wrong in both directions, and the four-part key only avoids the double credit
 once the unwind has landed, which is why the credit path also asserts that no unreversed twin exists for the
 transaction-level identity. Fails the slot: a unique constraint that omits the branch, or an
-`ON CONFLICT DO NOTHING` whose result is never read. See [indexing.md](indexing.md).
+`ON CONFLICT DO NOTHING` whose result is never read.
 
 **range completeness.** A classifier that separates covered from truncated, rejected and failed, with the
 provider cap read from configuration keyed on provider, tier and chain. Fails the slot: a hardcoded cap, a
@@ -108,16 +107,20 @@ unconditionally, or an address set snapshotted once outside a long drain.
 
 **reorg detector.** The parent link of each processed unit asserted against the stored identity of the
 previous one. Fails the slot: reliance on a removal flag from the source, a schema with no stored block hash,
-or a head regression treated as a rollback. See [finality-and-reorgs.md](finality-and-reorgs.md).
+or a head regression treated as a rollback.
 
 **unwind.** A reversing balancing entry keyed on the orphaned identity, bounded by a retention floor, with a
 halt above the floor. Fails the slot: a delete, an in-place edit, a bare debit, or a non-negativity constraint
 that aborts the reversing write.
 
-**amount source.** A measured balance delta, or the protocol's own delivery-metadata field, with the scale
-read from the authority at runtime and cached per chain and address. Fails the slot: crediting the announced
-amount for a token whose behaviour is not on an explicit record, or a hardcoded scale. See
-[token-semantics.md](token-semantics.md).
+**amount source.** The number the asset's or protocol's own accounting gives for this transfer: the delivery
+metadata where the protocol publishes it, the asset's internal non-rebasing unit where it has one, or a
+measured balance delta where attribution inside the measurement window is isolated. Name which of the three
+this path uses and what makes it valid here. With a measured delta, the isolation claim is the slot: a second
+transfer to the same account in the window, a rebase, or a reentering transfer hook makes the delta the net of
+things you did not mean to credit. Fails the slot: crediting the announced amount for a token whose behaviour
+is not on an explicit record, a delta measured over a window where attribution was never isolated, or a
+hardcoded scale rather than one read from the authority at runtime and cached per chain and address.
 
 **self-transfer guard.** The originator checked against the live set of addresses you control, queried inside
 the credit transaction. Fails the slot: an originator column present and never read, or an address set loaded
@@ -126,7 +129,7 @@ into process memory at boot.
 **finality gate.** A depth derived from a stated loss budget per chain and per amount, persisted with the
 credit alongside the unit it counts in, and an alarm when the finality source stops advancing. Fails the slot:
 a single constant across a chain list, a rollup credited on its own block count, or an absolute value taken
-over a confirmation count that can go negative. See [finality-and-reorgs.md](finality-and-reorgs.md).
+over a confirmation count that can go negative.
 
 **routing field.** The column, the API field and the per-chain validator, or an explicit `model: n/a` for a
 chain whose address is the whole destination. Fails the slot: a supported-pair table that admits a
@@ -144,7 +147,7 @@ Fails the slot: a single current-handle column, or a superseded-handle column th
 
 **allocator lock.** One lock spanning allocation, signing, broadcast and the durable record, keyed on stable
 bytes identical in every replica. Fails the slot: a lock released before the broadcast, or a key derived from
-a per-process value. See [custody-and-wallets.md](custody-and-wallets.md).
+a per-process value.
 
 **queue preconditions.** Ordering continuity, a fee-paying reserve sized against the queued depth, and an
 absolute fee ceiling denominated in the asset, each checked before every broadcast, each halting and paging on
@@ -154,17 +157,18 @@ behind a blocked position.
 **Inclusion is not one of the slots, because it is a property of the confirmer rather than a control you add.**
 Check it anyway while filling the handle-set slot: a mined-but-reverted transaction consumes the sequence
 number, burns the fee and emits no logs, so a success status on the receipt is required before any effect is
-treated as having occurred, and the absence of an event is not proof that nothing moved. The classes of value
-movement that emit no event at all, and the endpoints that expose them, are in [indexing.md](indexing.md).
+treated as having occurred. The absence of an event is not proof that nothing moved: some classes of value
+movement emit no event at all and are invisible to a log-only indexer.
 
 ## The seam into `fin-ledger`
 
 This file owns the on-chain half of the boundary. `fin-ledger` owns what the books record; load it too when
 the credit becomes a posting.
 
-**Identity.** A deposit credit is exactly one balanced ledger transaction whose idempotency key is the
-four-part log identity, never the transaction hash alone and never an increment of a balance column; the same
-event re-observed after a reconnect, a backfill overlap or a provider failover is a no-op.
+**Identity.** A deposit credit is exactly one balanced ledger transaction whose idempotency key is the full
+log identity for that chain model, all four parts on a chain that reorgs, never the transaction hash alone and
+never an increment of a balance column; the same event re-observed after a reconnect, a backfill overlap or a
+provider failover is a no-op.
 
 **Staging.** Observation posts to a per-user PENDING (unavailable) account; the credit policy's finality moves
 it to AVAILABLE, which alone authorises withdrawal and onward transfer.

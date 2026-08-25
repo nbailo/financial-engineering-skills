@@ -39,6 +39,12 @@ alongside this skill once the credit becomes a posting. Contract-internal vulner
 access control, key management, upgrade authority) are out of scope for this entire suite; the neighbour there
 is Trail of Bits' `building-secure-contracts`.
 
+This skill already specialises the money-core invariants that apply at a chain boundary, so load
+`fin-money-core` alongside it only for a cross-domain mechanism it does not cover, and `fin-verification` only
+when tests, proof or reconciliation are actually being changed, when the ask is review or readiness, or where
+a rule below demands stronger proof for the mechanism in scope; never as an automatic consequence of customer
+exposure.
+
 ## Workflow
 
 1. Name the crossing: what value enters or leaves your control, in which direction, and in whose favour.
@@ -60,9 +66,10 @@ is Trail of Bits' `building-secure-contracts`.
 
 **Observed, final and spendable are three quantities, and only the third authorises an outbound effect.**
 Value you have seen is not value that will survive, and value that will survive is not value the holder may
-move. Observation posts to a per-user unavailable account, the finality policy moves it to available, and only
-available funds a withdrawal. Collapsing the three means a rewrite of external history debits a balance the
-holder already spent; the gap is the only place that loss can be absorbed. Specialises *authority*.
+move. Whatever the storage shape, the three stay separately readable; a per-user unavailable balance that the
+finality policy moves to available is the common one. Collapsing them means a rewrite of external history
+debits a balance the holder already spent, and the gap between observed and spendable is the only place that
+loss can be absorbed. Specialises *authority*.
 
 **The chain model decides the identity rule, and flattening it is wrong half the time.**
 Account-nonce, UTXO and memo-tagged ledgers are three correctness problems, not three spellings of one. Key on
@@ -91,10 +98,11 @@ emitted only by the node that processed the rewrite while you were connected. An
 hash cannot detect a reorg deeper than its confirmation lag, ever.
 
 **The dedupe key separates the same event twice from the same event on a different branch.**
-The uniqueness key includes the branch of history the event was observed on, and the crediting path asserts
-that no unreversed twin exists for the transaction-level identity before it acts. Without the branch,
-re-crediting after a reorg is impossible in one direction and a double credit in the other. Specialises
-*durable dedupe*.
+Where history can be rewritten the uniqueness key carries the branch the event was observed on; where the
+ledger's own finality is categorical there is no branch to carry and the transaction-level identity is the
+whole key. Either way the crediting path asserts that no unreversed twin exists for the transaction-level
+identity before it acts. Omit the branch on a chain that has one and re-crediting after a reorg is impossible
+in one direction and a double credit in the other. Specialises *durable dedupe*.
 
 **An unwind is a reversing entry keyed on what it reverses, never an erasure.**
 Reverse a booked effect with a balancing entry keyed on the orphaned identity: never a delete, never an
@@ -102,11 +110,16 @@ in-place edit, never a bare debit of the holder's balance. A non-negativity cons
 reversing write wedges the indexer in a permanent retry loop. Below your own retention floor there is nothing
 to reverse against, and the correct behaviour is an unrecoverable-state halt, not a rollback.
 
-**Credit the delta you measured at the asset's authority, not the number in the notification.**
-The amount in an event is a claim made by the code that emitted it. Read the balance the asset's own authority
-reports before and after, or the protocol's own delivery-metadata field, and credit the difference. Read the
-scale from the authority at runtime, cached per ledger and asset; a hardcoded scale is a silent power-of-ten
-error in a payout. Specialises *exact representation*.
+**The credited amount comes from the asset's own accounting, not from the notification that announced it.**
+The amount in an event is a claim made by the code that emitted it, and on some assets it is not the amount
+that arrived. Take the number from whatever decides it for that asset: the protocol's own delivery-metadata
+field for the transfer, the asset's internal non-rebasing unit, or a balance delta you measured. A measured
+delta is one mechanism, and it attributes correctly only where the movement is isolated inside the window you
+measured; a second transfer to the same account, a rebase, a fee taken inside the transfer, or any unrelated
+state change moves the same balance and the delta stops belonging to one transfer. Where attribution is not
+isolated, the protocol's own accounting for that transfer is the source and a delta is the cross-check. Read
+the scale from the authority at runtime, cached per ledger and asset; a hardcoded scale is a silent
+power-of-ten error in a payout. Specialises *exact representation*.
 
 **Value arriving from an address you control is not income.**
 Assert the originator is outside your own perimeter before any credit. Your own movements are
@@ -146,28 +159,44 @@ find. Specialises *reconciliation*.
 
 ## References
 
-Each row is an instruction. When the trigger appears, read the file immediately and apply it in order. Do not
-summarise it.
+Each row is an instruction: when the trigger appears, read that file and apply it in order, never a summary.
 
 | file | read it immediately when |
 |---|---|
-| [indexing.md](references/indexing.md) | the code contains `eth_getLogs`, `fromBlock`, `getPastLogs`, `createEventFilter`, `maxBlockRange`, a `cursor` / `watermark` / `last_processed_block` table, `ON CONFLICT DO NOTHING` on a deposit row, `txlistinternal` or `debug_traceBlock` |
-| [finality-and-reorgs.md](references/finality-and-reorgs.md) | the code contains `confirmations`, `finalized`, `safe`, `reorg`, `parent_hash`, `ETHEREUM_REORG_THRESHOLD`, `listsinceblock`, `include_removed`, a per-chain `MIN_CONFIRMATIONS` table, or an L2 `sequencer` or batch-poster reference |
-| [transaction-identity.md](references/transaction-identity.md) | the code contains `@solana/web3.js`, `solders`, `getSignatureStatuses`, `lastValidBlockHeight`, `AdvanceNonceAccount`, durable nonce; or `replaces_tx_hash`, RBF, CPFP, `maxPriorityFeePerGas`, `already known`; or EIP-712 `domain`, `verifyingContract`, a bridge `(sourceChain, destChain, nonce)` replay key |
-| [custody-and-wallets.md](references/custody-and-wallets.md) | the code contains `UTXO`, `outpoint`, `vout`, `PSBT`, `changeAddress`, coin selection, dust; `derivationPath`, `xpub`, `gapLimit`, `importdescriptors`; `sweep`, `gasTank`, `forwarder`, a nonce or sequence allocator lock, a withdrawal queue; `sequenceId`, `externalTxId`, `treatAsGrossAmount`, batched withdrawals; an import of `bitcoinjs-lib`, `xrpl`, `stellar-sdk`, `bitgo`, or a Fireblocks SDK |
-| [token-semantics.md](references/token-semantics.md) | the code contains `decimals()`, `balanceOf`, `Transfer(`, `approve`, `permit`, `safeTransferFrom`, `SafeERC20`, rebasing, fee-on-transfer; or `latestRoundData`, `AggregatorV3Interface`, `updatedAt`, `answeredInRound`, `slot0`, `getReserves`, `priceFeed`, `oracle` |
+| [indexing.md](references/indexing.md) | the code contains `eth_getLogs`, `fromBlock`, `getPastLogs`, `createEventFilter`, `maxBlockRange`, a `cursor` / `watermark` / `last_processed_block` table, `ON CONFLICT DO NOTHING` on a deposit row, `txlistinternal`, `debug_traceBlock`, or a `from_address` column that is never read |
+| [finality-policy.md](references/finality-policy.md) | the code contains `confirmations`, `MIN_CONFIRMATIONS`, `finalized`, `safe`, an L2 `sequencer` or batch-poster reference, a fast-credit or zero-conf path, an XRPL `tec` / `tef` result code, or a per-chain deposit-suspension flag |
+| [reorg-handling.md](references/reorg-handling.md) | the code contains `reorg`, `parent_hash`, a `block_hash` stored per block, `ETHEREUM_REORG_THRESHOLD`, `log.removed`, `listsinceblock`, `include_removed`, a reversing entry, or a rollback floor |
+| [token-amounts.md](references/token-amounts.md) | the credited number comes from an event's amount field, a `balanceOf` delta or a rebasing accessor; or the code contains `delivered_amount`, `DeliverMax`, `tfPartialPayment`, a Stellar path payment, `fee_on_transfer` |
+| [token-erc20-quirks.md](references/token-erc20-quirks.md) | the code contains `decimals()`, `SafeERC20`, `safeTransfer`, `safeTransferFrom`, `approve`, `forceApprove`, `permit`, Permit2, `extcodesize`, or a hardcoded token address or amount scale |
+| [token-vault-shares.md](references/token-vault-shares.md) | the code contains `ERC4626`, `convertToShares`, `convertToAssets`, `previewDeposit`, `previewRedeem`, `totalAssets`, or an exchange rate computed over a pool's own balance |
+| [token-price-reads.md](references/token-price-reads.md) | the code contains `latestRoundData`, `latestAnswer`, `AggregatorV3Interface`, `updatedAt`, `answeredInRound`, a sequencer-uptime feed, `slot0`, `getReserves`, a TWAP, `amountOutMin`, or a swap `deadline` |
+| [tx-identity.md](references/tx-identity.md) | a withdrawal is keyed on `tx_hash`, or the code contains `replaces_tx_hash`, a broadcast-attempt table, `externalTxId`, `sequenceId`, or an `Idempotency-Key` header |
+| [tx-evm-nonces.md](references/tx-evm-nonces.md) | the code contains `maxPriorityFeePerGas`, `already known`, `replacement transaction underpriced`, `nonce too low`, `pendingNonce`, `AccountQueue`, `fillNonce`, `DROPPED_BY_BLOCKCHAIN`, or `GAS_PRICE_TOO_LOW_FOR_RBF` |
+| [tx-utxo-replacement.md](references/tx-utxo-replacement.md) | the code contains RBF, CPFP, `nSequence`, `-mempoolfullrbf`, BIP-125, `TOO_LONG_MEMPOOL_CHAIN`, or an ancestor / descendant mempool limit |
+| [tx-solana-and-xrpl.md](references/tx-solana-and-xrpl.md) | the code contains `@solana/web3.js`, `solders`, `getSignatureStatuses`, `lastValidBlockHeight`, `AdvanceNonceAccount`, a durable nonce; or `xrpl`, `LastLedgerSequence`, `AccountTxnID`, an XRPL `Sequence` |
+| [tx-layered-identity.md](references/tx-layered-identity.md) | the code contains EIP-712 `domain`, `verifyingContract`, Seaport `counter`, a 0x `salt`, `invalidateNonces`; or a bridge `(sourceChain, destChain, nonce)` replay key or a relayer delivery handler |
+| [wallet-utxo-construction.md](references/wallet-utxo-construction.md) | the code contains `PSBT`, `outpoint`, `vout`, coin selection, `changeAddress`, dust, `min_viable_change`, `getbalances`, `listunspent`, `-maxtxfee`, `maxTotalFee`, or an import of `bitcoinjs-lib` |
+| [wallet-derivation.md](references/wallet-derivation.md) | the code contains `derivationPath`, `xpub`, `gapLimit`, `importdescriptors`, `purpose'`, `avoid_reuse`, `DestinationTag`, `destination_tag`, a Stellar `Memo`, an X-address or a muxed account |
+| [wallet-sweeps.md](references/wallet-sweeps.md) | the code contains `sweep`, `gasTank`, `forwarder`, `INSUFFICIENT_FUNDS_FOR_FEE`, a spendable-versus-confirmed balance read, a hot / warm / cold account tree, or an unattributed / house account |
+| [wallet-withdrawal-queue.md](references/wallet-withdrawal-queue.md) | the code contains `treatAsGrossAmount`, `AMOUNT_TOO_SMALL`, `PARTIALLY_FAILED`, `PENDING_AUTHORIZATION`, `INSUFFICIENT_RESERVED_FUNDING`, a payout batch, a nonce or sequence allocator lock, or an outbound withdrawal queue |
 | [crossing-contract.md](references/crossing-contract.md) | the task is a review or a ship decision on a crediting or broadcast path, or you hold the signing keys, or you need the per-model table that turns an observable in the repo into the rule for that chain |
 
 ## Output
 
-When the change is economic, report the two fields on one line:
+When the change is economic, report authority and exposure:
 
     authority: EXTERNAL (<chain>) · exposure: own | customer | record
 
-The usual pair here is authority EXTERNAL, because the chain is the record and can tell you that you are
-wrong, and exposure `customer`, because a crediting or withdrawal path holds someone else's funds. Holding the
-signing authority moves it to authority SELF: nothing outside holds the wallet's own view of which outputs are
-its own and which nonce is next.
+Authority is a property of a quantity, not of the codebase. Chain inclusion and the value that arrived are
+EXTERNAL: the chain is the record and can tell you that you are wrong. The wallet's own view, which outputs
+are its own and which nonce or sequence number is next, is SELF, and so are the customer liabilities your
+books carry. Exposure is usually `customer`, because a crediting or withdrawal path holds someone else's
+funds. Where one authority covers everything in scope, emit the single line. Where it does not, emit MIXED and
+qualify only the quantities that differ, on one line each:
+
+    authority: MIXED · exposure: customer
+      arrived value, inclusion   EXTERNAL (Base)
+      wallet nonce and UTXO set  SELF
 
 Then one entry per real finding, and nothing for a concept this change does not touch:
 
@@ -184,6 +213,6 @@ uncalled helper or a design note describing a control is the same defect as the 
 Add a final `VERDICT SHIP` or `VERDICT NO-SHIP: <the unresolved control>` only when the task is a review or a
 ship decision.
 
-Emit the fuller crossing contract from [crossing-contract.md](references/crossing-contract.md) when authority
-is SELF, when exposure is `customer` on a crediting or broadcast path, or when the change spans more than one
-of identity, coverage, finality and amount.
+Emit the fuller crossing contract from [crossing-contract.md](references/crossing-contract.md) when you hold
+the signing keys, when exposure is `customer` on a crediting or broadcast path, or when the change spans more
+than one of identity, coverage, finality and amount.
