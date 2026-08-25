@@ -1,7 +1,7 @@
 {
   "name": "financial-engineering-skills",
-  "description": "Coding-agent skills for software where a bug has a balance sheet: trading, payments, ledgers, custody, and on-chain integration.",
-  "version": "0.2.0",
+  "description": "Financial-correctness skills for coding agents: catch economic bugs in code that trades, pays, keeps a ledger, or moves value on-chain.",
+  "version": "0.4.0",
   "license": "MIT",
   "keywords": [
     "finance",

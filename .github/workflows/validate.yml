@@ -12,9 +12,10 @@ jobs:
       # falls back to a lenient parser that accepts frontmatter real loaders reject.
       - run: pip install pyyaml
       # Enforces the Agent Skills spec (frontmatter keys, name rules, description
-      # limits) and this repo's budgets: 500 lines per SKILL.md, 2KB for AGENTS.md,
-      # 3000 chars of description across the suite. It also enforces that each skill
-      # opens with a Workflow section and cites the cross-cutting rules by name.
+      # limits), the repo budgets declared as constants in scripts/validate.py, the
+      # shared section shape of the six installed skills, and that every cross-skill
+      # invariant citation resolves in fin-money-core. The numbers live in the
+      # validator and are deliberately not restated here.
       - run: python3 scripts/validate.py
   routing-block-installer:
     runs-on: ubuntu-latest

@@ -1,11 +1,13 @@
 {
   "name": "financial-engineering-skills",
-  "owner": { "name": "Financial Engineering Skills contributors" },
+  "owner": {
+    "name": "Financial Engineering Skills contributors"
+  },
   "plugins": [
     {
       "name": "financial-engineering-skills",
       "source": ".",
-      "description": "Financial-correctness skills: exchange integration, matching and settlement, payments, ledger, on-chain, and verification."
+      "description": "Six financial-correctness skills: money-core, exchange integration, payments, ledger, on-chain, and verification."
     }
   ]
 }
