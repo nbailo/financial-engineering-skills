@@ -1,255 +1,127 @@
 ---
 name: fin-matching-engine
 description: >-
-  Financial correctness for code that owns an order book and mints the executions others book: durable
-  ordered input, deterministic replay, order-state transitions, allocation conservation and residue,
-  priority and iceberg refresh, auctions, self-match prevention, checked aggregates, fan-out bounds, halt
-  and resume, single-writer recovery. Use when you are the venue; to call one, use fin-exchange-integration.
+  BETA, opt-in. Financial correctness for code that owns an order book and mints the executions others
+  book: durable ordered input, deterministic replay, order-state transitions, allocation conservation and
+  residue, priority and iceberg refresh, auctions, self-match prevention, checked aggregates, fan-out
+  bounds, halt and resume, single-writer recovery. Use when you are the venue; to call one, use
+  fin-exchange-integration.
 license: MIT
 ---
 
 # You own the book
 
-This code **is** the record. It crosses resting orders, mints the execution, assigns the priority and the
-sequence, and produces the book everyone downstream treats as fact. Nothing outside can tell you that you
-are wrong, so the proof burden moves before deployment, into replay, determinism and conservation. Its usual
-pair is `authority: SELF · exposure: record`, and one question governs every change: if this process dies
-now, does the persisted record reproduce the identical emitted sequence, byte for byte, under the logic that
-produced it? Where this file names an invariant in italics, `fin-money-core` states it in full.
+**BETA.** Opt-in, not installed with the six skills under `skills/`, and the least exercised material here.
+Every venue-specific answer in the references is an example of a published rule, never the answer for yours.
+
+This code **is** the record: it crosses resting orders, mints the execution, assigns priority and sequence.
+Nothing outside can tell you that you are wrong, so the proof burden moves before deployment, into replay,
+determinism and conservation. The usual pair is `authority: SELF · exposure: record`, and one question
+governs every change: if this process dies now, does the persisted record reproduce the identical emitted
+sequence, byte for byte, under the logic that produced it?
 
 ## When to use
 
 Your process assigns order-book state no counterparty can independently verify: it matches an aggressing
 order against resting orders, allocates a fill across them, decides who holds queue position, computes an
-auction or cross price, or issues an identifier other systems consume because you issued it. If you are
-wrong, no external statement exists that would show it, so the evidence has to be internal.
-
-Literals that *suggest* this skill and never define it: a loop walking resting orders and decrementing a
-resting quantity; `order_book`, `price_level`, `book.bids`, `total_qty`, `leaves_qty` as structures **this
-repo owns**; `match`, `uncross`, `allocate`, `pro_rata`, `time_priority`, `iceberg`, `auction`, `imbalance`;
-a gate that **rejects** somebody else's order; `ExecID`, match number, a sequence number **you mint**.
+auction price, or mints an identifier other systems consume because you minted it. Suggested, never defined,
+by `order_book`, `price_level`, `leaves_qty` as structures **this repo owns**; by `match`, `uncross`,
+`allocate`, `pro_rata`, `iceberg`, `imbalance`; by a gate that **rejects** somebody else's order; by `ExecID`
+or a sequence number **you mint**.
 
 ## When not to
 
-- The code calls `create_order`, `ccxt`, a venue SDK or a FIX client session, or reconciles against
-  somebody else's fills. That is the client side, and `fin-exchange-integration` owns it.
-- The change publishes the feed rather than computing the book: packet and message sequencing, snapshot
-  and incremental joins, gap detection, A/B arbitration, conflation. `fin-market-data-publication` owns it.
-- The same change also writes authoritative balances or postings: `fin-ledger` owns that half. If it is only
-  amount arithmetic, rounding direction, operation identity or retry classification: `fin-money-core`.
-- The code reads recorded payloads and assigns nothing: a backtest, a volume query that republishes nothing.
+- Calls `create_order`, `ccxt`, a venue SDK or a FIX client session, or reconciles against somebody else's
+  fills: the client side, and `fin-exchange-integration` owns it.
+- Publishes the feed rather than computing the book, so packet sequencing, snapshot joins, gap detection,
+  A/B arbitration, conflation: `fin-market-data-publication`.
+- Also writes authoritative balances or postings: `fin-ledger`. Amount arithmetic, rounding, operation
+  identity or retry classification alone: `fin-money-core`.
+- Reads recorded payloads and assigns nothing: a backtest, a volume query that republishes nothing.
 
-A process that is both a venue and a client of another venue is two changes. Split it and report `authority`
-and `exposure` per half: a merged declaration inherits the weaker obligation, because the client half has a
-reconciliation and that reads as proof for the whole.
+Both a venue and a client of another venue is two changes: split it and report `authority` and `exposure` per
+half, because a merged declaration inherits the weaker obligation of the client half.
 
 ## Workflow
 
-1. Split the change into the venue half and the client half; report `authority` and `exposure` for each.
+1. Split into the venue half and the client half; report `authority` and `exposure` for each.
 2. Name the authoritative state you assign and the durable inputs it must be reproducible from.
-3. Make the input durable and ordered before any authoritative state changes, under exactly one writer.
-4. Establish determinism, with identity and sequence assignment inside the deterministic core, and decide
-   whether recovery loads persisted decisions or replays a pinned reducer.
-5. Enumerate the legal transitions, refuse the rest, and name the rulebook behind each venue-specific answer.
-6. Bound every emission with a counter keyed to the inbound unit and a hard limit checked before the send.
-7. Separate working, position and settlement exposure; decide halt scope, residue and the fate of in-flight
-   executions; prove replay; then ship the controls.
+3. Make the input durable and ordered before that state changes, under exactly one writer.
+4. Establish determinism, mint every identifier inside the core, and decide whether recovery loads persisted
+   decisions or replays a pinned reducer under the configuration then in force.
+5. Enumerate the legal transitions, refuse the rest, name the rulebook behind each venue-specific answer.
+6. Bound every emission with a counter keyed to the inbound unit, checked before the send.
+7. Separate the exposure buckets, decide halt scope and the fate of in-flight executions, prove replay.
 
 ## Invariants
 
-Cancel/fill races, idempotent cancel, the answer to a cancel of a terminal order, ownership checks and time
-priority are **obligations of this engine**, not things that come out right on their own. Some are rulebook
-entries: what the wire carries when a cancel arrives after the fill is published, not chosen per call site.
-Nasdaq OUCH 5.0 chooses silence, *"Superfluous Cancel Order Messages are silently ignored."* The transition
-is still enumerated and still refused internally; silence decides what to emit, never whether
-`(terminal, cancel)` appears in the table.
+One line each. Every one is worked through, evidenced, and tied to the fin-money-core rule it specialises, in
+the reference its trigger row names.
 
-### Authoritative state is reproducible from durable, ordered inputs
-
-Specialises *operation identity*: the intent is the inbound command, the first externally visible effect is
-the execution everyone else books, and five parts bind rather than any one architecture.
-
-- The inbound command is durable and ordered **before** the state it changes is touched.
-- The state change and the obligations it creates commit as one atomic step.
-- What you publish is read from the committed record, never from the in-memory vector that produced it.
-- Exactly one writer may extend that record, and the resource holding it **rejects** a stale-epoch write
-  rather than trusting a displaced writer to have stopped.
-- Recovery reproduces what this engine **decided**, not what today's build would decide from the same
-  inputs. Either the authoritative decisions are persisted immutably and recovery loads them, or every
-  journal record is covered by a journaled reducer identity, matcher version, configuration digest and
-  build, and replay applies the version that was in force. Replaying old commands through changed matching
-  logic is shadow analysis or migration verification. It is never authoritative recovery.
-
-If the emission is the only record, a process that dies mid-send cannot state what it executed. LMAX states
-the property as *"the current state of the Business Logic Processor is entirely derivable by processing the
-input events"*. Ordering is the half engines get right, durability the half they skip: `let _ = tx.send(ev);`
-drops a published execution on the excuse *"it is in-process, it cannot fail"*, and two engines matching one
-book for 200 ms produce two irreconcilable histories.
-
-### Determinism is demonstrated by replay, never asserted in a comment
-
-Same inputs, same outputs, same emitted sequence, including the identities you mint. Keep the core free of
-wall-clock reads, randomness, I/O and map-iteration-order dependence; assign sequence numbers, `ExecID` and
-match numbers **inside** the core so replay reproduces them. A correction is a **new** event referencing the
-original identity, never a renumber and never an un-emit. Either a replay test names its seed and
-byte-compares the emitted sequence, or the claim of replayability goes.
-
-**Whether a rejected command consumes a sequence number is a protocol decision, not an invariant.** What is
-invariant is that the numbering rule is published, total and reproducible: a consumer distinguishes a number
-you never assigned from a message it lost only if you told it the convention. Take it from the protocol you
-speak, publish it, pin it with a test named for the choice. *"Sequence numbers are consumed on rejects too,
-so the event stream has no gaps"* is true of the generator and false of the transport wherever
-`let _ = tx.send(ev)` can drop one.
-
-### Only enumerated transitions are legal, and every refusal is explicit
-
-Specialises *authority* seen from the authority's side, and *concurrency on authoritative state*, because
-the re-read and the act have to sit in one transaction. Enumerate the legal `(state, event)` pairs and refuse
-everything else with a typed error the engine records and counts; never let a pair fall through unhandled.
-What that refusal puts on the wire is the protocol's choice, and silence is a legitimate one. Never take an
-inbound message's assertion about
-state as the state: re-read the entity from the committed store inside the transaction that acts on it. An
-acknowledgement is itself a transition, so once you have told a participant an order is cancelled, executing
-it afterwards is a published state being contradicted. Session state is the same discipline, pre-market,
-auction, halt and continuous being states rather than flags read opportunistically. NASDAQ, SEC Rel.
-34-69655 ¶24 fn 4: cancels *"acknowledged"* *"immediately upon submission"* were nonetheless filled, and
-notifying members *"was not discussed"*.
-
-### A venue-specific answer comes from a published rulebook, and the code names the one it implements
-
-Several answers this engine depends on are **not** derivable from first principles. Each is a rule of the
-model you chose, published by the venue whose behaviour you reproduce, and each has more than one defensible
-answer shipping today. The invariant is not which answer you pick, but that you picked it deliberately, that
-it is in your published rules, and that a test named for the choice pins it.
-
-| Question | What is universal | Source of the specific answer |
-|---|---|---|
-| What price does an execution print at? | one price per execution, identical on both sides, derived from the book state the match consumed | the model. Continuous order-book venues that document it print at the **resting** order's price, so improvement accrues to the aggressor; a call auction prints every execution in the cross at the single uncrossing price; midpoint and periodic models print at neither side's limit |
-| Which amendments destroy time priority? | the priority-destroying set is one named constant, applied in one place, and the only writer of the priority key | the rulebook. A quantity increase and a price change destroy priority nearly everywhere; the economically invisible edits, an account-number change among them, differ by venue |
-| When does an iceberg slice refresh, and may it match the aggressor that consumed the previous slice? | the refresh happens inside the same deterministic step as the match that consumed the slice, never on a timer | the rulebook. Eligibility within the same aggression is a venue rule and both answers ship |
-| How is an auction tie broken once executable volume is maximised? | maximising executable volume is the only universal criterion, and a stated final rule makes the selection **total** | your own filed rule text. The imbalance, side and reference-price ladder is the shape published auction rules take, not a quotation of any venue's rule |
-| Both sides of a potential match are the same economic party | the decision is made before any execution is emitted, and a prevented match is a counterfactual, not a fill | the rulebook, in two published parts: the scope that decides which orders are the same party, and the strategy applied when two of them meet. Incompatible strategies ship with no neutral default, and Nasdaq OUCH 5.0 alone enumerates five of them across four scope levels |
-
-A convention hard-coded from memory produces a book consistent with itself and at odds with your published
-rules. Add a row for any other convention your protocol fixes; the allocation reference sources those above.
-
-### An inbound order is validated against its own instrument's economics
-
-Specialises *hard limits* on the last hop before the book. Reject any order priced more than a configured
-band away from **that instrument's own** reference price. Where both sides of a potential match are the same
-economic party, apply the self-match-prevention scope and strategy **your own rules publish**, and pin that
-exact pair with a test named for it; there is no default to fall back on, and a mode written from memory
-produces a print your rulebook does not authorise. The band derives per instrument, never from a
-cross-universe aggregate, and the same derivation runs on every session-state code path. A missing reference
-price rejects; it never substitutes a sentinel, and a sentinel is never multiplied. A prevented match is not
-a trade: record it as a counterfactual, never as a fill to either side and never as volume. Goldman Sachs,
-SEC order of 20 August 2013 ¶25 and ¶30:
-the pre-market band's upper bound came from the highest closing price of *any* listed option, so a $1 order
-in any name passed. CFTC v. Coinbase, March 2021: two internally operated programs *"matched orders with one
-another"*, and that volume propagated into third-party indices. Whatever you print becomes someone's price.
-
-### Working-order, filled-position and settlement exposure are three quantities
-
-Specialises *hard limits*. A fill is **one** atomic transition that reduces working-order exposure by
-exactly the quantity it adds to filled-position exposure; the execution, the `leaves` decrement and the
-position move commit together or the book owes that quantity twice. Increment a position without
-decrementing `leaves` and the gate double-counts; decrement `leaves` without booking the position and it
-under-counts. Settlement exposure is the third and outlives the other two: a round trip that ends flat is
-zero position and two live delivery obligations until clearing finality. Name which of the three each limit
-is written against, and never let one counter serve two. A gate summing executions alone is smaller than the
-firm's own exposure by the whole open book, which is why SEC Rule 15c3-5's adopting release measures
-*"exposure from orders entered … rather than relying on a post-execution, after-the-fact determination"*.
-
-### Allocation is not finished until the residue has an owner
-
-Specialises *rounding and conservation*: rounding down cannot distribute everything, so the residue pass is
-part of the algorithm and not a follow-up. Pro-rata allocation must never be the last step. Define the
-leftover pass, most commonly FIFO by time priority but always the pass your own rules name, and assert
-`Σ allocations == min(aggressing quantity, Σ resting quantity)` before any execution is emitted. Do the
-arithmetic in integers, multiplying before dividing, and make the tie-break key total, deterministic and
-reproducible from the journal, which rules out iterating any map whose order is unspecified. Three quantity
-conventions also share one word, an intended total after a cancel, a chain-cumulative total on a replace and
-a decrement on a modify; reading one as another moves `leaves` the wrong way long before it surfaces as an
-exposure error, and the conversion table is in the allocation reference.
-
-### An aggregate you publish is checked in the build you ship
-
-Specialises *rounding and conservation*. Any quantity that leaves the process as depth, volume or an
-aggregate is checked where it is computed, in the binary you deploy, not by an assertion the release build
-strips. Treat an underflow or overflow as a conservation breach: halt that transformation at the smallest
-scope, do not publish, do not clamp silently. If you saturate rather than check, **emit the saturation**,
-because a saturated aggregate with no exception attached is a lie. The rationalisation is *"the delta cannot
-exceed the aggregate by construction"*: it was by construction, the drift is the bug you are hunting, and the
-check that would have caught it is not in the binary you shipped. `level.total_qty -= qty` on a `u64` guarded
-only by a debug assertion wraps to roughly 1.8e19 in a **release** build and is published as depth. Two
-answers ship, live-in-release assertions versus saturate-and-emit, and the journaling reference states both
-with their build settings. Where a panic would abandon an obligation, saturate and emit; where nothing is in
-flight, assert live and crash. A `debug_assert` here is neither of the two.
-
-### A fan-out bound lives on the emit path, keyed to the inbound unit
-
-Specialises *hard limits*, keyed to the inbound unit rather than to a batch. Every transformation turning one
-input into many outputs carries a counter keyed to that inbound unit and a hard bound checked **before the
-send**, not by a monitor, which is always one interval behind an unbounded loop. Per-item bounds need an
-aggregate companion, since per-item limits are satisfiable by an unbounded number of items. On breach: set a
-flag the emit path reads before every send, cancel resting orders, disconnect order entry, keep risk,
-position and drop-copy alive. Reset authority is independent of the component that tripped, and the reset
-records what the cause was found to be; disabling the failing check is never the mitigation. Knight Capital,
-SEC Rel. 34-70694 ¶21: no *"control to compare orders leaving SMARS with those that entered it"*; ¶27, it
-*"continued to send millions of child orders while its personnel attempted to identify the source"*, and the
-remediation re-armed the defect on seven more servers: *"This action worsened the problem."*
-
-### A revalidate-and-recompute loop that consumes less than it receives does not converge
-
-Never compute a price over state that concurrent changes can mutate between compute and print. A loop that
-revalidates and recomputes must consume the **entire** pending input queue per pass, or the input set must be
-frozen first. Consuming one event per pass is a livelock whenever the arrival rate exceeds one per pass, and
-a component livelocked on its queue keeps accepting inputs it cannot process, so its last output is
-arbitrarily stale. A retry ceiling converts the hang into an abort; it does not make the loop converge.
-Assert input-set freshness at commit, carry that watermark onto the record you print, and never disable a
-correctness check to force completion: output produced while one is off is quarantined before it is
-authoritative. SEC Rel. 34-69655, NASDAQ and the Facebook IPO, 18 May 2012. ¶20, *"because the system was
-designed to perform a separate recalculation for each of those cancellations"*, so *"a loop resulted"*; ¶23
-and ¶26, validation lines removed from the failover let an 11:11 input set price an 11:30 cross, and the
-multi-million share short came from the cancel imbalance inside that window, not from the removal. ¶65's
-remediation is the rule: close the order ports before the calculation, or take bursts of changes *"in one
-recalculation … rather than in multiple recalculations"*.
-
-### Halt names three different things, and the code says which one
-
-Separate them. They have different scopes, different reset authorities and different effects on obligations:
-
-- an **incident risk gate**, stopping new or increasing exposure while what is outstanding stays managed;
-- a **venue or session halt**, a published trading state for an instrument or a session, whose effect on
-  resting orders, on cancels and on the reopening is a rulebook entry with more than one defensible answer;
-- **engine quiescence**, where the process stops accepting **and** producing, drains what is in flight, and
-  delivers or explicitly voids everything already produced.
-
-Severing the transport is none of the three: it abandons in-flight executions the participants cannot see.
-The risk reference decomposes these into six levels and maps each to the fate it leaves obligations in.
-**That decomposition is this repo's own, not an industry standard**; it earns its place by forcing the two
-questions a bare "halt" hides, what is still being produced and what happens to what was already produced.
-
-Which risk-reducing path stays callable is decided per level and per component, not universally. The matcher
-owes that `cancel` and a replace that only reduces quantity or moves price away stay callable for every
-resting order while the increasing gate is shut, gated by a **different** flag, with a test exercising them
-in that state. `close`, `flatten`, `settle` and `reconcile` belong to whatever component holds positions,
-cash or the clearing relationship; requiring a matcher that does not clear to expose them invents surface
-that then has to be correct under exactly the conditions the gate exists for. Where an invariant can be
-**momentarily** false during a named intermediate state, give the check a bounded self-heal window before
-escalating. TSE/JPX, 1 October 2020, escalated to a whole-day halt because participants held undelivered
-fills and no rule existed for resumption.
+1. Durable ordered command first; state change and the obligations it creates commit as one step; the
+   publisher reads committed state; one writer extends the record.
+2. Recovery reproduces what this engine **decided**: persisted immutable decisions, or replay under a
+   journaled reducer identity and the configuration then in force.
+3. Determinism is demonstrated by a seeded replay that byte-compares the emitted sequence, never asserted.
+4. Five identifiers, five counters, none derived from another: command, match, execution, session, feed.
+5. Only enumerated `(state, event)` pairs are legal, on state re-read from the committed store, and every
+   other pair is refused with a typed error the engine counts.
+6. Five answers are your rulebook's alone: execution price, the priority-destroying edit set, iceberg refresh
+   eligibility, the auction tie-break, self-match scope and strategy.
+7. One band derivation, called from every session state, against **that instrument's own** reference price;
+   a missing price rejects and a sentinel is never multiplied.
+8. Working-order, filled-position and settlement exposure are three named buckets, and a fill **transfers**
+   between the first two rather than incrementing both.
+9. Allocation is unfinished until the residue has an owner, and `Σ allocations == min(aggressing qty, Σ
+   resting qty)` is asserted before an execution is emitted.
+10. An aggregate you publish is checked in the build you ship, and a saturation is itself emitted.
+11. A fan-out bound sits on the emit path, keyed to the inbound unit, with an aggregate companion for every
+    per-item limit.
+12. An auction prices a finite input set: a cutoff, or a bounded batch whose fallback is the cutoff.
+13. Halt names an incident gate, a published market state or quiescence, and the code says which. Severing
+    the transport is none of them.
 
 ## References
 
-A literal from the middle column appears in the code, the repo or the task text → **read that file
-immediately and apply it. Do not summarise it.** All three live beside this file, in `references/`.
+A literal below appears in the code, the repo or the task text → **read that file and apply it. Do not
+summarise it.** One hop: each answers its own question and points at no other.
 
-| File | Read it immediately when the code or task contains | Covers |
-|---|---|---|
-| [matching-and-allocation.md](references/matching-and-allocation.md) | `pro_rata`, `allocate`, `time_priority`, `iceberg`, `auction`, `uncross`, `cross`, `opening_price`, `imbalance`, `stp`, `self_trade`, `aiq` | The allocation step pipeline, rounding and the leftover pass, execution-price conventions, priority preservation and loss, iceberg refresh, self-match-prevention scope and strategy, cross computation, the freeze-or-drain contract, allocator property tests |
-| [journaling-and-recovery.md](references/journaling-and-recovery.md) | `wal`, `journal`, `outbox`, `replay`, `snapshot`, `recover`, `failover`, `sequencer`, `epoch`, `fencing`, `reducer`, `migration` | What counts as an input, ordering and flush, the publish check, the deterministic core's banned constructs, identity assignment, the replay harness, snapshots, crash points, single-writer fencing, deterministic simulation, assertion policy, authoritative recovery versus shadow replay |
-| [risk-controls-and-halts.md](references/risk-controls-and-halts.md) | `halt`, `resume`, `kill_switch`, `circuit_breaker`, `price_band`, `LULD`, `pre_trade`, `risk_limit`, `bust`, `trade_break`, `exposure` | Pre-trade rejection and its measurement basis, the three exposures a fill moves, band derivation and sentinel prices, per-item versus aggregate limits, kill-switch latency, halt levels and the fate of obligations, resumption, and bust finality by rulebook |
+- [pro-rata-residue.md](references/pro-rata-residue.md): pro_rata, allocate, residue, floor division
+- [leftover-pass.md](references/leftover-pass.md): leftover pass, one extra lot, assign_residue, largest remainder
+- [allocation-pipeline.md](references/allocation-pipeline.md): PIPELINE, algo ==, algorithm steps, configured per product
+- [allocator-tests.md](references/allocator-tests.md): @given, hypothesis, fuzz, generator coverage
+- [rulebook-answers.md](references/rulebook-answers.md): which answer is ours, filed rule text, no neutral default
+- [execution-price.md](references/execution-price.md): which price prints, trade_price, improvement, midpoint
+- [priority-preservation.md](references/priority-preservation.md): time_priority, priority_seq, amend, Replace, Modify
+- [iceberg-refresh.md](references/iceberg-refresh.md): iceberg, display_qty, reserve order, refreshed slice
+- [quantity-conventions.md](references/quantity-conventions.md): leaves_qty, LeavesQty, CumQty, intended total
+- [self-trade-prevention.md](references/self-trade-prevention.md): stp, self_trade, aiq, decrement both, cancel oldest
+- [prevented-matches.md](references/prevented-matches.md): preventedQuantity, counterfactual, excluded from volume
+- [auction-uncross.md](references/auction-uncross.md): uncross, opening_price, imbalance, indicative, LULD collar
+- [cross-input-cutoff.md](references/cross-input-cutoff.md): recalculation loop, pending, drain, close_order_ports
+- [facebook-cross.md](references/facebook-cross.md): a cross that never printed, 34-69655, confirmations withheld
+- [order-state-transitions.md](references/order-state-transitions.md): (state, event), state_machine, terminal order, silently ignored
+- [cancel-and-replace-races.md](references/cancel-and-replace-races.md): CancelAck, ack then fill, Replaced, UserRefNum
+- [journal-inputs.md](references/journal-inputs.md): what gets journaled, TimeTick, injected seed, admin command
+- [write-ordering.md](references/write-ordering.md): wal, journal.append, fsync, torn append, one commit
+- [publish-outbox.md](references/publish-outbox.md): outbox, tx.send, try_send, published_at, relay
+- [deterministic-core-hazards.md](references/deterministic-core-hazards.md): Instant::now, thread_rng, HashMap iteration, f64 price
+- [five-minted-identifiers.md](references/five-minted-identifiers.md): ExecID, match_number, next_exec, feed sequence
+- [replay-harness.md](references/replay-harness.md): golden events, byte-compare, seed=, buggify, simulation
+- [snapshots-crash-points.md](references/snapshots-crash-points.md): snapshot, truncation, kill -9, book_digest
+- [failover-fencing.md](references/failover-fencing.md): failover, epoch, fencing, standby, two writers
+- [reducer-epochs.md](references/reducer-epochs.md): reducer, matcher_version, config_digest, migration
+- [assertion-policy.md](references/assertion-policy.md): debug_assert, overflow-checks, saturating_add, total_qty depth
+- [recovery-runbook.md](references/recovery-runbook.md): reproduce an incident, git_sha, build identity, offline tool
+- [pre-trade-rejection.md](references/pre-trade-rejection.md): pre_trade, risk_limit, credit_check, post-execution screen
+- [exposure-buckets.md](references/exposure-buckets.md): working versus filled, net_position, notional cap, settlement leg
+- [price-bands.md](references/price-bands.md): price_band, reference_price, fat finger, prior close, sentinel
+- [fanout-bounds.md](references/fanout-bounds.md): fan_out, one input many outputs, basket notional
+- [separate-gates.md](references/separate-gates.md): kill_switch, circuit_breaker, override, reset authority
+- [halt-levels.md](references/halt-levels.md): halt, quiesce, market state, fail_closed, cancel-all
+- [resumption.md](references/resumption.md): resume, reopen, undelivered fills, what the resume can trust
+- [busts-and-corrections.md](references/busts-and-corrections.md): bust, trade_break, an execution row deleted, clearly erroneous
+- [engine-contract.md](references/engine-contract.md): a review or a ship decision, VERDICT, which slots to fill
 
 ## Output
 
@@ -263,35 +135,11 @@ FIX       <the change that closes it>
 TEST      <the property to assert>
 ```
 
-Add `VERDICT   SHIP | NO-SHIP: <the unresolved control>` as a final line only for a review or a ship
-decision. No findings is one or two sentences saying so and why the change is safe. A claimed control points
-at executable code and, where the risk needs it, a named test; an absent one is `UNRESOLVED: <control>
-(<why>)`. **This skill also emits a fuller block by default**, because authority is SELF: the journal, the
-replay test, the emit bound, the halt gate and the conservation assertions *are* the reconciliation, and
-findings alone do not show whether they exist.
+Add `VERDICT   SHIP | NO-SHIP: <the unresolved control>` as a last line only for a review or a ship decision.
+No findings is a sentence or two saying so and why the change is safe. A claimed control points at executable
+code and a named test; an absent one is `UNRESOLVED: <control> (<why>)`.
 
-```
-ENGINE CONTRACT
-- Venue half:   authority SELF · exposure record. <crosses resting orders / assigns priority / mints ExecID>
-- Client half:  authority EXTERNAL (<venue>) · exposure <own|customer>, reconciled by <key> | none
-- Durable in:   <file:line where the inbound command is durable and ordered before the book is touched>
-- One writer:   <the fence, and the resource that rejects a stale epoch> | single process, no failover
-- Recovery:     persisted decisions at <file:line> | reducer pinned by <version+config+build> at <file:line>
-- Replay test:  <test name that replays the command stream and byte-compares the emitted sequence>
-- Publish:      <file:line where the send result is bound and checked>
-- Rulebook:     <venue-specific answer this change depends on> = <the answer>, pinned by <test name>
-- STP:          scope <the published scope> · strategy <the published strategy>, pinned by <test name>
-- Exposures:    working <file:line> · position <file:line> · settlement <file:line | not held here>
-- Emit bound:   <name>=<value> at <file:line>; trip flag reset owner: <component, not the emitter>
-- Halt:         <risk gate | session halt | quiesce> level <1-6>; cancel gated by <flag> at <file:line>
-- Aggregates:   <field> checked at <file:line>; saturation emitted at <file:line> | none saturates
-- Conservation: <assertion, such as Σ allocations == min(aggressing qty, Σ leaves)> at <file:line>
-```
-
-Fill only the slots this change touches; a slot it does not touch is omitted, not left blank. Two cases drop
-back to findings alone: an engine deployed only to a sandbox that mints no identifier an outside system
-consumes, and a read-only path that creates no obligation. Both become `exposure: record` the day participant funds or an outside consumer
-arrive. The internal invariants still obey *reconciliation*: ship them as a scheduled entrypoint running in
-production, reading through a path independent of the writer, with an alert destination that has no default.
-A process that is also a client of another venue emits both blocks; §10 of the journaling reference covers
-deterministic simulation where `fin-verification` is not installed.
+Because authority is SELF, **also emit the ENGINE CONTRACT block by default**, filling only the slots this
+change touches: venue half, client half, durable in, one writer, recovery, replay test, publish, identifiers,
+rulebook, STP, exposures, auction, emit bound, halt, conservation. Every slot wants a `file:line` or a test
+name, and the templates are in the engine-contract reference.
