@@ -1,0 +1,32 @@
+name: dependency-review
+
+# Runs on the pull requests that can change what this repository depends on: the hash-pinned
+# Python manifest, and the workflow files, whose `uses:` lines are dependencies too. It reads
+# the dependency graph for the base and the head of the pull request and fails on a known
+# advisory, before the change is merged rather than after it is deployed.
+on:
+  pull_request:
+    paths:
+      - 'requirements.txt'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # `low` is the action's own default, stated here because a default that changes
+          # silently is a control that weakens silently. One direct dependency is a small
+          # enough surface that there is no reason to accept a known low-severity advisory.
+          fail-on-severity: low
+          # The summary lands in the job summary. Posting it as a pull request comment would
+          # need pull-requests: write, which is a write scope bought for a convenience.
+          comment-summary-in-pr: never

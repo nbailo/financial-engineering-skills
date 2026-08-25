@@ -1,0 +1,58 @@
+version: 2
+
+# Deliberately quiet.
+#
+# The failure mode this configuration is written against is not a missed update. It is a
+# maintainer who stops reading Dependabot pull requests because there are always four open,
+# and who then does not read the one that matters either. This repository has one direct
+# Python dependency and a handful of actions, so the target is at most one routine dependency
+# pull request per month, and security updates whenever there is an advisory.
+#
+# No automerge, here or anywhere else. An action update is a change to code that runs with a
+# token in a job, and the whole point of pinning to a commit SHA is that a human looks at
+# which commit is being adopted. There is no Renovate configuration in this repository, and
+# adding one alongside this file would give two bots the same job and the same limit twice.
+#
+# No permanent ignore rules. An `ignore` that never expires is a decision to stop hearing
+# about a class of advisory. If an update has to be held back, add the ignore with the reason
+# and the date it is reviewed again in a comment beside it; scripts/check_workflows.py fails
+# on an ignore rule so the hold cannot become permanent by inattention.
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # One open pull request at a time. Grouped, so a month's action bumps arrive as one
+    # review of one diff rather than as five notifications.
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+
+  # pip is configured only because requirements.txt exists and pins PyYAML by digest.
+  # Dependabot rewrites the hashes along with the version, which is the only maintainable way
+  # to keep a --require-hashes manifest current.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    # Zero disables routine version updates. It does not disable security updates: an
+    # advisory against a pinned version still opens a pull request, grouped below. A CI-only
+    # YAML parser does not need a monthly version bump; it needs a fix when it is vulnerable.
+    open-pull-requests-limit: 0
+    groups:
+      pip-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"

@@ -34,12 +34,18 @@ permissions:
 jobs:
   evidence-age:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job reads and prints. It never pushes, so the job token has no reason to
+          # stay in .git/config after the checkout step ends.
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: pip install pyyaml
+      # --require-hashes refuses any artifact whose SHA-256 is not in requirements.txt.
+      - run: pip install --require-hashes -r requirements.txt
       - name: report evidence age
         id: report
         env:

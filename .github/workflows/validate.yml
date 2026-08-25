@@ -1,16 +1,32 @@
 name: validate
+
 on: [push, pull_request]
+
+# Read-only for the whole workflow. Nothing here writes to the repository, opens an issue or
+# publishes an artifact, so no job raises it. Stating it at workflow level means a job added
+# later starts read-only rather than inheriting whatever the repository default happens to be.
+permissions:
+  contents: read
+
 jobs:
   spec-and-budgets:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Without this the job token is written into .git/config, where every later step
+          # and everything those steps execute can read it. Nothing after checkout talks to
+          # the remote, so the credential has no reason to survive the step.
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      # PyYAML enables the strict frontmatter check. Without it the validator
-      # falls back to a lenient parser that accepts frontmatter real loaders reject.
-      - run: pip install pyyaml
+      # PyYAML enables the strict frontmatter check. Without it the validator falls back to a
+      # lenient parser that accepts frontmatter real loaders reject. --require-hashes refuses
+      # any artifact whose SHA-256 is not in requirements.txt, so a compromised index or a
+      # mirror serving a different file fails the install instead of executing in the job.
+      - run: pip install --require-hashes -r requirements.txt
       # Enforces the Agent Skills spec (frontmatter keys, name rules, description
       # limits), the repo budgets declared as constants in scripts/validate.py, the
       # shared section shape of the six installed skills, and that every cross-skill
@@ -21,10 +37,58 @@ jobs:
       # skill that does nothing. These fixtures cover a positive and a negative case for each of
       # the eight skills, including near-misses that must load nothing at all.
       - run: python3 scripts/eval_routing.py
+      # examples/prediction-market-bot/ is executable, not prose: a fake in-process venue,
+      # a safe bot, a counter-example, and a frozen event log. The runner is unittest, so it
+      # adds no dependency, and its network guard raises on any socket, name lookup or
+      # connection attempt, which is what stops a live call being reintroduced quietly.
+      - run: python3 examples/prediction-market-bot/run_tests.py
+
+  workflow-hygiene:
+    # The checks SECURITY.md cites by name: SHA pins with their release tag, read-only
+    # workflow permissions, a timeout on every job, persist-credentials: false on every
+    # checkout, --require-hashes on every pip install, and the quiet Dependabot posture.
+    # Without this job those statements would be prose that nothing keeps true.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install --require-hashes -r requirements.txt
+      - run: python3 scripts/check_workflows.py
+
+  shellcheck:
+    # scripts/install-guardrails.sh edits files in someone else's repository. A quoting bug
+    # there is a data-loss bug in a stranger's AGENTS.md, and the round-trip test below proves
+    # behaviour on three inputs, not the absence of the class.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck every shell script
+        run: |
+          set -euo pipefail
+          # shellcheck ships in the GitHub hosted Ubuntu image (0.9.0-1 on ubuntu-24.04, per
+          # actions/runner-images images/ubuntu/Ubuntu2404-Readme.md at 564e58d). Nothing here
+          # installs it: if a future image drops it, this step fails loudly instead of
+          # skipping the check and reporting green. The version is printed so a rule that
+          # only exists in a newer release is visible in the log.
+          shellcheck --version
+          # Every tracked shell script, not a list that a new script can be added beside.
+          git ls-files -z '*.sh' | xargs -0 -r shellcheck --
+
   routing-block-installer:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: install is idempotent and uninstall restores the host file
         run: |
           set -euo pipefail

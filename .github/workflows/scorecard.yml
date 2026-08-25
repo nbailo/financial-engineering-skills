@@ -1,0 +1,63 @@
+name: scorecard
+
+# OpenSSF Scorecard, adapted from the official starter workflow
+# (actions/starter-workflows code-scanning/scorecard.yml at e3c451d), with every action
+# pinned by SHA including the one the starter leaves on a floating major tag.
+#
+# What this is for. Scorecard reads how this repository is configured and reports the
+# supply-chain properties it can observe: whether actions are pinned, whether workflows hold
+# write permissions they do not need, whether dependencies are updated, whether a branch is
+# protected. It is a standing view of that configuration, which is the thing that drifts
+# quietly between releases when nobody is looking at it.
+#
+# What it is not. It is not a measure of whether the financial rules in skills/ are correct,
+# and its numeric score is not a release gate: a repository can score well and still state a
+# false invariant, which is this project's actual risk. No badge is published for exactly that
+# reason, and the results are read as findings, not as a grade.
+on:
+  # Only the default branch is analysed for the Branch-Protection check.
+  branch_protection_rule:
+  schedule:
+    # 07:25 UTC on Tuesdays, deliberately not Monday 07:00, which is when provider-drift runs.
+    - cron: '25 7 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The one write scope in this repository's automation, on the one job that needs it:
+      # uploading SARIF to the code scanning dashboard. Nothing else here can write anything.
+      security-events: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Left false on purpose. Publishing sends the result to the OpenSSF API and enables
+          # a badge, which turns a diagnostic into a score on display, and it would need
+          # id-token: write on this job to fetch an OIDC token. The findings are for the
+          # maintainer, and they are visible without either.
+          publish_results: false
+
+      - name: upload the SARIF as an artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: upload to code scanning
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: results.sarif

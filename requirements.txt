@@ -1,0 +1,32 @@
+# CI toolchain. Exact versions, hash verified.
+#
+# The skills ship no runtime code, so nothing here is a dependency of the product. This file
+# names the one third-party package this repository's own tooling imports: scripts/validate.py
+# and scripts/check_workflows.py use PyYAML to parse frontmatter and workflows the way a real
+# loader does. Without it validate.py falls back to a lenient parser that accepts frontmatter
+# the Skills API rejects.
+#
+# Install it the way CI does, and never any other way:
+#
+#     pip install --require-hashes -r requirements.txt
+#
+# --require-hashes refuses to install any artifact whose SHA-256 is not listed here, so a
+# compromised index, a typosquat or a mirror serving a different file fails the install
+# instead of running inside the job.
+#
+# Digests were read from the PyPI JSON API for PyYAML 6.0.3 on 2026-08-25
+# (https://pypi.org/pypi/PyYAML/json) and re-checked by downloading each artifact and hashing
+# it locally. The listed files, in the order of the hashes below:
+#
+#   pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+#       the wheel CI installs: CPython 3.12 on x86_64 Linux, the GitHub hosted Ubuntu runner
+#   pyyaml-6.0.3-cp312-cp312-macosx_11_0_arm64.whl
+#       the wheel a maintainer installs locally on Apple silicon under CPython 3.12
+#
+# Any other interpreter, architecture or artifact, the source distribution included, fails the
+# hash check. That is the intent. If you need another platform, read the same endpoint, add
+# that file's digest here with its filename in this comment, and do not reach for a build that
+# drops --require-hashes.
+pyyaml==6.0.3 \
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+    --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
