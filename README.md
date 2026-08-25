@@ -2,6 +2,49 @@
 
 **Coding-agent skills for software where a bug has a balance sheet.**
 
+Exchange and broker integrations, payment processors and rails, ledgers and double-entry books, onchain
+deposits and withdrawals, and the matching, clearing and settlement systems underneath them.
+
+---
+
+## Install
+
+```bash
+npx skills add nbailo/financial-engineering-skills
+```
+
+That is the whole installation. The seven skills land in `skills/`, and your agent picks them up from there.
+
+Claude Code users can instead install as a plugin, which namespaces the skills so they cannot collide with
+anything else you have:
+
+```
+/plugin marketplace add nbailo/financial-engineering-skills
+/plugin install financial-engineering-skills@financial-engineering-skills
+```
+
+---
+
+## How it works
+
+Install once, then ask for what you want in the ordinary way. You do not invoke these skills by name. Each
+one carries its own routing description, and the agent loads the ones that match the code in front of it.
+
+| You ask for | What loads |
+|---|---|
+| a Binance bot that buys when the 5-minute RSI drops below 30 | `fin-exchange-integration` |
+| a Stripe refund handler | `fin-payments` |
+| an indexer that credits deposits on Base | `fin-onchain` |
+| a matching engine for the venue you operate | `fin-matching-and-settlement` |
+
+If you want a particular skill regardless of what the agent infers, name it in the request:
+
+> use fin-onchain to review this withdrawal flow
+
+---
+
+## Why this exists
+
 Security asks: *can an attacker make this system do something unauthorised?*
 
 This asks a different question:
@@ -18,83 +61,7 @@ Every one of those passes a security review. That gap is what this suite is for.
 
 ---
 
-## Install
-
-Two commands, and **you need both**.
-
-```bash
-# 1. The skills: deep, domain-specific guidance, loaded on demand
-npx skills add nbailo/financial-engineering-skills
-
-# 2. The guardrails: always-on rules, in context every turn
-git clone https://github.com/nbailo/financial-engineering-skills /tmp/fes \
-  && /tmp/fes/scripts/install-guardrails.sh .
-```
-
-**Why both.** A skill is consulted only when the agent decides it needs help; always-on guardrails do not
-depend on that decision. A correctness suite faces the adversarial version of that problem: every agent
-believes it can already write `exchange.create_order(...)`, so it never reaches for the skill.
-
-Step 2 writes a marked block into your `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md`. It is
-idempotent, it preserves your existing content, and `--uninstall` removes it byte-for-byte.
-
-Claude Code users can instead install as a plugin, which namespaces the skills so they cannot collide with
-anything else you have:
-
-```
-/plugin marketplace add nbailo/financial-engineering-skills
-/plugin install financial-engineering-skills@financial-engineering-skills
-```
-
----
-
-## How to use it
-
-You do not invoke these skills. They load when the agent sees matching code. A request for a Binance bot pulls
-in `fin-exchange-integration`, because the task names `create_order` and `binance`.
-
-**New code.**
-
-> Write a Python bot that places a limit buy on Binance when the 5-minute RSI drops below 30.
-
-`fin-exchange-integration` loads, and the agent now:
-
-- commits a client order ID to an intent row before the socket write, carrying the full economic intent, the
-  venue + account + API-key identity, and `state = INTENT_RECORDED`
-- treats a timeout, a 5XX, a 429 and Binance `-1006`/`-1007` as `UNKNOWN`, and resolves by querying that client
-  order ID instead of resubmitting
-- validates price and quantity against `tickSize`, `stepSize`, `minNotional`, `minQty` and `maxQty` together in
-  `Decimal`, and returns an explicit skip signal when quantization would produce `qty == 0`
-- emits `test_timeout_that_already_filled` and the filter property test as code in the same response
-
-**Existing code.**
-
-> Review this refund handler for financial correctness.
-
-`fin-payments` loads. The agent computes the ceiling as
-`captured_amount − already_refunded − pending_refunds − disputed_amount` from the processor's numbers rather
-than from your `orders.amount_cents`, refuses to refund while any dispute on that charge is open or another
-refund on it is `pending`, and reverses the principal only, because Stripe does not return the processing fee.
-
-**The output slot.** Any response touching a money path ends with a NAMED RISKS table, one row per risk named:
-
-| risk | implemented at file:line | test name |
-|---|---|---|
-| ambiguous submit resubmits and doubles the position | `bot/execution.py:118` | `test_timeout_that_already_filled` |
-| quantized order violates `minNotional` | `bot/filters.py:42` | `test_normalize_satisfies_every_filter_simultaneously` |
-
-A row with no `file:line` is a defect. The most common failure in generated money code is naming the
-correct control accurately and then writing a comment instead of implementing it.
-
-**Turning it off.**
-
-```bash
-scripts/install-guardrails.sh --uninstall .
-```
-
----
-
-## What changes
+## What changes in the generated code
 
 Ask any agent to write a trading bot and it will produce something like this:
 
@@ -116,13 +83,59 @@ the original.
 
 That last distinction is not in any single vendor's documentation.
 
+**New code.**
+
+> Write a Python bot that places a limit buy on Binance when the 5-minute RSI drops below 30.
+
+`fin-exchange-integration` loads, and the agent now:
+
+- commits a client order ID to an intent row before the socket write, carrying the full economic intent, the
+  venue plus account plus API-key identity, and `state = INTENT_RECORDED`
+- treats a timeout, a 5XX, a 429 and Binance `-1006`/`-1007` as `UNKNOWN`, and resolves by querying that client
+  order ID instead of resubmitting
+- validates price and quantity against `tickSize`, `stepSize`, `minNotional`, `minQty` and `maxQty` together in
+  `Decimal`, and returns an explicit skip signal when quantization would produce `qty == 0`
+- emits `test_timeout_that_already_filled` and the filter property test as code in the same response
+
+**Existing code.**
+
+> Review this refund handler for financial correctness.
+
+`fin-payments` loads. The agent computes the ceiling as
+`captured_amount - already_refunded - pending_refunds - disputed_amount` from the processor's numbers rather
+than from your `orders.amount_cents`, refuses to refund while any dispute on that charge is open or another
+refund on it is `pending`, and reverses the principal only, because Stripe does not return the processing fee.
+
+**The output slot.** A response that touched a money path ends with a `FINANCIAL CHECK` block:
+
+```
+FINANCIAL CHECK
+tier:       T<n>, and the signal that placed it there
+effect:     what moves value, from whom to whom, in what unit
+identity:   the stable identity of the intent, durably recorded at file:line
+ambiguity:  which counterparty responses are UNKNOWN, and how they resolve
+authority:  whose copy of each quantity is the record
+recovery:   what a crash or restart between the effect and the local commit does
+controls:   <control> -> <file:line>, one per line; at T2 and above also `· <test name>`
+            UNRESOLVED: <control> (<why>), for anything not implemented
+```
+
+Seven labels, about ten lines for a routine change. `tier:` comes first because it decides what else is owed. `controls:` is where the evidence lives: every control named
+is either a real `file:line` or an explicit `UNRESOLVED:` line. A control with no location is a defect, because
+the most common failure in generated money code is naming the correct control accurately and then writing a
+comment instead of implementing it.
+
+Higher-risk work adds to this block rather than replacing it. Once someone else's money is at stake, the
+response also carries the domain contract block for the skill in play, whose rows carry the same evidence: the
+control, the `file:line` that implements it, and the test that proves it.
+
 ---
 
 ## The skills
 
 | Skill | For | Loads when |
 |---|---|---|
-| **fin-money-core** | Anything touching an amount, a value-moving call, a dedupe key, or a money-path rollout | Nothing more specific matches |
+| **fin-money-core** | Anything touching an amount, a value-moving call, a dedupe key, or a money-path rollout | Nothing more specific matches, or alongside one for arithmetic, retries and rollout |
 | **fin-exchange-integration** | Clients of a venue they don't operate: bots, execution engines, broker OMS, FIX clients | `create_order`, `tickSize`, `clientOrderId`, ccxt, a depth stream |
 | **fin-matching-and-settlement** | Engineers who **are** the venue: matching, allocation, market data, clearing, liquidation | Matching across resting orders, publishing a feed, settling |
 | **fin-payments** | Processor and rail integrations: Stripe, Adyen, PayPal, Square, ACH/SEPA/RTP | Intents, capture, refunds, disputes, webhooks, payouts |
@@ -132,6 +145,34 @@ That last distinction is not in any single vendor's documentation.
 
 Skills compose. An exchange backend loads **fin-matching-and-settlement** *and* **fin-ledger**. A 200-line
 Binance bot loads exactly one, and never sees double-entry accounting, chargebacks, or blockchain finality.
+
+---
+
+## Optional routing guardrails
+
+The skills are self-sufficient. Each one carries its own rules, its own evidence and its own output contract,
+and needs nothing else installed to do its job.
+
+What a skill cannot do is guarantee it gets consulted. If you want that routing to be more reliable, there is a
+small block you can install into the files every agent reads on every turn. It holds the routing table above
+and one instruction: do not call a financial risk resolved just because you described it.
+
+```bash
+git clone https://github.com/nbailo/financial-engineering-skills /tmp/fes \
+  && /tmp/fes/scripts/install-guardrails.sh .
+```
+
+It writes a marked block into your `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`. It is under
+2KB, it is idempotent, and it preserves your existing content.
+
+```bash
+scripts/install-guardrails.sh --uninstall .
+```
+
+Uninstalling restores your content. For a file ending in a single newline, which is what an editor writes, the
+round trip is byte-identical and CI asserts it; a file with trailing blank lines or no final newline comes back
+with that whitespace normalised. It costs you routing reliability and nothing else. The skills themselves behave
+identically either way.
 
 ---
 
@@ -166,27 +207,31 @@ acknowledgement cross on the wire and the fill is real money.
 - **It does not ban floating point.** Float is the correct type for greeks, implied vol, Monte Carlo and
   backtest statistics. The rule is about *obligations*, not about finance, and a blanket ban would be wrong.
 - **It does not demand institutional ceremony from small projects.** Risk tiers gate the required *evidence*,
-  never which rules apply. A 300-line bot is asked for two specific tests, not deterministic simulation.
+  never which rules apply. A 300-line bot is asked for five tests and a daily comparison, two of which the
+  exchange skill hands you as code. It is not asked for deterministic simulation.
 
 ---
 
 ## Repository
 
 ```
-AGENTS.md              always-on guardrails (CLAUDE.md is a symlink)
 skills/                the seven skills, each SKILL.md + references/
+AGENTS.md              the optional routing block (CLAUDE.md is a symlink)
 incidents/             catalogue of real, cited incidents mapped to the rules they motivate
+examples/              before and after on four money paths, with the rules that caught each defect
 docs/
   architecture.md      the taxonomy, routing, risk tiers and principles, with reasoning
   rules.md             the canonical rule spine: every rule, its owner, its evidence
+  failure-taxonomy.md  the thirteen ways a correct-looking system produces a wrong number
+  adoption.md          rolling the suite into an existing codebase
   scope-adjudication.md  four domains that asked for their own skill, and the rulings
 scripts/
   validate.py          spec conformance and budget enforcement
-  install-guardrails.sh  idempotent always-on install
+  install-guardrails.sh  idempotent install of the routing block
 ```
 
 Run `python3 scripts/validate.py` before opening a PR. It enforces the Agent Skills spec (frontmatter keys,
-name rules, description limits) and this repo's own budgets: 500 lines per SKILL.md, 8KB for `AGENTS.md`,
+name rules, description limits) and this repo's own budgets: 500 lines per SKILL.md, 2KB for `AGENTS.md`,
 3,000 characters of description across the whole suite, because the skill listing budget is shared with every
 other suite a user has installed.
 
