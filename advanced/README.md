@@ -3,9 +3,24 @@
 The six skills under `skills/` are the product. They cover code that trades through a venue, integrates a
 payment processor, keeps a ledger, or moves value on-chain.
 
-What lives here is for a much smaller audience: engineers whose code **is** the venue. Neither skill below
-is installed by `npx skills add`, neither is in the default routing, and neither consumes the shared
-description budget.
+What lives here is for a much smaller audience: engineers whose code **is** the venue. Both skills below
+are **BETA**: newer than the six, outside the default routing table, and the least exercised material in
+this repository. Neither is installed by a default `npx skills add`, and neither consumes the shared
+description budget, so neither costs anything until you ask for it by name.
+
+Install one deliberately. `--full-depth` is what makes the CLI look below `skills/`, and `--skill` is what
+keeps the other one out:
+
+```bash
+npx skills add nbailo/financial-engineering-skills#v0.5.0 --full-depth --skill fin-matching-engine
+npx skills add nbailo/financial-engineering-skills#v0.5.0 --full-depth --skill fin-market-data-publication
+```
+
+`#v0.5.0` is the release tag, and the CLI turns a `#` fragment on a git source into the `ref` it clones. Drop
+it and you install whatever is on the default branch at that moment. The README at the repository root has
+the pinned clone, and the verification steps that go with it.
+
+From that clone, copying the directory works too, and the two commands below are the same thing by hand.
 
 ## fin-matching-engine
 
@@ -15,7 +30,7 @@ iceberg refresh, auction computation, self-match prevention, checked aggregates,
 risk controls, halt and resume, single-writer recovery.
 
 ```bash
-cp -r advanced/fin-matching-engine ~/.claude/skills/
+cp -r advanced/fin-matching-engine ~/.claude/skills/     # from a clone of this repository
 ```
 
 ## fin-market-data-publication
@@ -25,7 +40,7 @@ resets and session identity, A/B arbitration, gap detection and recovery, confla
 and volume filters, timestamp semantics, deterministic publication.
 
 ```bash
-cp -r advanced/fin-market-data-publication ~/.claude/skills/
+cp -r advanced/fin-market-data-publication ~/.claude/skills/     # from a clone
 ```
 
 ## Which one you want
