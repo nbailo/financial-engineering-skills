@@ -61,7 +61,7 @@ promising an SLA that nobody is rostered to meet would be its own kind of false 
 
 ## What the automation is checked for, and at which commit
 
-Everything in this section was true at commit `023bef3e43e488f59d9b1b8a4c7b2951d8af2c8f`, and each row names
+Everything in this section was true at commit `2e11e076bb4945238ecdb6f10dc2b2d75af79afa`, and each row names
 the check that keeps it true. Re-derive any of them by running the named command against a checkout.
 
 | Property, at that commit | Check that holds it |
@@ -96,7 +96,7 @@ Supporting facts behind those rows, each with how it was obtained:
 - **Secrets.** `.github/workflows/secret-scan.yml` scans the commit range the event adds, on every push and
   pull request, and exits non-zero rather than reporting green when the base commit is missing from the
   clone. The full-history scan is `scripts/secret-scan.sh` with no arguments, run by hand once before a
-  release; at commit `023bef3e43e488f59d9b1b8a4c7b2951d8af2c8f` it reported no match over every commit
+  release; at commit `2e11e076bb4945238ecdb6f10dc2b2d75af79afa` it reported no match over every commit
   reachable from a local ref plus the tracked tree, for 13 literal-prefix patterns and 2 assignment patterns.
   Separately, `gh api repos/nbailo/financial-engineering-skills` reported GitHub secret scanning and push
   protection enabled on 2026-08-25.
@@ -105,6 +105,9 @@ Supporting facts behind those rows, each with how it was obtained:
   `publish_results` is left off and no badge is published: the findings are a description of how this
   repository is configured, read as findings. The number is not a release gate and not a quality claim, and
   a repository can score well while stating a false financial invariant, which is this project's actual risk.
+  One limit of the pin is worth stating: pinning that action by commit SHA fixes the action definition, and
+  the definition runs a container it names by tag, `docker://ghcr.io/ossf/scorecard-action:v2.4.4`, read in
+  `action.yaml` at the pinned commit. The image itself is therefore not digest-pinned by this repository.
 
 None of this says the repository is secure. Each row says that one named check passed at one named commit. A
 check that passed then says nothing about a later commit beyond the fact that the check still runs on it.
@@ -115,10 +118,24 @@ check that passed then says nothing about a later commit beyond the fact that th
 
 `scripts/install-guardrails.sh` writes a marked block into `AGENTS.md`, `CLAUDE.md` and
 `.github/copilot-instructions.md` in the directory you point it at. It edits files in your repository, with
-your permissions. Nothing in the documented path pipes network content into a shell: you clone the
-repository, you read the script, then you run it from the clone. The block is optional, and the skills work
-without it. `--uninstall` removes it, and CI asserts a byte-identical round trip for a host file that ends in
-a single newline, plus content preservation for two other shapes.
+your permissions. Nothing in the documented path pipes network content into a shell: you clone the repository
+at a release tag, you check the commit that tag resolved to, you read the script, then you run it from that
+clone. The block is optional, and the skills work without it, and `--uninstall` removes it.
+
+`scripts/test-install-guardrails.sh` is the evidence for what that script does and refuses to do, and CI runs
+it on `ubuntu-latest` and `macos-latest`. It covers: a target that is a symlink, a non-regular file, or a file
+with more than one hard link, and a `.github` that is a symlink, each refused before any write; markers that
+are duplicated, unbalanced, reversed, embedded in a longer line, carrying a stray carriage return, or missing
+their metadata line, each refused rather than guessed at; temporary files created only by `mktemp` inside the
+destination directory, so a pre-created `AGENTS.md.tmp` symlink is never written through; existing
+permissions and bytes outside the markers preserved; replacement by rename rather than in-place truncation;
+a partial failure and an interrupt each restoring every file the run had already replaced and deleting every
+file and directory it had created; uninstall never deleting a file that existed before install; and an
+install followed by an uninstall leaving the host file byte-identical, including a file with no final newline
+and a zero-byte file. Every tracked `*.sh` file also passes shellcheck in CI.
+
+What that does not cover: the script runs with your user's permissions and can only be as safe as the tree
+you ran it from, which is the reason the install path pins a tag and prints the commit before anything runs.
 
 ### CI
 
