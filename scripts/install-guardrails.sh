@@ -311,10 +311,15 @@ for name in "${NAMES[@]}"; do
     existed=1
 
     read -r bx bs ex es bl el <<< "$(scan_markers "$f")"
-    [ "$bx" -eq "$bs" ] && [ "$ex" -eq "$es" ] \
-      || die "$f: a managed marker appears inside a longer line; refusing to guess"
-    [ "$bx" -le 1 ] && [ "$ex" -le 1 ] \
-      || die "$f: duplicate managed markers ($bx BEGIN, $ex END)"
+    # Written as explicit ifs rather than `A && B || die`: in validation code the
+    # reader has to be able to see which branch runs, and SC2015 is right that the
+    # chained form does not read as if-then-else.
+    if [ "$bx" -ne "$bs" ] || [ "$ex" -ne "$es" ]; then
+      die "$f: a managed marker appears inside a longer line; refusing to guess"
+    fi
+    if [ "$bx" -gt 1 ] || [ "$ex" -gt 1 ]; then
+      die "$f: duplicate managed markers ($bx BEGIN, $ex END)"
+    fi
     [ "$bx" -eq "$ex" ] \
       || die "$f: unbalanced managed markers ($bx BEGIN, $ex END)"
     if [ "$bx" -eq 1 ]; then
