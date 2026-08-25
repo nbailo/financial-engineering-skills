@@ -1,7 +1,14 @@
 {
   "name": "financial-engineering-skills",
   "description": "Coding-agent skills for software where a bug has a balance sheet: trading, payments, ledgers, custody, and on-chain integration.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
-  "keywords": ["finance", "trading", "payments", "ledger", "defi", "correctness"]
+  "keywords": [
+    "finance",
+    "trading",
+    "payments",
+    "ledger",
+    "defi",
+    "correctness"
+  ]
 }
