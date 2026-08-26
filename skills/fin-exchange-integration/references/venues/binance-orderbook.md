@@ -5,8 +5,8 @@
 > version: as stated in this file's own header, the spot documentation repository at "Last Updated: 2026-07-27" and the derivatives documentation read 2026-08-24. Neither dating was re-checked here.
 > verified_at: not established
 > sources: https://github.com/binance/binance-spot-api-docs · https://developers.binance.com/docs/binance-spot-api-docs · https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
-> verified: none in this pass. No sentence below was re-read against a source for v0.5.0.
-> unverified: all of it, including the dating in the header above. This file predates the provenance requirement and was not re-checked in the v0.5.0 pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The step numbering below is a restatement of the venue's own procedure and a restatement can drift from its source silently, which is exactly the risk a missing date leaves open. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> verified: none in this pass. No sentence below was re-read against a source for the 2026-08-25 review pass.
+> unverified: all of it, including the dating in the header above. This file predates the provenance requirement and was not re-checked in the 2026-08-25 review pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The step numbering below is a restatement of the venue's own procedure and a restatement can drift from its source silently, which is exactly the risk a missing date leaves open. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
 > revalidate_when: either venue edits its "How to manage a local order book correctly" procedure; the futures diff stream stops carrying `pu`, or spot starts carrying it; the documented depth snapshot limit changes.
 
 The two different order-book join algorithms, written out as steps. Spot and Futures are not the same, and

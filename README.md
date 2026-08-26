@@ -35,8 +35,8 @@ quantization would produce `qty == 0`. `examples/trading-bot/` is the full befor
 
 ## Install
 
-**There is no supported public release.** Nothing here has been published as a release, and development
-continues toward a 1.0.0 release. Until it lands, the only thing you can pin is a commit you have read.
+**There is currently no supported public release.** Development continues toward a 1.0.0 release. Until it
+lands, the only thing you can pin is a commit you have read.
 
 These use the `skills` CLI, version 1.5.23 at the time of writing, in that order.
 

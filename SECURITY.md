@@ -178,9 +178,8 @@ commit rather than by branch.
 
 ## Supported versions
 
-There is no supported release. No version of this repository has ever been published as one, and
-`.claude-plugin/plugin.json` declares `0.0.0` to say so rather than to imply a shipped version. Development
-continues toward a 1.0.0 release.
+There is currently no supported public release. `.claude-plugin/plugin.json` declares `0.0.0` rather than a
+number that would imply a supported one. Development continues toward a 1.0.0 release.
 
 Until then the supported thing is `main`. Corrections land there, and the way to get one is to move to a
 newer commit. There are no maintenance branches and no backports. CI fails if a version stated in the README
