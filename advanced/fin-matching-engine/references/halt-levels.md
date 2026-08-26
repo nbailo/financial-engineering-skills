@@ -20,8 +20,7 @@ produced.
 
 ## Halt names three different things, and the code says which one
 
-They differ in scope, in reset authority and in what they leave obligations in. Deciding one and implementing
-another is the recurring mistake:
+They differ in scope, in reset authority and in what they leave obligations in:
 
 - an **incident risk gate**: an operational decision inside your own system that nobody outside sees, which
   stops new or increasing exposure while what is outstanding stays managed, cleared by an authority

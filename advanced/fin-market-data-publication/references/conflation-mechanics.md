@@ -36,18 +36,9 @@ Whether the stream may be conflated at all is decided in this skill's conflation
 ## What a conflated message must say about the raw stream
 
 A conflated stream is a second feed, not a cheaper rendering of the first, and the property that makes it
-usable is that a consumer can tell exactly which raw updates a conflated message accounts for. Two
-mechanisms carry that property, and this skill's conflation legality reference is where the choice between
-them is made: a covered raw sequence range on the message, or a counter of the conflated stream's own
-published beside the raw one. Where the protocol has room for the range, the range alone is enough and a
-second counter is not owed.
-
-Neither mechanism permits a conflated message published under one raw sequence number with the rest of the
-range unaccounted for. Never reuse a raw sequence number for different content, never renumber the raw
-space to close the hole conflation made, and never let one raw number stand for a range it does not name.
-Each of those turns the raw feed's gap detector into an instrument that reports contiguity across a hole,
-and it reports it to every consumer at once, including the ones that never subscribed to the conflated
-stream.
+usable is that a consumer can tell exactly which raw updates a conflated message accounts for. Which of the
+two mechanisms carries that property, and what neither of them permits, is settled in this skill's conflation
+legality reference; this file assumes that choice is made and works from it.
 
 Where you do publish a second counter, publishing both is the whole obligation, plus one sentence saying
 which one gap detection runs on and what the other is not valid for. CME does the negative half of this

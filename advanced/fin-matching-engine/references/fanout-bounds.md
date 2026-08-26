@@ -21,10 +21,8 @@ satisfiable by an unbounded number of items, so whatever the items sum into is b
 
 ## A fan-out bound lives on the emit path, keyed to the inbound unit
 
-Specialises *hard limits*, keyed to the inbound unit rather than to a batch. Every transformation turning one
-input into many outputs carries a counter keyed to that inbound unit and a hard bound checked **before the
-send**, not by a monitor, which is always one interval behind an unbounded loop. Per-item bounds need an
-aggregate companion, since per-item limits are satisfiable by an unbounded number of items. On breach: set a
+Specialises *hard limits*, keyed to the inbound unit rather than to a batch. The bound is checked **before
+the send**, never by a monitor, which is always one interval behind an unbounded loop. On breach: set a
 flag the emit path reads before every send, cancel resting orders, disconnect order entry, keep risk and
 drop-copy alive; reset authority is independent of the component that tripped, and disabling the failing check
 is never the mitigation. Knight Capital, SEC Rel. 34-70694 ¶21: no *"control to compare orders leaving SMARS

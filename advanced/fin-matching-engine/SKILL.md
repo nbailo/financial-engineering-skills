@@ -86,8 +86,7 @@ mints an identifier others consume because you minted it. Suggested by `order_bo
 
 ## References
 
-A literal below appears in the code, the repo or the task text → **read that file and apply it. Do not
-summarise it.**
+A literal below appears in the code, the repo or the task text: load that reference before assessing it.
 
 - [pro-rata-residue.md](references/pro-rata-residue.md): pro_rata, allocate, residue, floor division
 - [leftover-pass.md](references/leftover-pass.md): leftover pass, one extra lot, assign_residue, largest remainder

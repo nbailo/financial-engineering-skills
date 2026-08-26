@@ -1,10 +1,10 @@
 ---
 name: fin-market-data-publication
 description: >-
-  BETA. Financial correctness for publishing a market-data feed you ORIGINATE: sequencing and gap
-  detection, session identity, resets, snapshot and incremental joins, A/B arbitration, recovery that
-  terminates, conflation, book and volume filters, timestamps, deterministic publication. Use when your
-  code emits the feed other systems build a book, volume or index from. NOT for someone else's feed:
+  BETA. Publishing a market-data feed you ORIGINATE: sequencing and gap detection, session
+  identity, resets, snapshot and incremental joins, A/B arbitration, recovery that terminates,
+  conflation, book and volume filters, timestamps, deterministic publication. Use when your code
+  emits the feed other systems build a book, volume or index from. NOT for someone else's feed:
   use fin-exchange-integration.
 license: MIT
 ---
@@ -72,7 +72,7 @@ conflation, a `top_of_book` aggregate that leaves the process.
 
 ## References
 
-A literal below appears in the code, the repo or the task text: read that file in full, never a summary.
+A literal below appears in the code, the repo or the task text: load that reference before assessing it.
 
 - [feed-spec](references/feed-spec.md): an explicit design, review or ship-readiness task, and only then: the specification consumers read
 - [feed-versioning](references/feed-versioning.md): a live feed gains a field, a published number is tightened, a constant gains data

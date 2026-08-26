@@ -19,11 +19,9 @@
 > and locking and crossing is (e), which is not where older writing puts them), or your venue's rulebook
 > changes which session states permit a locked or crossed quote.
 
-What a publisher does with a number that failed a check: how far to freeze, what to say while frozen, and
-why a clamp or a saturating operator is a fabricated number with the exception thrown away. It carries the
-catalogue of emit-path checks with the halt level each implies, the planted breaks that prove each detector
-works, and the one assertion that is a rulebook fact rather than arithmetic. A test that only exercises the
-correct path proves the arithmetic, which was never in doubt.
+What a publisher does with a number that failed a check: how far to freeze, and what to say while frozen. It
+carries the catalogue of emit-path checks with the halt level each implies, the planted breaks that prove each
+detector works, and the one assertion that is a rulebook fact rather than arithmetic.
 
 ## Contents
 
@@ -38,20 +36,10 @@ correct path proves the arithmetic, which was never in doubt.
 ## The obligation
 
 **The aggregate you publish is checked on the path that publishes it.**
-The default shape of a hand-written price level is wrong here: an aggregate decremented with unchecked
-unsigned subtraction, guarded by an assertion the release build compiles out, on the path that publishes
-depth. The rationalisation is that the quantity cannot exceed the aggregate by construction; drift is the bug
-you are hunting. Use a checked subtraction that returns an error. On breach, freeze at the smallest scope
-containing it, withhold the level behind an explicit invalidation event, and never clamp to zero, because a
-clamp is fabricated depth with no exception attached. A breached, clamped or saturated aggregate is never
-presented as authoritative: withhold it, or publish it marked as not firm, and where a panic would abandon
-in-flight obligations and you saturate instead, emit the saturation as an event on the feed. The check runs in
-the publisher, on the bytes about to leave, never in the matcher, whose copy has another source of truth.
-
-A top-of-book assertion states your rulebook rather than a law of arithmetic: `best_bid <= best_ask` is right
-for a continuous executable book whose rules forbid crossing, and wrong during an auction, where interest that
-would execute rests on both sides until the auction runs, and on a venue permitting a locked market. Assert
-what your rulebook forbids, gate it on session state, and say which states it holds in.
+Both halves of this file specialise that. The first is what to do when the check fires, which is the breach
+policy below. The second is what the check may claim in the first place, which is a rulebook question rather
+than a law of arithmetic, and is the crossed-and-locked section at the end. Why the default hand-written
+decrement fails in the profile you ship is in this skill's emit checks reference.
 
 ## Breach policy
 

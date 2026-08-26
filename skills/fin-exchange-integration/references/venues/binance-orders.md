@@ -13,8 +13,6 @@ Everything Binance-specific about instructing the venue that a correct client ca
 client-order-ID uniqueness scope and the query endpoints that recover an order whose response was lost, the
 error codes that mean UNKNOWN versus the ones that mean rejected, the timing and rate-limit rules that decide
 whether an instruction reaches the book at all, and the order-type preconditions that reject it when it does.
-Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),
-so re-verify before keying production behaviour on one.
 
 ## Contents
 

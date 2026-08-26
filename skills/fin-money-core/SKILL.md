@@ -1,10 +1,10 @@
 ---
 name: fin-money-core
 description: >-
-  Financial correctness for any code that moves or records value: exact amounts, rounding,
-  operation identity, ambiguous external outcomes, durable dedupe, concurrency, hard limits,
-  reconciliation and rollout. Use when a change touches a value someone is owed or a call that
-  moves one; defer to a domain skill when it names a venue, processor, ledger or chain.
+  Any code that moves or records value: exact amounts, rounding, operation identity, ambiguous
+  external outcomes, durable dedupe, concurrency, hard limits, reconciliation, rollout. Use when a
+  change touches a value someone is owed or a call that moves one; defer to a domain skill naming
+  a venue, processor, ledger or chain.
 license: MIT
 ---
 
@@ -162,7 +162,7 @@ deploy and needs its own test. Delete a dead money path rather than leaving it c
 
 ## References
 
-Each row is a standing instruction: when the mechanism appears in the change, read that file before you conclude.
+Each row names a mechanism: load that reference before assessing it.
 
 | file | read it when the change contains |
 |---|---|

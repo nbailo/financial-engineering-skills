@@ -99,55 +99,26 @@ LOADED_PATH_ADVANCED_CEILING = 5000    # the hard gate for an opt-in advanced pa
 
 # Why the advanced ceiling is not the target, with the arithmetic that forced it.
 #
-# A loaded path costs: SKILL.md prose + one dispatch row per reference + the one reference
-# the task opens. With C tokens of reference content spread over N files and ~32 tokens per
-# dispatch row, that is prose + 32N + C/N, which is minimised at N = sqrt(C/32) and has a
-# floor of prose + 2*sqrt(32C). No decomposition beats that floor; splitting further just
-# moves cost from the reference into the table.
-#
-# fin-market-data-publication has C small enough to land inside 3500, and it does.
-# fin-matching-engine carries C = 45,268 tokens of sourced evidence, giving a floor of
-# ~4,291. The measured mean after splitting into 36 references is 4,307, which is 0.4% off
-# the computed floor: the decomposition is already optimal, not lazy. Reaching 3500 would
-# require C <= ~20,400, i.e. deleting about 55% of the sourced evidence, and the only
-# material large enough to matter is provenance and worked incident citation.
-#
-# So: 3500 stays the target and is met where the evidence base allows. Advanced paths gate
-# at 5000, and LOADED_PATH_RATCHET still forbids growth. The alternative considered and
-# rejected was splitting fin-matching-engine into two advanced skills, which would reach the
-# band but adds a product abstraction the release contract forbids.
+# A loaded path costs: SKILL.md prose + one dispatch row per reference + the one reference the
+# task opens. With C tokens of reference content over N files and ~32 tokens per dispatch row,
+# that is prose + 32N + C/N, minimised at N = sqrt(C/32) with a floor of prose + 2*sqrt(32C).
+# No decomposition beats that floor; splitting further moves cost from the reference into the
+# table. fin-matching-engine carries enough sourced evidence that its floor sits above 3500,
+# which is why the opt-in ceiling exists and why it is not the target.
 
-# THE RATCHET, and what it admits. Every advanced path is far over the band today, by a factor
-# of three to five. The material predates the policy, and cutting a sourced protocol reference
-# by two thirds is a content decision rather than a validator's, so the gap is recorded here
-# instead of being enforced away or hidden.
-#
-# Each entry is a CEILING THAT MAY ONLY FALL: the path's measured cost on 2026-08-25, rounded
-# up to the next 500 estimated tokens. The rounding is the tolerance for an editorial pass, and
-# 500 tokens is roughly two kilobytes of prose, so growth that clears it is a real addition
-# rather than a rewritten paragraph. A path with no entry here is held to the band, not to a
-# ceiling of its own. A recorded path that grows past its ceiling fails the run. Every run
-# prints how far over the BAND each recorded path is, never how far under its ceiling, so a
+# THE RATCHET. Each entry is a CEILING THAT MAY ONLY FALL, recorded for a path whose evidence
+# base does not yet fit the band. A path with no entry is held to the band itself. Every run
+# prints how far over the BAND a recorded path is, never how far under its ceiling, so a
 # ratcheted path is never mistaken for a compliant one, and --strict fails on all of them.
 # Deleting an entry is the only way to close one, and deleting it requires the path to fit.
 LOADED_PATH_RATCHET: dict[str, int] = {
     # case id in evals/routing-cases.yaml -> ceiling in estimated tokens.
-    # Measured 2026-08-25 and rounded up to the next 500; the comment carries the raw
-    # measurement, so a re-measure that has moved is visible without running anything.
-    # fin-matching-engine, re-measured after the reference decomposition: SKILL.md cut from 6,632 to
-    # 3,050 estimated tokens, and its three references split into thirty-six narrow ones. Still over
-    # the band, and by how much is printed on every run; the ceilings below only record that the debt
-    # is now a quarter of what it was.
-    'matching-engine-core':             4800,  # 4,707 = SKILL.md 3,050 + pro-rata-residue 1,657
-    'matching-engine-journal-replay':   4000,  # 3,986 = SKILL.md 3,050 + failover-fencing 936
-    'matching-engine-risk-halts':       4300,  # 4,279 = SKILL.md 3,050 + busts-and-corrections 1,229
-    'market-data-publisher':           3500,  # 9,237 = SKILL.md 6,785 + feed-specification 2,452
-    'market-data-itch-sequencing':     3500,  # 12,284 = SKILL.md 6,785 + nasdaq-itch-and-moldudp64 5,499
-    'market-data-cme-recovery':        3500,  # 10,794 = SKILL.md 6,785 + cme-mdp-recovery 4,009
-    'market-data-conflation':          3300,  # 10,813 = SKILL.md 6,785 + conflation-and-backpressure 4,028
-    'market-data-fix-session':         3300,  # 10,036 = SKILL.md 6,785 + fix-session-sequencing 3,251
-    'market-data-reg-nms-fairness':    3500,  # 9,922 = SKILL.md 6,785 + us-reg-nms-timing-fairness 3,137
-    'market-data-emit-assertions':     3400,  # 10,996 = SKILL.md 6,785 + emit-path-assertions 4,211
+    # fin-market-data-publication had seven entries here. All seven now fit the band and are
+    # closed. What remains is fin-matching-engine, whose three paths carry a reference the band
+    # cannot hold without deleting sourced evidence.
+    'matching-engine-core':           4800,
+    'matching-engine-journal-replay': 4000,
+    'matching-engine-risk-halts':     4300,
 }
 # ══════════════════════════════════════════════════════════════════════════════════════
 

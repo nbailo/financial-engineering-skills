@@ -26,9 +26,7 @@ are in the set is a rulebook entry; that the set is data loaded from your filed 
 ## Priority preservation matrix
 
 **The rows below are two operators' published answers, not a universal rule**, and only the Nasdaq rows were read in this pass.
-What does not vary is the structure: the priority-destroying set is one named set, loaded from your filed rule text, applied in
-one place, and the only writer of the priority key. The economically invisible edits are where venues differ, and where a
-reader's assumption is most likely to be wrong.
+The economically invisible edits are where venues differ, and where a reader's assumption is most likely to be wrong.
 
 | Operation | Priority | Source |
 |---|---|---|

@@ -1,7 +1,6 @@
 # Transaction identity and the handles a broadcast returns
 
-A transaction hash is a digest of one serialization of one attempt, and it is the field everyone stores. It is
-not the identity of anything.
+A transaction hash is the field everyone stores. It is not the identity of anything.
 
 ## Contents
 

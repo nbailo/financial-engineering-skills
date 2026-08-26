@@ -29,10 +29,6 @@ are defensible; acknowledging a cancel and then filling the order is not among t
 
 ## Resumption, busts and corrections
 
-Resumption is a state-reconstruction problem, not a switch. Decide the fate of in-flight and undelivered
-executions **before** resuming, not during, and reconstruct from the durable record rather than from memory
-that happened to survive.
-
 1. Every execution produced before the halt is in exactly one of **three** states, and the resume says which
    one each is in: **delivered** to both counterparties; **committed, durable and retrievable** in the record
    but not yet delivered; or **explicitly voided** by a cancellation referencing its original match identity.

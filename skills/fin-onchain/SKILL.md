@@ -1,10 +1,10 @@
 ---
 name: fin-onchain
 description: >-
-  Financial correctness at the chain boundary: crediting deposits, finality and reorgs,
-  transaction identity, nonces, custody and wallet state, token amount semantics, and
-  chain-to-ledger reconciliation. Use when reviewing code that reads chain state or moves value
-  on-chain, including ethers, viem, web3.py, Solana, Bitcoin, XRPL, Fireblocks and BitGo.
+  Chain boundary: crediting deposits, finality and reorgs, transaction identity, nonces, custody
+  and wallet state, token amount semantics, chain-to-ledger reconciliation. Use for code that
+  reads chain state or moves value on-chain, including ethers, viem, web3.py, Solana, Bitcoin,
+  XRPL, Fireblocks and BitGo.
 license: MIT
 ---
 
@@ -163,9 +163,9 @@ find. Specialises *reconciliation*.
 
 ## References
 
-Each row is an instruction: when the trigger appears, read that file and apply it in order, never a summary.
+Each row names a mechanism: load that reference before assessing it.
 
-| file | read it immediately when |
+| file | read it when |
 |---|---|
 | [indexing.md](references/indexing.md) | the code contains `eth_getLogs`, `fromBlock`, `getPastLogs`, `createEventFilter`, `maxBlockRange`, a `cursor` / `watermark` / `last_processed_block` table, `ON CONFLICT DO NOTHING` on a deposit row, `txlistinternal`, `debug_traceBlock`, or a `from_address` column that is never read |
 | [finality-policy.md](references/finality-policy.md) | the code contains `confirmations`, `MIN_CONFIRMATIONS`, `finalized`, `safe`, an L2 `sequencer` or batch-poster reference, a fast-credit or zero-conf path, an XRPL `tec` / `tef` result code, or a per-chain deposit-suspension flag |

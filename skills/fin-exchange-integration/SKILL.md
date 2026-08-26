@@ -1,11 +1,10 @@
 ---
 name: fin-exchange-integration
 description: >-
-  Financial correctness for trading through a venue you do not operate: ambiguous order
-  submission, duplicate orders, venue constraints, fills, reconnect recovery, stale market data,
-  fees, funding, position and PnL. Also prediction-market settlement and payout credit. Use when
-  reviewing a client of Binance, OKX, Bybit, Kraken, Hyperliquid, ccxt, FIX, or a prediction
-  market such as Polymarket, Kalshi or Limitless.
+  Trading through a venue you do not operate: ambiguous or duplicate orders, venue constraints,
+  fills, reconnect recovery, stale market data, fees, funding, position, PnL; also
+  prediction-market settlement and payout credit. Use for a client of Binance, OKX, Bybit, Kraken,
+  Hyperliquid, ccxt, FIX, Polymarket, Kalshi or Limitless.
 license: MIT
 ---
 
@@ -54,7 +53,7 @@ Routing literals, evidence rather than definition: imports of `ccxt`, `python-bi
 6. **Decide how local state is rebuilt after a disconnect, a restart or a stream gap,** what cancels your resting orders while
    you are gone, and what stays blocked until the rebuild finishes.
 7. **Reconcile position, fills, fees and funding on a schedule,** and define what a mismatch does besides a log line.
-8. **Load only the references a trigger below names, apply each in order and never summarised,** then prove the five properties.
+8. **Load a reference below before assessing the mechanism its trigger names,** then prove the five properties.
 
 ## Invariants
 
@@ -186,7 +185,9 @@ provider-support matrix stating the level for each.
 - [venues/binance-orderbook.md](references/venues/binance-orderbook.md): the diff joins a Binance depth stream to a snapshot: `depthUpdate`, `lastUpdateId`, `U`/`u`/`pu`
 - [venues/okx-bybit-kraken-orders.md](references/venues/okx-bybit-kraken-orders.md): the diff names `okx`, `bybit`, `kraken`, `clOrdId`, `orderLinkId`, `cl_ord_id`, `userref`, `tgtCcy`, or one of those venues' recovery endpoints or rate limits
 - [venues/okx-bybit-kraken-orderbook.md](references/venues/okx-bybit-kraken-orderbook.md): the diff names `seqId`/`prevSeqId`, a Bybit `u`/`seq` depth frame, or a Kraken CRC32 book `checksum`
-- [venues/coinbase-deribit-hyperliquid.md](references/venues/coinbase-deribit-hyperliquid.md): the code names `coinbase`, `advanced_trade`, `deribit`, `hyperliquid`, `cloid`, `set_heartbeat`
+- [venues/coinbase-orders.md](references/venues/coinbase-orders.md): the code names `coinbase`, `advanced_trade`, a replayed create returning the original order, or `DUPLICATE_CLIENT_ORDER_ID`
+- [venues/deribit-orders.md](references/venues/deribit-orders.md): the code names `deribit`, a `label` order tag, `set_heartbeat`, or `enable_cancel_on_disconnect`
+- [venues/hyperliquid-orders.md](references/venues/hyperliquid-orders.md): the code names `hyperliquid`, `cloid`, a `(signer, nonce)` replay window, `orderStatus`, or `iocCancelRejected`
 - [venues/divergence-matrix.md](references/venues/divergence-matrix.md): the repo builds more than one venue adapter, or defines a venue-agnostic `Order`, `OrderBook`, `RateLimiter` or client-order-ID abstraction
 - [pre-trade-controls.md](references/pre-trade-controls.md): the diff normalises price or quantity against venue filters, or adds a notional, position, rate or price-band limit
 - [order-state-machine.md](references/order-state-machine.md): the diff defines an order status enum, handles `ExecutionReport`/`OrdStatus`, or reads `leaves_qty`/`LeavesQty`/`CumQty`
@@ -198,12 +199,20 @@ provider-support matrix stating the level for each.
 - [execution-algorithms.md](references/execution-algorithms.md): the diff defines a parent/child order, a TWAP/VWAP/POV/IS schedule, `participation_rate`, `slice`, or a benchmark price
 - [ccxt.md](references/ccxt.md): the diff imports `ccxt`/`ccxt.pro`, or touches `precisionMode`/`amountToPrecision`/`createMarketBuyOrderRequiresPrice`
 - [fix.md](references/fix.md): the diff speaks FIX: `35=D`, `PossDupFlag`, `PossResend`, `OrigClOrdID`, `ResendRequest`, `ExecRefID`, iLink 3 / FIXP
-- [prediction-market-core.md](references/prediction-market-core.md): the diff prices, sizes, reserves, quotes, submits, books or keeps a position on a prediction market of any venue, including any bot or client that places outcome orders: `clobTokenIds` or another outcome token or contract id, a YES/NO or multi-outcome payout, a complement price, a signed YES/NO position keeper, a two-book crossing or top-of-book check, a per-market tick grid or a `[tick, 1 - tick]` bound, or a fee that is not `bps × notional`
+- [prediction-market-core.md](references/prediction-market-core.md): the diff quantizes a prediction-market price or charges a fee: `orderPriceMinTickSize`, `price_ranges`, a `[tick, 1 - tick]` bound, `p × (1 - p)`, or `bps × notional`
+- [prediction-market-outcome-identity.md](references/prediction-market-outcome-identity.md): the diff maps an outcome label to an identifier or assumes a binary payout: `clobTokenIds`, `winningOutcomeIndex`, `payoutNumerators`, `notional_value_dollars`, `sideSpecs`
+- [prediction-market-complement-and-books.md](references/prediction-market-complement-and-books.md): the diff sells from flat, reserves collateral or checks two legs: `position_fp`, a `1 - p` complement, `splitPosition`, `bestBid(YES) + bestBid(NO)`
+- [prediction-market-order-identity.md](references/prediction-market-order-identity.md): the diff recovers a prediction-market submission or reconciles its quantities: a signed `timestamp` that replaced `nonce`, `client_order_id` with no documented semantics, `open_interest_fp`, `realized_pnl_dollars`
 - [prediction-market-settlement-integration.md](references/prediction-market-settlement-integration.md): the diff handles a prediction market closing, resolving or paying out: `determined`/`amended`/`finalized`, a `MATCHED`/`MINED` settlement frame, `payoutNumerators`, a settlement or redeem credit, or `redeemPositions`/`/portfolio/redeem`
 - [prediction-market-polymarket-v2.md](references/prediction-market-polymarket-v2.md): the diff signs, posts or books a Polymarket CLOB V2 order: `py-clob-client-v2`, `@polymarket/clob-client-v2`, `builderCode`/`builder_code`, pUSD, `getClobMarketInfo`, `feeSchedule`, `orderPriceMinTickSize`, a `0.005`/`0.0025` tick, or a signed order still carrying `feeRateBps`, `nonce` or `taker`
 - [prediction-market-kalshi.md](references/prediction-market-kalshi.md): the diff trades, books or settles a Kalshi event contract: `outcome_side`/`book_side`, `orderbook_fp`, `use_yes_price`, `price_ranges`, a `*_dollars` or `*_fp` fixed-point field, `client_order_id`, an amend `count`, `open_interest_fp`, `exchange_index`, or `determined`/`amended`/`finalized`
-- [prediction-market-limitless.md](references/prediction-market-limitless.md): the diff names `limitless`, `api.limitless.exchange`, `lmts-api-key`, `venue.exchange`/`venue.adapter`, a `"Limitless CTF Exchange"` EIP-712 domain, `orderEvent`, `subscribe_order_events`, `settlementStatus`, or `clientOrderId` on Base
-- [prediction-market-hyperliquid-hip4.md](references/prediction-market-hyperliquid-hip4.md): the diff touches a Hyperliquid outcome market: `outcomeMeta`, `settledOutcome`, `outcomeMetaUpdates`, `settleFraction`, `sideSpecs`, `userOutcome`, `splitOutcome`/`mergeOutcome`/`mergeQuestion`/`negateOutcome`, a `#<encoding>` coin or an asset id above `100_000_000`
+- [prediction-market-limitless.md](references/prediction-market-limitless.md): the diff names `limitless`, `api.limitless.exchange`, an `lmts-api-key` HMAC header, `venue.exchange`, `tradeType`, `clientOrderId`, `/orders/status/batch`, or a `409 Conflict` on a reused id
+- [prediction-market-limitless-signing.md](references/prediction-market-limitless-signing.md): the diff builds the Limitless signed struct: a `"Limitless CTF Exchange"` domain, `salt`, `signatureType`, `rank.feeRateBps`, or an FOK `takerAmount = 1`
+- [prediction-market-limitless-cancel.md](references/prediction-market-limitless-cancel.md): the diff withdraws a Limitless quote: `/orders/cancel-batch`, `/orders/cancel-replace`, a `207 Multi-Status`, or `GET /maintenance/status`
+- [prediction-market-limitless-events.md](references/prediction-market-limitless-events.md): the diff consumes the Limitless stream: `subscribe_order_events`, an `orderEvent` frame, `OME` versus `SETTLEMENT`, `isEstimate`, `occurredAt`
+- [prediction-market-limitless-book-and-fees.md](references/prediction-market-limitless-book-and-fees.md): the diff reads the Limitless book or credits its payout: `adjustedMidpoint`, an already-merged YES-side book, `effectiveFeeBps`, or `POST /portfolio/redeem`
+- [prediction-market-hyperliquid-hip4.md](references/prediction-market-hyperliquid-hip4.md): the diff touches a Hyperliquid outcome market's book or balance operations: `splitOutcome`/`mergeOutcome`/`mergeQuestion`/`negateOutcome`, a `userOutcome` action, a merged `#<encoding>` book, or a deployer fee scale
+- [prediction-market-hyperliquid-hip4-outcomes.md](references/prediction-market-hyperliquid-hip4-outcomes.md): the diff reads a Hyperliquid outcome definition or its settlement: `outcomeMeta`, `settledOutcome`, `outcomeMetaUpdates`, `sideSpecs`, `settleFraction`, a pipe-delimited `description`, or an asset id above `100_000_000`
 - [test-properties.md](references/test-properties.md): you are writing or reviewing the tests for any of the five properties above
 - [seams.md](references/seams.md): the same process posts fills into a ledger, or is both a venue for its own clients and a client of another venue
 

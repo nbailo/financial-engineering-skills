@@ -23,25 +23,27 @@ A rule with two homes drifts, and nothing in CI compares them. A domain skill ci
 It restates the *specialisation* in its own vocabulary rather than pointing at a sibling for the general rule,
 because a domain skill must be fully useful with `fin-money-core` absent.
 
-## 2. The runtime budget, and why 220 lines matters
+## 2. The runtime budget, and why 210 lines matters
 
 A `SKILL.md` is loaded **whole**, every time the skill activates, and it stays in the conversation for the
 rest of the session. Every line is a per-turn tax on a task that may only need three of them.
 
-- **210 lines per `SKILL.md`**, target 150 to 200. Enforced by `scripts/validate.py`.
+- **210 lines per `SKILL.md`** outside the trigger table, 300 including it, target 150 to 200 of prose.
+  Enforced by `scripts/validate.py`.
 - **430 characters per description, and 2,600 characters across the suite.** The listing budget is a
   percentage of the context window, it is shared with every other suite the user has installed, and
   overflow drops descriptions starting with the least-invoked skill, which is always a newly installed one.
 - **After compaction only the first 5,000 tokens of each skill are re-attached.** Anything that must not be
-  missed sits near the top of the file, which is why `## Workflow` is the first H2 in every skill.
+  missed sits near the top of the file.
 
 A `SKILL.md` contains only frontmatter, a title, two or three lines naming the economic position this code
-is in, and six H2 sections in this order: `## Workflow` (five to eight numbered imperative steps),
-`## When to use` (the situations, then the literals as routing hints), `## When not to` (and which skill
-instead), `## Invariants` (domain-critical only, two to six lines each), `## References` (a narrow trigger
-table), `## Output` (compact, applicability-driven). `scripts/validate.py` fails any other shape. Incident
-narratives, vendor matrices, error-code catalogues, test templates and worked examples belong in references:
-deleting a cited fact is a defect, and loading it when it is not relevant is also a defect.
+is in, and six H2 sections in this order: `## When to use` (the situations, then the literals as routing
+hints), `## When not to` (and which skill instead), `## Workflow` (five to eight numbered imperative steps),
+`## Invariants` (domain-critical only, two to six lines each), `## References` (a narrow trigger table),
+`## Output` (compact, applicability-driven). Routing comes before the workflow on purpose: if the skill does
+not apply, every line after `## When not to` is wasted context. `scripts/validate.py` fails any other shape.
+Incident narratives, vendor matrices, error-code catalogues, test templates and worked examples belong in
+references: deleting a cited fact is a defect, and loading it when it is not relevant is also a defect.
 
 ## 3. Routing and composition
 
@@ -58,8 +60,8 @@ The budget above is per skill; what decides the cost of a turn is how many load 
 - **At most two domain skills plus `fin-verification`** for one task. A backend that credits on-chain
   deposits into a ledger is `fin-onchain` and `fin-ledger`, because both mechanisms are in the diff.
 
-Each skill states this in one line under `## When not to`. `AGENTS.md` carries the routing table and one
-standing instruction, and nothing else.
+Each skill routes the reader onward under `## When not to`. `AGENTS.md` carries the same routing table, this
+composition rule, and the standing instruction that a described risk is not a resolved one.
 
 ## 4. The ten money-core invariants
 
@@ -68,16 +70,16 @@ adds only the domain specialisation.
 
 | Name | The invariant | Specialised by |
 |---|---|---|
-| exact representation | A value a counterparty can demand is exact. A value nobody can demand may be a float. | every domain skill |
-| rounding and conservation | Direction comes from the operation, the residue has a named owner, and split parts sum to the original total. | ledger, onchain, payments |
-| operation identity | One identity per economic decision, owned atomically by one writer, durable before the first externally visible effect, reused by every retry of that decision. | exchange, payments, onchain |
-| ambiguous outcomes | A response that does not prove the outcome is UNKNOWN. Resolve by asking the authority about the identity you sent. | exchange, payments, onchain |
-| durable dedupe | Dedupe state is exactly as durable as what it protects, and is written in the same transaction as the effect. | exchange, payments, onchain |
-| concurrency on authoritative state | No unprotected read-modify-write on a value someone is owed. The guard is the write, and it covers the whole check-to-act section. | ledger, onchain |
-| authority | Authority is a property of a quantity. Name whose copy of each quantity is the record, and the window in which two systems may legitimately disagree. | every domain skill |
-| reconciliation | Compare against the authority on a schedule, through a path independent of the writer, and fail closed when a break is found. | verification, then every domain skill for its own source |
-| hard limits | A limit rejects the operation rather than observing it, and at least one limit is an aggregate over the batch. | exchange, ledger |
-| rollout | Reusing a live flag, enum or shared helper changes what already-deployed consumers decide, without changing their code. | verification |
+| exact representation | A value a counterparty can demand is exact. A value nobody can demand may be a float. | ledger, onchain |
+| rounding and conservation | Direction comes from the operation, the residue has a named owner, and split parts sum to the original total. | ledger, payments |
+| operation identity | One identity per economic decision, owned atomically by one writer, durable before the first externally visible effect, reused by every retry of that decision. | exchange, ledger, onchain, payments |
+| ambiguous outcomes | A response that does not prove the outcome is UNKNOWN. Resolve by asking the authority about the identity you sent. | exchange, payments, verification |
+| durable dedupe | Dedupe state is exactly as durable as what it protects, and is written in the same transaction as the effect. | exchange, ledger, onchain, payments |
+| concurrency on authoritative state | No unprotected read-modify-write on a value someone is owed. The guard is the write, and it covers the whole check-to-act section. | onchain, payments |
+| authority | Authority is a property of a quantity. Name whose copy of each quantity is the record, and the window in which two systems may legitimately disagree. | exchange, onchain, payments, verification |
+| reconciliation | Compare against the authority on a schedule, through a path independent of the writer, and fail closed when a break is found. | exchange, ledger, onchain, payments, verification |
+| hard limits | A limit rejects the operation rather than observing it, and at least one limit is an aggregate over the batch. | exchange, ledger, payments |
+| rollout | Reusing a live flag, enum or shared helper changes what already-deployed consumers decide, without changing their code. | no domain specialisation; stated once in `fin-money-core` |
 
 Beyond these ten, each domain owns what does not translate: order state machines and venue filters in
 `fin-exchange-integration`; capture, refund and dispute lifecycles in `fin-payments`; double-entry, holds and
@@ -95,7 +97,7 @@ several.**
 
 ## 5. Authority and exposure
 
-The retired tier scale was one ordinal encoding two unrelated things. It is split into two fields:
+Two orthogonal fields, emitted only when the change is economic:
 
     authority:  EXTERNAL | SELF | MIXED
     exposure:   own | customer | record
@@ -120,13 +122,13 @@ not, emit `MIXED` and qualify the quantities that differ, one line each:
       internal liabilities  SELF
 
 Two or three qualifiers, never a taxonomy and never a matrix. A single finding may carry its own authority
-where that is what makes it a finding. Both fields are reported only when the change is economic, and neither
-changes *which* rules apply. **Exposure decides how much evidence. Authority decides which kind.**
+where that is what makes it a finding. Neither field changes *which* rules apply. **Exposure decides how much
+evidence. Authority decides which kind.**
 
 ## 6. The output contract
 
-Default output is one entry per real finding, and where the task is a review or a ship decision, one final
-line:
+An economic change opens with the authority and exposure line from section 5, then one entry per real
+finding, and where the task is a review or a ship decision, one final line:
 
     FINDING   the wrong economic outcome, concretely
     WHY       the mechanism that produces it
@@ -146,8 +148,7 @@ line:
 
 ## 7. What `fin-verification` owns
 
-`fin-verification` describes **proof mechanisms**. It holds no required-technique matrix keyed on exposure,
-and nothing is required merely because customer money exists.
+`fin-verification` describes **proof mechanisms**.
 
 - **The domain skill names the property** that must be proven for the mechanism in scope.
 - **`fin-verification` names the mechanism that proves it,** and asks whether the control runs in production,
@@ -190,26 +191,25 @@ reconciliation design or deterministic simulation.
 orders, allocation and residue, auctions, self-trade prevention, price bands, halt and resume, and
 single-writer recovery. `advanced/fin-market-data-publication/` holds the skill for code that publishes a
 feed it originates. Neither is installed by `npx skills add`, neither is in the routing table, and neither
-consumes the shared description budget. Its audience is a small fraction of the users of the other six, and a description that
-sits in every listing is paid for by everyone. Shipping it by default would also make the package read as a
-toolkit for building trading venues, which it is not: the common case is being a venue's *client*, and that
-is `fin-exchange-integration`. Nothing in `skills/` may link into it, because an installed copy would not
-have it. `scripts/validate.py` enforces that rule and the count of six.
+consumes the shared description budget. Their audience is a small fraction of the users of the other six,
+and a description that sits in every listing is paid for by everyone. Shipping them by default would also
+make the package read as a toolkit for building trading venues, which it is not: the common case is being a
+venue's *client*, and that is `fin-exchange-integration`. Nothing in `skills/` may link into `advanced/`,
+because an installed copy would not have it. `scripts/validate.py` enforces that rule and the count of six.
 
 ## 10. Layout and the validator
 
-`skills/` holds the six installed skills, each a `SKILL.md` plus a `references/` directory one level deep.
-`advanced/` is outside the installed product. `AGENTS.md` is the optional routing block, under 2 KB, and
-`CLAUDE.md` is a symlink to it. `.agents/skills` and `.claude/skills` are symlinks so every harness reads
-one canonical tree. `CONTRIBUTING.md` has the rest of the repository layout and the submission bar.
+`skills/` holds the six installed skills, each a `SKILL.md` plus a `references/` directory. A reference
+sits directly in `references/`, or in at most one grouping directory below it, as the venue files do in
+`skills/fin-exchange-integration/references/venues/`; a deeper path describes a chain the skill cannot
+dispatch to, and `scripts/validate.py` rejects it. `advanced/` is outside the installed product. `AGENTS.md`
+is the optional routing block, under 2 KB, and `CLAUDE.md` is a symlink to it. `.agents/skills` and
+`.claude/skills` are symlinks so every harness reads one canonical tree.
 
-`scripts/validate.py` enforces the frontmatter spec, the budgets above, the shared section shape, reference
-floors and one-hop depth, the six-skill count, the absence of the retired output block and the retired tier
-scale, that every cited path exists, and that no em dash appears outside a quotation. It also applies this
-repo's own standard that a comment is a claim: a version, a budget number or a product-shape claim restated
-in prose must equal what the code enforces and what the tree contains, which covers the plugin and
-marketplace descriptions and the single id scheme in `docs/failure-taxonomy.md`. `CONTRIBUTING.md` lists the
-checks in full.
+`scripts/validate.py` also applies this repo's own standard that a comment is a claim: a version, a budget
+number or a product-shape claim restated in prose must equal what the code enforces and what the tree
+contains. `CONTRIBUTING.md` has the rest of the repository layout, the submission bar, and the full list of
+checks.
 
 ## 11. The evidence for the delivery model
 

@@ -1,13 +1,9 @@
 # What an operator needs to reproduce an incident from the journal alone
 
-Anything missing from this list turns a deterministic engine into an undebuggable one at the worst possible
-moment. The completeness test is one sentence, and it is the same question the ENGINE CONTRACT block asks:
-hand an engineer these files and nothing else, and they reproduce the emitted event sequence byte for byte.
+What an operator needs to reproduce a production incident on a laptop, from the journal alone. Anything
+missing turns a deterministic engine into an undebuggable one at the worst possible moment.
 
 ## Recovery runbook artefacts
-
-What an operator needs to reproduce a production incident on a laptop, from the journal alone. Anything missing
-here turns a deterministic engine into an undebuggable one at the worst possible moment.
 
 Two things make this list different from a backup policy. The first is that every item is an input to a
 reproduction rather than a copy of a result: nothing here is a database dump, and the state a dump would carry

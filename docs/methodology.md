@@ -1,7 +1,6 @@
 # How the rules were built, and what is not claimed
 
-Every rule in this suite traces to something a reader can check. This file says what that means in practice,
-what the rules were selected against, and what the suite deliberately does not do.
+Every rule in this suite traces to something a reader can check. This file says what that means in practice.
 
 ## What a rule is sourced from
 
@@ -48,29 +47,15 @@ probes that never passed and the ones where repetitions disagreed.
 ## What is not measured
 
 The control run is a working artefact and is not published in this repository, so take it as method rather
-than as evidence. There is no published head-to-head score for this suite against a baseline, and none is
-claimed. What you can check is the primary source under each rule, the provenance block on the references
-that carry one (`docs/providers.md`), and the worked examples in `examples/`.
+than as evidence. No head-to-head score against a baseline is published or claimed; `docs/evaluation.md`
+says what the checked-in layers do and do not prove. What you can check is the primary source under each
+rule, the provenance block on the references that carry one (`docs/providers.md`), and the worked examples
+in `examples/`.
 
 ## The output contract
 
-Where a change is economic, a review opens with one line naming whose copy of each quantity is the record
-and whose money is at stake, then one entry per real finding and nothing for a concept the change does not
-touch:
-
-```
-authority: EXTERNAL (Binance) · exposure: own
-
-FINDING   the wrong economic outcome, concretely
-WHY       the mechanism that produces it
-EVIDENCE  file:line
-FIX       the change that closes it
-TEST      the property to assert
-```
-
-A control the agent names but does not build is reported as `UNRESOLVED: <control> (<why>)`, never as a
-completed checklist row. That single rule addresses the most common failure mode in generated money code:
-naming the correct control accurately, then writing a comment instead of implementing it.
+`docs/architecture.md` section 6 states it, and F14 in `docs/failure-taxonomy.md` is the failure mode its
+`UNRESOLVED` rule exists for.
 
 ## What the suite deliberately does not cover
 

@@ -181,20 +181,15 @@ What each of the heavier rows actually costs and buys:
   Toxiproxy toxics are `latency`, `down`, `bandwidth`, `slow_close`, `timeout`, `reset_peer`, `slicer`,
   `limit_data`, applied upstream or downstream independently. `timeout` reproduces the money case: it
   "stops all data from getting through, and closes the connection after timeout."
-- **Model-based testing.** `fc.commands` plus `fc.asyncModelRun` (fast-check), `RuleBasedStateMachine` with
-  `Bundle`/`consumes()` and `@invariant()` (Hypothesis), `ReferenceStateMachine` plus `StateMachineTest`
-  driven by `prop_state_machine!` (proptest-state-machine), `ActionSequenceArbitrary` (jqwik). Two
-  constraints decide whether it is worth anything: **derive the model from the spec or the venue's docs,
+- **Model-based testing.** Two constraints decide whether it is worth anything: **derive the model from the spec or the venue's docs,
   never from the implementation**, and keep it in a separate module. A model written by the implementer from
   the same misunderstanding encodes the same bug, which is testing code against itself. Jepsen's TigerBeetle
   checker was about 1,600 lines of Clojure written from the docs, and it modelled **error codes** rather than
   amounts alone; a model checking balances alone misses the `Batch.EMPTY` duplicate-timestamp bug.
 - **The barrier double-spend is a barrier test, not a thread loop.** Two connections, both `SELECT`, both
-  block on a barrier, both write. Under READ COMMITTED PostgreSQL re-fetches the row and re-evaluates the
-  `WHERE` for `UPDATE … SET balance = balance - :amt WHERE id = :id AND balance >= :amt`, so that form is
-  safe and the SELECT-compute-UPDATE form is not. Under REPEATABLE READ or SERIALIZABLE the `40001`
-  serialization-failure retry path is itself a required test; an untested one is where a "safe" isolation
-  level silently drops a payment.
+  block on a barrier, both write, at the isolation level the money transaction really runs at: that level
+  decides whether the single-statement `UPDATE … WHERE balance >= :amt` form is safe, and whether a `40001`
+  serialization-failure retry path is itself a required test.
 - **Mutation testing.** Line coverage "does not check that your tests are actually able to detect faults"
   (PIT). Demand a high mutation score on the money-math modules rather than chasing coverage elsewhere.
   Stated honestly: no published finance-specific case study of mutation testing was found in the research,

@@ -55,13 +55,9 @@ or consumers run single-line and aim a recovery storm at your re-request path at
 
 **Publication is deterministic, and the fan-out happens once, after the sequence is assigned.**
 The same committed inputs produce the same bytes in the same order on every replica and every replay, or your
-two paths are not the same feed and your recovery store does not answer with what you sent. Assign the
-sequence at one point, fan out from that point, timestamp each sink hand-off there, and retain those records.
-A fan-out to two sinks with different queueing or serialisation cost is a reviewable defect on sight, because
-the disparity is structural and appears under the load you did not test. Whether one destination must be no
-later than another is a question for your venue's rules and its regulator, and where that duty exists the
-evidentiary failure is charged separately from the timing one. Specialises *reconciliation* in the form it
-takes with no external authority: those records are the only copy a later comparison can read.
+two paths are not the same feed and your recovery store does not answer with what you sent. Specialises
+*reconciliation* in the form it takes with no external authority: the transmission-timing records below are
+the only copy a later comparison can read.
 
 ## The NYSE enforcement action
 
@@ -84,10 +80,9 @@ No finding required intent, a decision, or a person choosing to advantage one cu
 property of a fan-out whose two branches had different queueing and different serialisation cost, and it
 appeared under load, because that is when the difference between two branch costs stops being negligible.
 
-That is what makes it a reviewable defect rather than a compliance topic. A fan-out to two sinks with
-different queueing or serialisation is visible in the code, independent of whether either sink is currently
-slow, and it does not become a problem gradually: it is latent at low volume and material at high volume,
-which is exactly the volume at which the data is worth the most.
+That is what makes it a reviewable defect rather than a compliance topic: the unequal branch is visible in
+the code, independent of whether either sink is currently slow, and it is latent at low volume and material
+at high volume, which is exactly the volume at which the data is worth the most.
 
 The load-dependent defect deserves separate attention. Backpressure applied to one branch only is the same
 class of design error as blocking a publisher on a slow consumer, and it produces the same result: a condition
@@ -140,8 +135,7 @@ holding. An ordering guarantee only ever tested with all branches healthy is unt
 
 ## What to take from this outside the US
 
-Take the architectural property and the review heuristic: publish once, fan out once, timestamp the hand-offs,
-and treat unequal branches as a defect. Take the evidence requirement as well, because being unable to
+Take the architectural property, the review heuristic and the evidence requirement: being unable to
 reconstruct what you sent and when is a problem in any jurisdiction, whether or not a regulator names it.
 
 Do not take the specific ordering obligation. There may be no consolidated feed in your market, no processor

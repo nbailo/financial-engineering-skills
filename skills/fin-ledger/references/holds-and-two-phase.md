@@ -1,9 +1,7 @@
 # Balance states, holds, and two-phase transfers
 
 The four balance states a ledger exposes, the formula that separates them, and the mechanics of a reservation
-that survives the failure of the code that created it. Covers why inbound pending is never available, how a
-hold expires on a clock the reader enforces, the release semantics of a two-phase transfer, and the upstream
-authorization windows a hold is reconciled against.
+that survives the failure of the code that created it.
 
 ## Contents
 

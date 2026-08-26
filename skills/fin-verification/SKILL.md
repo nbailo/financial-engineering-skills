@@ -2,9 +2,9 @@
 name: fin-verification
 description: >-
   Proof that a money path is correct: reconciliation against an independent authority,
-  planted-break tests that prove it detects, crash-boundary recovery, replay and reordering
-  tests, and stronger evidence when the system is its own authority. Use alongside a domain
-  skill for tests, reconciliation, a kill switch, review, or a ship decision.
+  planted-break tests that prove it detects, crash-boundary recovery, replay and reordering tests,
+  stronger evidence when the system is its own authority. Use alongside a domain skill for tests,
+  reconciliation, a kill switch, review or a ship decision.
 license: MIT
 ---
 

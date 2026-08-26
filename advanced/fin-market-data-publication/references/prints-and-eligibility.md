@@ -51,19 +51,10 @@ what is printed, what is counted, or what a statistic you publish is computed fr
 **The raw print is one fact; eligibility is several filters over it, answered by different documents.**
 Whether an execution is published as a print, whether it counts toward the volume figure you report, whether
 it updates a last, high or low, whether it counts toward a fee tier, rebate or other incentive, and whether a
-downstream index or settlement benchmark admits it are separate answers. Your own specification decides what
-you publish and count; a tape or plan rulebook decides what the official record counts; your incentive
-schedule decides the fee tier; a methodology you do not write decides the last. Keep the raw print unmutated
-and derive each figure from it by its own filter, so a filter that changes is a recomputation rather than a
-fact you no longer hold, and publish which filter feeds which computation. Trade prints are not book events,
-and counting them as book updates double-counts depth. An execution a later bulk print will cover is excluded
-from published volume, or the same quantity is counted twice. Whether a match between accounts under one
-beneficial owner is printed, counted or excluded is a rulebook question with different answers in different
-markets, so name the rule you apply and apply it in one place. A field you deliberately hold constant is part
-of the contract: state the constant and its effective date, and populate it from a named encoder constant with
-a test asserting constancy. You cannot un-constant it on the same feed version, because the day it carries
-real data every consumer that special-cased it silently produces different output and nothing says the
-semantics changed. A field constant by accident becomes variable by accident.
+downstream index or settlement benchmark admits it are separate answers, decided in different places. Keep the
+raw print unmutated and derive each figure from it by its own filter, so a filter that changes is a
+recomputation rather than a fact you no longer hold, and publish which filter feeds which computation. Trade
+prints are not book events, and counting them as book updates double-counts depth.
 
 ## ITCH content: the complete trade-print set, named
 

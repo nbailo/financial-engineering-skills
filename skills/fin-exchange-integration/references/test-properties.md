@@ -10,7 +10,6 @@ table-driven or `proptest` / `quickcheck` generator over the same production fix
 
 - Property 1: a lost response creates no duplicate economic effect
 - Property 2: only a provable pre-send failure follows the retry path
-- The retired test, and why a harness-knowledge assertion is not a requirement
 - Property 3: a normalised order satisfies every venue constraint simultaneously
 - Property 4: reconnect and backfill neither lose nor double-count a fill
 - Property 5: local position and PnL converge to the venue's state
@@ -52,24 +51,13 @@ races against fees, funding and other strategies.
 
 So the test injects a failure from the table above and asserts that the retry happens. It asserts the retry
 happens **because the failure is one the production code can classify**, not because the harness knows the
-request was dropped.
+request was dropped. A harness that drops the request before it reaches upstream knows something production
+does not: production sees a 503, or a timeout, and cannot distinguish that case from one where the venue
+received the order and the response was lost. Asserting the retry there requires the client to resubmit where
+resubmitting can double the position, so a client that passes such a test is less safe than one that fails it.
 
-## The retired test, and why a harness-knowledge assertion is not a requirement
-
-An earlier version of this skill shipped a test named `test_timeout_that_never_arrived`, which used a stub
-method `drop_before_upstream_then_fail` and asserted `venue.post_count("/order") == 2`, that is, that the
-retry does happen.
-
-That assertion is wrong as a requirement. The harness knows the request was dropped before it reached
-upstream. The production code sees a 503, or a timeout, and **cannot distinguish that case** from one where
-the venue received the order and the response was lost. Encoding the harness's private knowledge as an
-assertion on production behaviour requires the client to resubmit in a situation where resubmitting can double
-the position. A client that passes that test is less safe than one that fails it.
-
-The mirror case is still worth testing, and Property 2 is the correct form of it: inject a failure the code
-can genuinely classify as pre-send, and assert the retry. If a suite has no such case at all, Property 1 can
-pass by doing nothing, since a client that never retries anything satisfies it trivially. That is the real
-concern the retired test was reaching for.
+Property 2 still has to exist in some form, because without a case the code can genuinely classify, Property 1
+passes by doing nothing: a client that never retries anything satisfies it trivially.
 
 ## Property 3: a normalised order satisfies every venue constraint simultaneously
 

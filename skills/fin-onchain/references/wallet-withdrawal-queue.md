@@ -65,8 +65,8 @@ legs under their own keys.
 
 ## Asynchronous rejecting gates
 
-Between "customer requested" and "broadcast" sit gates that reject asynchronously, hours later, for reasons
-that have nothing to do with the chain. Each one needs a reversal path bound to it.
+Between "customer requested" and "broadcast" sit gates that reject asynchronously. Each one needs a reversal
+path bound to it.
 
 | status / sub-status | meaning | required ledger action |
 |---|---|---|

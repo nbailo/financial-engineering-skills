@@ -3,31 +3,12 @@
 The word exposure names three different quantities, and a fill transfers between the first two rather
 than incrementing both. A gate keeping one counter is wrong in one direction or the other.
 
-## Working-order and filled-position exposure are separate named buckets, and a fill transfers between them
-
-Specialises *hard limits*. Two buckets, named separately at their definitions, and no counter serves both:
-**working-order exposure** is `Σ leaves` over live orders, each valued at the worst price its own terms
-allow, which for a resting limit order is its own limit price and never a guess at where it would execute;
-**filled-position exposure** is the net position and its notional. A fill is a **transfer**, reducing working
-by exactly the quantity it adds to filled. Increment the position without decrementing `leaves` and the gate
-double-counts; decrement `leaves` without booking the position and it under-counts. **Settlement exposure** is
-a third bucket outliving both: a round trip ending flat is zero position and two live deliveries until
-clearing finality. Name which bucket each limit is written against.
-
-**Where atomic ownership ends.** One commit owns two things: the order-state change and the **immutable
-execution obligation** it created. Downstream state, a position store, a credit gate, a ledger, is inside that
-commit only where it literally shares the transaction, and the code says which it is. Where it does not, the
-execution record is the single authority and the position is **derived** from it by a consumer idempotent on
-the execution id, never incremented independently on the emit path: two writers of one quantity is the
-double-count with a crash window around it. A gate summing executions alone is short of the firm's own
-exposure by the whole open book, which is the measurement basis stated below.
-
 ## Three exposures, three named buckets
 
-The word "exposure" names three different quantities, and a fill **transfers** between the first two. A gate
-keeping one counter is wrong in one direction or the other, and which direction depends on which of the
-three the author had in mind. Name each bucket at its definition and name the bucket every limit is written
-against; a counter that serves two buckets is the defect, not the optimisation.
+Specialises *hard limits*. No counter serves two of the three, and which direction a single-counter gate is
+wrong in depends on which of the three the author had in mind. Name each bucket at its definition and name
+the bucket every limit is written against; a counter that serves two buckets is the defect, not the
+optimisation.
 
 | Exposure | What it counts | What a fill does to it | What else moves it |
 |---|---|---|---|

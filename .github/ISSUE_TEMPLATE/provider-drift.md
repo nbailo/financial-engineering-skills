@@ -1,7 +1,6 @@
 ---
 name: Provider or documentation drift
 about: A provider reference has gone stale against its source
-labels: drift
 ---
 
 **Reference file.** And its current `verified_at` date and `revalidate_when` trigger.

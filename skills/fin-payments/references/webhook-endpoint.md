@@ -1,8 +1,6 @@
 # Webhook endpoint
 
-The receive path, which does three things: verify the bytes, insert one row, return. Covers the signature
-check over the raw unparsed body, the ack deadline that forces the work out of the handler, the inbox row a
-2xx promises, and the delivery-killing traps that live in framework and CDN configuration.
+The receive path, which does three things: verify the bytes, insert one row, return.
 
 ## Contents
 

@@ -18,7 +18,7 @@ Nine candidate classes came out of a trading-only incident review: representatio
 concurrency, ordering, partial-failure, reconciliation, pricing-execution, authority. Tested against the
 incident corpus in `incidents/`, that list became thirteen. Two further classes, F14 and F15, come
 from reading generated code rather than from the incident corpus, and are marked as such where they
-are stated: no postmortem records a control that was named in a comment and never built.
+are stated.
 
 - **representation split three ways**: F1 representation, F2 rounding and residue, F3 sentinel and absence.
   Bitcoin 2010 is representation with no rounding, the arithmetic was exact and `uint64` could not hold the
@@ -28,13 +28,12 @@ are stated: no postmortem records a control that was named in a comment and neve
   (the estate the code runs on). F5 is fully diff-visible; F13 mostly is not.
 - **ordering separated from concurrency**: F7 is two writers racing on one authoritative quantity, F6 is one
   consumer receiving events out of occurrence order. The checks share nothing.
-- **state dissolved.** A container, not a mechanism. Its four sub-modes each belong elsewhere.
 - **conservation (F9) and settlement state (F8) added.** The candidate list's largest holes: F9 is the only
   class that catches *value appeared* as distinct from *value was mis-stated*, and F8 is the case where the
   amount is right, the identity is right, the arithmetic conserves, and the money is not there yet.
 
 **The classes are not disjoint, and that is the point.** A class is a question you ask, not a bucket an
-incident falls into. The count of classes a diff fails is the best severity proxy this corpus offers.
+incident falls into.
 
 | Incident | Classes | Loss as its source states it |
 |---|---|---|
@@ -437,8 +436,7 @@ at the test that proves it or delete the sentence. **Owner:** `fin-money-core`, 
 **A signature of F7 · The decorative transaction: the lock released before the section it protects.**
 Reviewing for the *presence* of a lock passes this every time; what fails is the *extent* of the critical
 section. The shapes: `with db.engine.begin() as conn: SELECT ... FOR UPDATE`, where the lock dies at the
-dedent and no committed row says who claimed the number, which is fixed by claiming in a write and fencing
-the later write on that claim rather than by stretching the lock across a broadcast · `poll_batch()` doing
+dedent and no committed row says who claimed the number · `poll_batch()` doing
 `FOR UPDATE SKIP LOCKED LIMIT 50` and closing the transaction after `fetchall()`, so N workers process the
 same 50 rows · an admin `reject()` that drops the row lock between the status check and `reverse()` · a worker
 using `async with session_factory()` with no `session.begin()`, so `FOR UPDATE` holds nothing · an
@@ -516,7 +514,7 @@ The walk, in order, with the question that opens each step:
   obligation (backtest statistics, greeks, implied vol, Monte Carlo), with no balance, order, payment or
   transfer written. The gate's job is to exempt, not to admit.
 - **Stop at the first class the diff fails, fix it, and re-walk from the top.** A fix in one class routinely
-  opens another: `CHECK (balance_cents >= 0)` is an F11 fix that creates the safety-constraint signature of F11.
+  opens another, which is what F11's safety-constraint signature above is.
 - **Steps 1 to 7 are answerable from the diff alone; steps 8 to 11 need the repo.** With only the diff, say so
   rather than passing them silently.
 - **Do not walk steps 8 to 11 for a type-only change** unless the type crosses a module, storage or wire
@@ -530,8 +528,7 @@ defect you named, and a property your comment asserts is a claim you must point 
 
 ## What this taxonomy does not do
 
-- **It does not partition.** The classes overlap by design; the largest incidents fail three at once. Use them
-  as questions, not buckets.
+- **It does not partition.** The classes overlap by design, and the largest incidents fail three at once.
 - **It does not claim diff-review coverage.** Across the 51 catalogued incidents the verdicts are
   **30 Yes · 18 Partly · 3 No**: roughly two-thirds of the money-loss surface is reachable by reviewing a
   diff. F1 to F7 and F9 are largely diff-visible; F8 and F11 partly; **F10 and F13 mostly are not.** You can

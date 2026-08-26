@@ -1,7 +1,7 @@
 # Confirmation policy: four states, depth, and the loss it buys
 
 Depth is an economic parameter, and the unit it counts in decides whether a rollup deposit is gated on
-anything at all. Write the depth as a derived quantity with its loss budget beside it.
+anything at all.
 
 ## Contents
 

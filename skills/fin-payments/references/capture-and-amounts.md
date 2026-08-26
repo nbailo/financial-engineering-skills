@@ -1,9 +1,8 @@
 # Capture and amounts
 
-How much the processor actually takes, and when the window to take it closes. The same capture call has
-opposite consequences for the remaining authorization depending on account state invisible in the diff, the
-deadline is a scheme property rather than a computable one, and the amount you serialise has to satisfy the
-processor's own minor-unit rules rather than ISO 4217.
+How much the processor actually takes, and when the window to take it closes. The deadline is a scheme
+property rather than a computable one, and the amount you serialise has to satisfy the processor's own
+minor-unit rules rather than ISO 4217.
 
 ## Contents
 

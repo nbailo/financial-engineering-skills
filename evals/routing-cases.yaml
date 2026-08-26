@@ -87,7 +87,7 @@ cases:
     forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-money-core]
     allow_skills: [fin-ledger]
     expect_references:
-      - venues/coinbase-deribit-hyperliquid.md
+      - venues/hyperliquid-orders.md
       - fees-and-funding.md
       - position-and-pnl.md
     forbid_references:
@@ -107,7 +107,7 @@ cases:
     allow_skills: [fin-ledger, fin-matching-engine, fin-verification]
     expect_references:
       - prediction-market-limitless.md
-      - prediction-market-core.md
+      - prediction-market-limitless-events.md
     forbid_references:
       - prediction-market-kalshi.md
     note: >-
@@ -140,8 +140,8 @@ cases:
     expect_skills: [fin-exchange-integration]
     forbid_skills: [fin-matching-engine, fin-market-data-publication, fin-money-core]
     expect_references:
-      - prediction-market-hyperliquid-hip4.md
-      - prediction-market-core.md
+      - prediction-market-hyperliquid-hip4-outcomes.md
+      - prediction-market-outcome-identity.md
     forbid_references:
       - venues/binance-orders.md
     note: >-

@@ -1,9 +1,7 @@
 # Suspense, breaks, and repair
 
-What a ledger does with a difference it cannot yet attribute: the break record and the quarantine that keep the
-difference visible instead of posting it away, when a corrective posting is allowed to land and what a suspense
-account is actually for, the escalation tempo that keeps the control switched on, why a recomputation is
-idempotent only when its input set is total, and the reviewed pipeline a repair to committed state goes through.
+What a ledger does with a difference it cannot yet attribute: the break record and the quarantine that keep
+the difference visible instead of posting it away.
 
 ## Contents
 

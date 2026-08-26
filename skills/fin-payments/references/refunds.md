@@ -1,8 +1,6 @@
 # Refunds
 
-The verb row that carries the most incident weight. Covers the refundable-ceiling arithmetic in full, the
-refund status graph including its asynchronous failure path, the balance a refund is funded from, and the
-ledger shape of a refund, which is not the mirror of the charge.
+The verb row that carries the most incident weight.
 
 ## Contents
 

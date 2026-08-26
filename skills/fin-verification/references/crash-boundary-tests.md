@@ -1,7 +1,7 @@
 # Crash boundaries: the kill harness and write-ahead coverage
 
-An atomic phase is the set of local mutations between two foreign mutations. Kill the process at each boundary,
-restart, run recovery, and assert exactly one external effect and exactly one local record.
+Kill the process at each boundary between local and foreign mutations, restart, run recovery, and assert
+exactly one external effect and exactly one local record.
 
 ## Atomic-phase boundaries, the kill harness, and write-ahead coverage
 

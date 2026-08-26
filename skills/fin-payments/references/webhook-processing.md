@@ -1,9 +1,7 @@
 # Webhook processing
 
 Applying a stored event exactly once, in the order the authority generated it, from state the authority
-holds. Covers the two identities that do two different jobs, the ordering field that is not the signature
-timestamp, the watermark schema that survives a second-granularity clock, the dead-letter path that keeps a
-redelivery coming, and the re-read that is the whole handler.
+holds.
 
 ## Contents
 

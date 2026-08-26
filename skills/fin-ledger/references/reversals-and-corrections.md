@@ -1,11 +1,8 @@
 # Reversals and corrections: changing a fact you already booked
 
-How a ledger changes a fact it has already booked without editing anything. Covers where the mutability
-boundary is enforced, the three shapes a correction takes and when each is right, the reversal links and the
-constraint that stops a double reversal, the safety controls that block the clawback they exist to enable, and
-the return that is not a mirror image at all. The concept is not the failure; a compensating entry
-and a double-reversal guard are the parts most implementations get right unaided. Every artifact below is the
-enforcement that goes missing.
+How a ledger changes a fact it has already booked without editing anything. The concept is not the failure; a
+compensating entry and a double-reversal guard are the parts most implementations get right unaided. Every
+artifact below is the enforcement that goes missing.
 
 ## Contents
 

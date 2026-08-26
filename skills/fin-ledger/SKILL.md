@@ -1,10 +1,10 @@
 ---
 name: fin-ledger
 description: >-
-  Financial correctness for balances and accounting systems: double-entry postings, balanced
-  sets, immutable entries, holds and available versus posted balance, reversals, currency as a
-  dimension, solvency limits and period close. Use when your code writes or reads a balance
-  other systems trust, including TigerBeetle and Formance. For processor lifecycles, fin-payments.
+  Balances and accounting: double-entry postings, balanced sets, immutable entries, holds and
+  available versus posted balance, reversals, currency as a dimension, solvency limits, period
+  close. Use when your code writes or reads a balance other systems trust, including TigerBeetle
+  and Formance. For processor lifecycles, fin-payments.
 license: MIT
 ---
 
@@ -138,8 +138,7 @@ every statement, interest certificate, covenant test and tax filing.
 
 ## References
 
-**When a row's trigger appears in the diff or the task text, read that file and apply it in order. Do not
-summarise it, and do not proceed on your memory of it.**
+Each row names a mechanism: load that reference before assessing it.
 
 | file | read it when the change contains |
 |---|---|

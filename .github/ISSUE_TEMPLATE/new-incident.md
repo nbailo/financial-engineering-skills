@@ -1,7 +1,6 @@
 ---
 name: New incident
 about: A public, cited incident that motivates a rule an agent could apply
-labels: incident
 ---
 
 **Incident.** What happened, with the date.

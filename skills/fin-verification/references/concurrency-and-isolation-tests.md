@@ -1,7 +1,7 @@
 # Concurrency on a money row: the barrier double-spend
 
-A lost update across two transactions is not a data race, and no race detector will ever find it. The test that
-does is a two-connection barrier test at the isolation level the money transaction actually runs at.
+The test that finds a lost update across two transactions is a two-connection barrier test, run at the
+isolation level the money transaction actually runs at.
 
 ## Concurrency: the barrier double-spend, and the narrow band for loom/jcstress
 

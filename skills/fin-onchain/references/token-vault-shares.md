@@ -5,9 +5,6 @@ denominator are both yours to review, and both are readable from the source in a
 
 ## Share/asset conversion an integrator must review
 
-If your integration deposits into or redeems from a pooled vault, you are exposed to that vault's rounding
-direction and to its denominator. Both are reviewable from the source in a few minutes.
-
 **Direction, per leg.** OpenZeppelin's ERC-4626 (`contracts/token/ERC20/extensions/ERC4626.sol`):
 
 ```solidity

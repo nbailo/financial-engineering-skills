@@ -24,9 +24,8 @@ are read from configuration per instrument, per port or per order, and neither h
 
 ## Self-match prevention is venue configuration, never a compiled-in constant
 
-**Self-match prevention is venue configuration, never a constant compiled into the matcher.** The scope that
-decides which orders are the same party and the strategy applied when two of them meet are two separate
-published choices, read per instrument, per port or per order as your protocol allows. Where a value is absent
+The scope that decides which orders are the same party and the strategy applied when two of them meet are two
+separate published choices, read per instrument, per port or per order as your protocol allows. Where a value is absent
 the fallback is itself published (Nasdaq OUCH 5.0 spells the absent value `* = use port default`, and `N =
 Disabled` is a value, not an absence) or the order is rejected; it is never a mode picked in code. Pin the
 exact pair with a test named for it. A prevented match is not a trade: a counterfactual, never a fill and
@@ -35,10 +34,7 @@ another"*, and that volume propagated into third-party indices.
 
 ## Self-trade prevention as the implementer
 
-**Self-match prevention is venue configuration. There is no neutral default, and the strategy is only half the decision.** Two
-things are published separately and both are read from configuration rather than compiled into the matcher: the **scope**,
-which decides whose orders count as the same party, and the **strategy**, which decides what happens when two of them meet.
-Getting either from memory produces a print your own rulebook does not authorise, and it is observable both in the tape and in
+**Getting either the scope or the strategy from memory produces a print your own rulebook does not authorise,** and it is observable both in the tape and in
 what the counterparty is told. So this is a rulebook entry, not an implementation detail, and the pair is pinned by a test named
 for the exact choice.
 

@@ -1,9 +1,6 @@
 # Reconciliation and close
 
-The comparison job, and what an open break stops. Covers the reversal tail that decides when a period may
-close, the break classes and their aged bucket, the auth-to-clearing matcher, the scheduled entrypoint with
-its independent read path and fail-closed alert destination, and the onward disbursements whose outcome is
-visible only in the feed.
+The comparison job, and what an open break stops.
 
 ## Contents
 

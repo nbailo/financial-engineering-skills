@@ -417,22 +417,8 @@ def test_market_info_is_refreshed_because_nothing_evicts_it(client, clock):
 
 ## What is verified here, and what is not
 
-Verified on 2026-08-25 by reading the pages listed in the provenance block and the pinned client at
-`215fc63a8fd6ec3a10c7edb73997c9772d8686d3`: the package names, the two exchange addresses, the domain name and
-both domain versions, the eleven signed members and the four removed ones, the salt and timestamp construction,
-the six tick sizes and the documented multiples rule, `price_valid`, the `ROUNDING_CONFIG` decimals, the fee
-curve as the client computes it, the category rate table and the documented symmetry statement, the `fd`, `mbf`,
-`tbf` and `feeSchedule` member names and their documented meanings, the builder-fee formula, caps and additivity
-statement, the pUSD description and the onramp address and function signature, the order and trade status
-vocabularies, the GTD offset and the three-minute floor, and the POST response members. The pinned commit was
-confirmed through the GitHub API on the same date to be both tag `v1.1.0` and the tip of `main`.
-
-Verified on 2026-08-26 by the same means: that the order lookup is `GET /data/order/{orderID}` and its path
-parameter is documented as "Order ID (order hash)"; that `ExchangeOrderBuilderV2.build_order_hash` computes that
-hash locally as the EIP-712 digest over the typed data being signed; and that the typed data's domain carries
-`verifyingContract`, which is the exchange address the builder was constructed with.
-
-Explicitly unverified. Do not build on any of these without checking first.
+The provenance block lists what was verified, and on which date. Explicitly unverified, and not to be built on
+without checking first:
 
 - Whether Gamma `feeSchedule.rate`, `.exponent` and `.takerOnly` carry the same values as CLOB `fd.r`, `.e` and
   `.to` for one market at one instant. Neither page relates the two surfaces.

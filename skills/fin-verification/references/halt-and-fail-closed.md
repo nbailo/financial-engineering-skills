@@ -1,8 +1,7 @@
 # Fail-closed, halt levels, and where an assertion belongs
 
 What the system stops doing while a break is open, which of the six halt levels a runtime invariant fires, and
-when a money path may crash instead. Halt levels apply to any runtime invariant on a money path, not only to a
-reconciliation break.
+when a money path may crash instead.
 
 ## Contents
 

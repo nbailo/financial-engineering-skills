@@ -62,12 +62,8 @@ message commits that the sequence is closed: serve recovery while the session dr
 closed identity, and mint a new one instead.
 
 MoldUDP64's payload-free heartbeat and its end-of-session packet are that transport's encodings of this
-obligation, and neither is a property of feeds in general. A payload-free packet
-carrying the next expected number is available precisely because this transport numbers messages and can send
-a packet containing none; a session protocol that numbers every message gives its heartbeat a sequence number
-of its own, and a WebSocket feed may carry a liveness frame outside the sequence space entirely. The receiver
-arithmetic differs in all three. Copy the obligation, which is that quiet is distinguishable from dead and the
-interval is published, and check that your transport can carry the encoding before copying that.
+obligation, and neither is a property of feeds in general. Check that your own transport can carry an
+encoding before copying it.
 
 **A reset is a message you send, never a fact a consumer infers from a counter going backwards.**
 Both arms a consumer can write are wrong after a silent reset, and the silent one reaches production:
@@ -82,9 +78,8 @@ the same obligation at a smaller scope: stop publishing a symbol silently and ev
 book you sent indefinitely, because silence is what a quiet market looks like. Emit an explicit unavailable or
 invalidation event scoped to that instrument, and state what it invalidates and what ends it.
 
-## The snapshot is the book as of a stated point, stamped with the copy
+## A snapshot is the book as of a stated point in the incremental stream, stamped with the copy
 
-**A snapshot is the book as of a stated point in the incremental stream, and the point is stamped with the copy.**
 Without that point the snapshot is unusable, because the consumer cannot know which buffered updates it
 already contains. Clone the entries, then read the sequence, and you have stamped it newer than it is:
 everything in `[copy_point, as_of)` is discarded by every consumer as already included, and those updates were
@@ -96,7 +91,6 @@ the incremental and absent from the snapshot is one consumers hold stale.
 
 ## Recovery must terminate, and truncation is where it stops terminating
 
-**Recovery must terminate, and truncation is where it stops terminating.**
 For every mechanism you offer, name the terminating condition and publish the parameter it depends on:
 retained depth for retransmission, maximum cycle period for a snapshot loop. A mechanism that rebuilds state
 opportunistically from the live stream has no terminating condition at all, so it is a concurrent
@@ -108,7 +102,6 @@ is the last resort, because everything unrecovered stays addressable only under 
 
 ## Four questions, four measurements, and one timestamp cannot answer another's
 
-**Four questions, four measurements, and one timestamp cannot answer another's.**
 Event age is now minus the event time the matcher set, and it is the only input to a staleness gate on
 content. Send latency is send time minus event time, and measures how long your publisher held the event.
 Receive latency is receive time minus send time, exists only for messages that arrived, and means nothing
@@ -129,7 +122,5 @@ daylight-saving transition are stated nowhere in that document. That is a verifi
 and **not** a claim that the behaviour is undefined: the answer exists outside the specification, and a
 consumer who infers it from the data will infer it wrong twice a year.
 
-The obligation it illustrates is unconditional for your own feed. Write the epoch, the timezone and the
-daylight-saving rule into the specification, and state what your clock is disciplined to. A consumer computing
-staleness subtracts your timestamp from their clock, so an unstated discipline gives the result an unbounded
-constant error.
+The obligation it illustrates is unconditional for your own feed: the epoch, the timezone and the
+daylight-saving rule go into your specification rather than into a consumer's inference.

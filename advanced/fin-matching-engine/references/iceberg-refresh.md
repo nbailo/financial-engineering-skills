@@ -24,8 +24,7 @@ position are rulebook entries; what is universal is when the refresh happens and
 
 ## Iceberg and reserve orders
 
-A display-quantity order rests with `display ≤ total`. The refresh arithmetic and the requeue position are **rulebook
-entries**, and the two below are CME's, **not revalidated on 2026-08-25** and quoted as an example of what such a rule states
+The refresh arithmetic and the requeue position are **rulebook entries**, and the two below are CME's, **not revalidated on 2026-08-25** and quoted as an example of what such a rule states
 rather than as an answer you may implement: **refresh quantity** as the lesser of the configured display quantity, the
 remainder when the remainder is ≤ display quantity, or the remaining display quantity on a partial fill; and **requeue at the
 back**, "the Display Quantity order's priority is refreshed to be the lowest of the remaining orders at the price level (order

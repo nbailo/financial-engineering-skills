@@ -20,7 +20,7 @@ them is the part to read before you trust a row:
 
 A level says how much venue-specific material exists and what it was written from. It does not say when the
 sourcing was last re-read: most of the venue files below carry `verified_at: not established`, which section
-2 explains. Read the level and the evidence state together, or you will trust a row for the wrong reason.
+2 explains.
 
 | Provider | Level | What backs it |
 |---|---|---|

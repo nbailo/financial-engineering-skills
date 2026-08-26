@@ -1,10 +1,7 @@
 # Day counts, calendars, and the business date
 
 The lookup material behind the year fraction: the day-count convention, the calendar that adjusts the dates it
-is measured between, and the civil date the result is attributed to. Covers the convention as contract data on
-the instrument, the conventions that cannot be computed from two dates at all, the business-day adjustment
-conventions and the versioned calendars they consume, and the civil-date definition of a day that
-elapsed-seconds arithmetic violates.
+is measured between, and the civil date the result is attributed to.
 
 ## Contents
 

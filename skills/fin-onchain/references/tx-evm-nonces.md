@@ -10,7 +10,7 @@
 > revalidate_when: go-ethereum changes `PriceBump`, `AccountSlots`, `AccountQueue` or `Lifetime`, or renames an error string a submitter classifies on; Fireblocks changes the dropped-transaction sub-statuses or its bump percentage; BitGo changes the stuck-transaction endpoint or the fill-nonce intent; you run against a chain whose node defaults differ from geth's.
 
 On EVM the identity is `(chainId, from, nonce)`, so every recovery decision is arithmetic on that nonce rather
-than a hash lookup. There is no dropped-transaction event on any EVM chain.
+than a hash lookup.
 
 ## Contents
 

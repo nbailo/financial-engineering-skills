@@ -24,8 +24,6 @@ than as a parse failure. The conversions and the assertions that catch a mis-rea
 
 ## Quantity conventions that share one word
 
-Three messages from two protocols published by the same vendor use "quantity" for three different things.
-
 | Message | Field | Semantics | Convert to `leaves` |
 |---|---|---|---|
 | OUCH **Cancel Order** | intended order size | "the maximum number of shares that can be executed **in total** after the cancel is applied… Entering a zero here will cancel any remaining open shares" | `leaves = max(0, intended_total − cum_exec)`; `0` ⇒ `leaves = 0` |

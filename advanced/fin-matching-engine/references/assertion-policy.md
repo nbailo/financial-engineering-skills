@@ -13,9 +13,8 @@ underflow or overflow is a conservation breach: halt that transformation at the 
 publish, do not clamp silently, and where you saturate rather than check, **emit the saturation and withhold
 the number**. A counter that wrapped, that stopped at a bound, or that failed its checksum is not a value to
 publish with a caveat or a lower confidence; it is a value to withhold, or to publish explicitly marked
-unavailable, until it is recomputed from state that checks. `level.total_qty -= qty` on a `u64` guarded only
-by a debug assertion wraps to roughly 1.8e19 in a **release** build and is published as depth. Both shipping
-answers, with their build settings, are below.
+unavailable, until it is recomputed from state that checks. Both shipping answers, with their build settings,
+are below.
 
 ## Assertion policy
 

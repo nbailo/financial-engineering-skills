@@ -1,7 +1,6 @@
 ---
 name: Incorrect financial invariant
 about: A rule in a skill or reference is wrong, or is stated more universally than the evidence supports
-labels: correctness
 ---
 
 **Where.** File and line, or the invariant name.

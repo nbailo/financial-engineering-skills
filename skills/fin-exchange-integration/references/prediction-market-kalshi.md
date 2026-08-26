@@ -32,8 +32,9 @@ choosing a direction, quantizing a price, predicting a fee, keeping a position a
 
 ## Prices are not integer cents any more
 
-The old `trading-api.readme.io` documentation host now 302-redirects to `docs.kalshi.com` (checked 2026-08-25). Anything
-you remember from it about integer cents should be re-read rather than trusted.
+The old documentation host is gone: `trading-api.readme.io/reference/getting-started` returned `302` to
+`docs.kalshi.com/welcome` when checked on 2026-08-25. Anything you remember from it about integer cents should be
+re-read rather than trusted.
 
 The changelog entry announcing the cutover states that legacy integer count fields (those with `_fp` equivalents) and
 integer cents price fields (those with `_dollars` equivalents) would be **removed** from all REST and WebSocket response
@@ -435,12 +436,8 @@ def test_position_keys_include_the_shard(store, positions):
 
 ## What is verified here, and what is not
 
-Verified by direct fetch on 2026-08-25 from the URLs in the provenance block: every field name, enum member, quoted
-sentence and schema description above. `openapi.yaml` self-reported `info.version: 3.29.0` and `asyncapi.yaml` reported
-`info.version: 2.0.0`. The old `trading-api.readme.io/reference/getting-started` URL returned `302` to
-`docs.kalshi.com/welcome`.
-
-Explicitly unverified, and labelled as such wherever it appears above:
+Every field name, enum member, quoted sentence and schema description above was fetched on 2026-08-25 from the URLs in
+the provenance block. Explicitly unverified, and labelled as such wherever it appears above:
 
 - **`client_order_id` deduplication on REST.** The create-order-v2 reference page gives the field no description and
   never mentions idempotency. Whether a repeated `client_order_id` creates a second order, and whether the documented

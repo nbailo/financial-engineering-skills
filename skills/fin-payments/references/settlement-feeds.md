@@ -1,9 +1,6 @@
 # Settlement feeds
 
 The settlement record is the only channel that is the money, and the one most integrations never build.
-Covers the shape of each processor's settlement data, which column is the accounting column, the report
-lines that share an amount and differ only in free text, the join keys that are actually unique, and the
-currency pairs a payment has to carry.
 
 ## Contents
 

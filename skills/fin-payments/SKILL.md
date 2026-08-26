@@ -1,10 +1,9 @@
 ---
 name: fin-payments
 description: >-
-  Financial correctness for payment processor and rail integrations: authorization and capture,
-  refund ceilings, disputes, payouts, webhook ordering and replay, fee treatment and
-  settlement-report reconciliation. Use when reviewing an integration with Stripe, Adyen,
-  PayPal, Square or Modern Treasury, or an ACH, SEPA, RTP or FedNow rail. For balances and
+  Payment processor and rail integrations: authorization and capture, refund ceilings, disputes,
+  payouts, webhook ordering and replay, fee treatment, settlement-report reconciliation. Use for
+  Stripe, Adyen, PayPal, Square, Modern Treasury, ACH, SEPA, RTP or FedNow. For balances and
   postings use fin-ledger.
 license: MIT
 ---
@@ -148,7 +147,7 @@ reversals land against a period you already closed.
 
 ## References
 
-Each row is a standing instruction: when its predicate holds, read the file and apply it. Do not summarise it.
+Each row names a mechanism: load that reference before assessing it.
 
 | file | read it when |
 |---|---|

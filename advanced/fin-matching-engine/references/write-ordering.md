@@ -12,9 +12,8 @@ one way to satisfy it rather than as a required schema.
 
 ## Ordering and flush
 
-SKILL.md's *authoritative state is reproducible from durable, ordered inputs* states the property. Below is one
-write path that satisfies it, in the order the steps must occur. The ordering between the steps is what binds;
-that the durable record is a local journal and the outbound queue a database table is this example's choice.
+SKILL.md's *authoritative state is reproducible from durable, ordered inputs* states the property, and the
+path below is one way to satisfy it.
 
 ```
 1  seq = sequencer.next()                      // inside the core; one of five counters

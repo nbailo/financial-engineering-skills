@@ -1,5 +1,6 @@
 {
   "name": "financial-engineering-skills",
+  "description": "Financial-correctness skills for coding agents: money-core, exchange integration, payments, ledger, on-chain, and verification.",
   "owner": {
     "name": "Financial Engineering Skills contributors"
   },

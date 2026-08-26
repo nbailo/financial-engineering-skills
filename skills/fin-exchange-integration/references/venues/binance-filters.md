@@ -11,8 +11,6 @@
 
 The filter set and its exact predicates, which order type each one validates, the metadata refresh
 discipline behind them, and the futures-only fields that are not what their names suggest.
-Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),
-so re-verify before keying production behaviour on one.
 
 ## Contents
 

@@ -30,9 +30,8 @@ logging of every change.
 
 ## 2 · The control that defeats the safety operation
 
-Two constraints that look obviously correct block the fraud response they exist to enable. A blanket
-`CHECK (balance_cents >= 0)` silently makes `allow_overdraft=True` **dead code** in a reversal path: the
-constraint is easy to add, and its interaction with clawback is easy to miss.
+Two constraints that look obviously correct block the fraud response they exist to enable; both are easy to
+add, and their interaction with clawback is easy to miss.
 *Measured: `CHECK (balance_cents >= 0)` made `allow_overdraft=True` dead code in a shipped reversal path.*
 
 **The floor versus the clawback.** The fraud you are responding to is money already spent, so a clawback must

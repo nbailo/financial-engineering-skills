@@ -1,9 +1,8 @@
 # Currency and scale
 
-Where the scale comes from, and why an integer amount with no `(currency, scale)` pair beside it is
-uninterpretable. One currency at one vendor carries four possibly-different scales, all runtime metadata,
-and a conversion between two currencies is an operation with provenance rather than a multiplication. Read
-this before you write `* 100`, add a currency, or book an FX leg.
+Where the scale comes from, and why it has to travel with the amount. One currency at one vendor carries four
+possibly-different scales, all runtime metadata, and a conversion between two currencies is an operation with
+provenance rather than a multiplication. Read this before you write `* 100`, add a currency, or book an FX leg.
 
 ## Contents
 
@@ -99,9 +98,8 @@ Every stored amount carries its currency/asset identifier in the same row, struc
 comparison, sum and equality check reads it. The failure prevented is not exotic: `total += line.amount`
 across a mixed-currency order, `SUM(amount)` with no `GROUP BY currency`, a USD refund issued against an EUR
 charge, an FX result still labelled with the source currency. TigerBeetle makes it structurally
-unrepresentable: the `ledger` field partitions accounts by asset and only accounts on the same ledger
-transact directly, so a cross-currency transfer must be modelled as **atomically linked transfers** on two
-ledgers, never as one transfer with a conversion inside.
+unrepresentable: accounts on different ledgers cannot transact directly, so a cross-currency transfer must be
+modelled as **atomically linked transfers** on two ledgers, never as one transfer with a conversion inside.
 
 How much a type system buys, per language (the honest version):
 

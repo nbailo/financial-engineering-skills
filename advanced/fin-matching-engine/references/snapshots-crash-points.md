@@ -1,9 +1,7 @@
 # Snapshots, truncation, and the kill points recovery has to answer
 
-A snapshot is state plus the journal position it is state as-of; without the position it is a backup. What
-follows from that is a verification rule, a truncation rule, and an enumeration of the places a `kill -9`
-lands. The crash table is a test rather than a design note, because the failure mode is silent: the persisted
-value exists and goes unused on the exact crash it exists for.
+Three answers recovery has to give: what a snapshot must carry, when a journal segment may be deleted, and
+what happens at each point a `kill -9` can land.
 
 ## Snapshots and truncation
 

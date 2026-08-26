@@ -23,10 +23,6 @@ independently of whatever tripped it.
 
 ## Separate gates
 
-Risk-increasing and risk-reducing paths are gated by **different** flags. A single boolean covering both
-turns every incident into a choice between accepting new risk and being unable to reduce the risk already
-held.
-
 **Which risk-reducing paths must stay callable is decided per component, not universally.** The matching
 engine's list is short, and it is the only one this file requires: while the increasing gate is shut,
 `cancel` and a replace that only reduces quantity or moves a price away from the market stay callable for

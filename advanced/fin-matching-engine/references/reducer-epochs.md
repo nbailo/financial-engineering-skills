@@ -3,11 +3,9 @@
 Recovery has to reproduce what this engine decided, not what today's build would decide from the same
 inputs. Two designs give you that, and the run that does neither is a different artefact with a name.
 
-**One rule binds before any of the mechanism does.** Recovery has to reproduce what this engine actually
-decided, not what today's build would decide from the same inputs. So either the authoritative decisions are
-persisted immutably and recovery loads them, or every journal record is covered by a journaled reducer identity
-and replay applies the version that was in force. Replaying a command stream through changed matching logic is
-shadow analysis or migration verification, never authoritative recovery, and nothing elsewhere overrides that.
+**One rule binds before any of the mechanism does.** Replaying a command stream through changed matching
+logic is shadow analysis or migration verification, never authoritative recovery, and nothing elsewhere
+overrides that.
 
 ## Authoritative recovery versus shadow replay
 

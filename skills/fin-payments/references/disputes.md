@@ -10,9 +10,7 @@
 > revalidate_when: Stripe adds or retires a dispute status value, or changes what `is_charge_refundable` reports; a network changes its inquiry phase, as Visa and Mastercard already have; Adyen changes its refund refusal reasons or its dispute event codes; you add a local payment method or a bank-debit rail, whose claim rules are that provider's own.
 
 A counterparty-initiated debit against value you already booked, on a lifecycle you do not drive and a clock
-that stays open for months. Covers the dispute lifecycle on Stripe and on Adyen, the economic corrections a
-closed dispute still receives, and the two distinct double-credit bugs that arise when a refund and a
-chargeback race each other.
+that stays open for months.
 
 ## Contents
 

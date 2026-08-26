@@ -325,20 +325,11 @@ def test_every_terminal_market_has_a_settlement_row(reconciler):
 
 ## What is verified here, and what is not
 
-Every quoted sentence and every enum above was read from the vendor pages in the provenance block on 2026-08-25. The
-provenance block's `verified` and `unverified` lists are the authoritative statement. The items below are the ones most
-likely to be mistaken for established facts.
+The provenance block is the authoritative list. These are the items most likely to be mistaken for established facts.
 
 - **Attributed, not universal.** The Limitless `MATCHED` then `MINED` or `FAILED` sequence with `isEstimate: true` is one
   venue's documented instance of the provisional-then-terminal shape. It is used here as a worked example. Polymarket's
   five-value trade-status enum is a second instance with a different terminal point. Neither is the model every venue follows.
-- **Not established:** which market states accept a cancel, on any of the three venues.
-- **Not established:** whether a Kalshi settlement that is re-paid after an amendment produces a second settlements row, a
-  changed row, or no new row, and therefore whether any composite dedupe key over that response is stable. The absence of a
-  per-settlement identifier in the documented field list is verified; the consequences for a re-payment are not.
 - **Not established:** whether a Limitless `MINED` frame can be followed by any later settlement frame for the same trade.
 - **Not established:** whether Polymarket publishes a market-level resolution status alongside its trade statuses, and if so
   on which surface.
-- **Out of scope by design, and deliberately absent:** how any venue selects or runs an oracle, how an operator decides or
-  re-decides a result, the regulatory treatment of a resolution, and any procedure for compensating a party after one. If a
-  reader needs those, they are not client-integration questions.

@@ -11,8 +11,6 @@
 
 The user-data stream lifecycle and the two migrations under it, the cumulative-versus-last-fill split in the
 execution payload, and the commission rules that decide which asset a fee is taken out of.
-Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),
-so re-verify before keying production behaviour on one.
 
 ## Contents
 

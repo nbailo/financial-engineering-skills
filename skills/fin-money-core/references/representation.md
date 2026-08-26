@@ -163,9 +163,8 @@ A timestamp on a money path is a represented quantity like any other: it has a t
 plays the role of scale, and an authority that fixes it. Getting it wrong moves an obligation into
 the wrong period rather than changing its amount, which is why it survives review.
 
-Every money-path timestamp is timezone-aware UTC with an explicit type, and the business date derives from a named cutoff in a
-named timezone. Funding intervals, settlement dates, accrual periods, statement cutoffs, failure windows and retention bounds
-all key on it, and events across nodes are ordered by a sequence, never a wall clock.
+Every money-path timestamp is timezone-aware UTC with an explicit type, and the business date derives from a
+named cutoff in a named timezone.
 
 **Shape**
 

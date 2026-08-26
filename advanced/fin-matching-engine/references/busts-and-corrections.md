@@ -25,8 +25,7 @@ A correction is out of band from the book, references the match identity of an e
 transmitted, and neither rewrites the book nor renumbers anything. Whether it is final is a rulebook answer.
 
 **Whether a bust is final, and whether a bust is even the remedy, is a protocol and rulebook question.**
-What is universal is only the shape: a correction is out of band from the book, it references the match
-identity of an execution already transmitted, and it neither rewrites the book nor renumbers anything.
+Only the shape above is universal.
 
 Nasdaq publishes the strict answer for its own market, read directly on 2026-08-25: the Broken Trade message
 is sent "whenever an execution on Nasdaq is broken"; an execution "may be broken if it is found to be
