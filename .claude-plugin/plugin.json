@@ -1,7 +1,7 @@
 {
   "name": "financial-engineering-skills",
   "description": "Financial-correctness skills for coding agents: catch economic bugs in code that trades, pays, keeps a ledger, or moves value on-chain.",
-  "version": "0.5.0",
+  "version": "0.0.0",
   "license": "MIT",
   "keywords": [
     "finance",

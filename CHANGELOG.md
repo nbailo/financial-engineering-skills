@@ -3,7 +3,7 @@
 Notable changes to the skill suite. The unit of change here is a rule: what an agent is told, and whether it
 is true. Rewordings are not listed; corrections always are.
 
-## v0.5.0
+## Unreleased
 
 ### Corrected
 

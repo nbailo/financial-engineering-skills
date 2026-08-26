@@ -59,12 +59,14 @@ Public is the right channel for a wrong rule, a stale provider fact or a dangero
 There is no bounty, and no guaranteed response time. This is a small repository with one maintainer, and
 promising an SLA that nobody is rostered to meet would be its own kind of false claim.
 
-## What the automation is checked for, and at which commit
+## What the automation is checked for
 
-Everything in this section was true at commit `2e11e076bb4945238ecdb6f10dc2b2d75af79afa`, and each row names
-the check that keeps it true. Re-derive any of them by running the named command against a checkout.
+Each row below names the check that keeps it true, and each of those checks runs in CI on every push and
+pull request. Re-derive any of them by running the named command against a checkout. Nothing here is pinned
+to a commit: this repository has no release, and a property anchored to a commit is a claim about that
+commit only.
 
-| Property, at that commit | Check that holds it |
+| Property | Check that holds it |
 | --- | --- |
 | Every `uses:` in `.github/workflows/` names a full 40-character commit SHA, GitHub-owned actions included, with the release tag it was resolved from in a trailing comment | `workflow-hygiene` job, `python3 scripts/check_workflows.py` |
 | Every workflow declares `permissions` at workflow level and every workflow-level scope is read-only | same check |
@@ -95,9 +97,9 @@ Supporting facts behind those rows, each with how it was obtained:
   `actions/dependency-review-action` with `fail-on-severity: low`.
 - **Secrets.** `.github/workflows/secret-scan.yml` scans the commit range the event adds, on every push and
   pull request, and exits non-zero rather than reporting green when the base commit is missing from the
-  clone. The full-history scan is `scripts/secret-scan.sh` with no arguments, run by hand once before a
-  release; at commit `2e11e076bb4945238ecdb6f10dc2b2d75af79afa` it reported no match over every commit
-  reachable from a local ref plus the tracked tree, for 13 literal-prefix patterns and 2 assignment patterns.
+  clone. The full-history scan is `scripts/secret-scan.sh` with no arguments, run by hand against a
+  checkout; it covers every commit reachable from a local ref plus the tracked tree, for 13 literal-prefix
+  patterns and 2 assignment patterns. Run it yourself rather than trusting a result quoted here.
   Separately, `gh api repos/nbailo/financial-engineering-skills` reported GitHub secret scanning and push
   protection enabled on 2026-08-25.
 - **Standing supply-chain visibility.** `.github/workflows/scorecard.yml` runs OpenSSF Scorecard weekly,
@@ -109,8 +111,9 @@ Supporting facts behind those rows, each with how it was obtained:
   the definition runs a container it names by tag, `docker://ghcr.io/ossf/scorecard-action:v2.4.4`, read in
   `action.yaml` at the pinned commit. The image itself is therefore not digest-pinned by this repository.
 
-None of this says the repository is secure. Each row says that one named check passed at one named commit. A
-check that passed then says nothing about a later commit beyond the fact that the check still runs on it.
+None of this says the repository is secure. Each row says that one named check runs and passes on the tree
+you have checked out. A check that passes there says nothing about a later commit beyond the fact that the
+check still runs on it.
 
 ## Risks this project has
 
@@ -118,9 +121,8 @@ check that passed then says nothing about a later commit beyond the fact that th
 
 `scripts/install-guardrails.sh` writes a marked block into `AGENTS.md`, `CLAUDE.md` and
 `.github/copilot-instructions.md` in the directory you point it at. It edits files in your repository, with
-your permissions. Nothing in the documented path pipes network content into a shell: you clone the repository
-at a release tag, you check the commit that tag resolved to, you read the script, then you run it from that
-clone. The block is optional, and the skills work without it, and `--uninstall` removes it.
+your permissions. Nothing in the documented path pipes network content into a shell: you clone the
+repository, you check out and record a commit, you read the script, then you run it from that clone. The block is optional, and the skills work without it, and `--uninstall` removes it.
 
 `scripts/test-install-guardrails.sh` is the evidence for what that script does and refuses to do, and CI runs
 it on `ubuntu-latest` and `macos-latest`. It covers: a target that is a symlink, a non-regular file, or a file
@@ -171,19 +173,18 @@ temporary hold has to carry its reason and its expiry rather than becoming perma
 ### Distribution
 
 Installs reach this repository through `npx skills add`, through the Claude plugin marketplace, or through a
-clone. Releases are not signed and no build provenance is published, so the strongest thing you can pin is a
-commit SHA you have read. If that matters to you, install by commit rather than by branch.
+clone. There are no releases, so the strongest thing you can pin is a commit SHA you have read. Install by
+commit rather than by branch.
 
 ## Supported versions
 
-| Version | Status |
-| --- | --- |
-| v0.5.0 | Supported. Corrections land on `main` and ship in the next tag. |
-| Anything earlier | Not supported. There is no earlier release tag; installs tracked the default branch. |
+There is no supported release. No version of this repository has ever been published as one, and
+`.claude-plugin/plugin.json` declares `0.0.0` to say so rather than to imply a shipped version. Development
+continues toward a 1.0.0 release.
 
-The version is declared in `.claude-plugin/plugin.json`, and CI fails if a version stated in the README or in
-`docs/` disagrees with it. There are no maintenance branches and no backports: a correction goes to `main`,
-and the way to get it is to move to the newest tag.
+Until then the supported thing is `main`. Corrections land there, and the way to get one is to move to a
+newer commit. There are no maintenance branches and no backports. CI fails if a version stated in the README
+or in `docs/` disagrees with the one in `plugin.json`.
 
 ## Scope and non-guarantees
 

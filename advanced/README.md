@@ -12,13 +12,14 @@ Install one deliberately. `--full-depth` is what makes the CLI look below `skill
 keeps the other one out:
 
 ```bash
-npx skills add nbailo/financial-engineering-skills#v0.5.0 --full-depth --skill fin-matching-engine
-npx skills add nbailo/financial-engineering-skills#v0.5.0 --full-depth --skill fin-market-data-publication
+npx skills add nbailo/financial-engineering-skills#<commit> --full-depth --skill fin-matching-engine
+npx skills add nbailo/financial-engineering-skills#<commit> --full-depth --skill fin-market-data-publication
 ```
 
-`#v0.5.0` is the release tag, and the CLI turns a `#` fragment on a git source into the `ref` it clones. Drop
-it and you install whatever is on the default branch at that moment. The README at the repository root has
-the pinned clone, and the verification steps that go with it.
+`#<commit>` is a full commit SHA you have read. There is no release tag, and the CLI turns a `#` fragment on
+a git source into the `ref` it clones, which a SHA satisfies. Drop the fragment and you install whatever is
+on the default branch at that moment. The README at the repository root has the pinned clone, and the
+verification steps that go with it.
 
 From that clone, copying the directory works too, and the two commands below are the same thing by hand.
 

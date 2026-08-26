@@ -35,23 +35,26 @@ quantization would produce `qty == 0`. `examples/trading-bot/` is the full befor
 
 ## Install
 
+**There is no supported public release.** Nothing here has been published as a release, and development
+continues toward a 1.0.0 release. Until it lands, the only thing you can pin is a commit you have read.
+
 These use the `skills` CLI, version 1.5.23 at the time of writing, in that order.
 
 ```bash
-npx skills add nbailo/financial-engineering-skills#v0.5.0   # install the six into this project
-npx skills list                                             # verify what landed
-npx skills update                                           # update, all or the ones you name
-npx skills remove                                           # remove, chosen from the installed list
+npx skills add nbailo/financial-engineering-skills#<commit>  # install the six into this project
+npx skills list                                              # verify what landed
+npx skills update                                            # update, all or the ones you name
+npx skills remove                                            # remove, chosen from the installed list
 ```
 
-The `#v0.5.0` fragment is the release tag, and it is the part that matters. Without it the CLI clones this
-repository's default branch, so what you install is whatever was pushed most recently, which is not a thing
-you can review before it lands or reproduce afterwards. In the CLI's own source, a `#` fragment on a git
-source becomes the `ref` passed to `git clone --depth 1 --branch <ref>` (`src/source-parser.ts`,
-`src/git.ts`, read at commit `435076e78988e1e6ec40d00b0b1d76bdbbc5419a`, which is what the upstream release
-tag for version 1.5.23 resolves to). A tag is still a pointer that whoever controls a repository can move,
-so it is a weaker pin than a commit. For the stronger one, use the clone below, which prints the commit it resolved
-before anything runs.
+The `#<commit>` fragment is the part that matters, and it is a full commit SHA you have looked at. In the
+CLI's own source, a `#` fragment on a git source becomes the `ref` passed to
+`git clone --depth 1 --branch <ref>` (`src/source-parser.ts`, `src/git.ts`, read at commit
+`435076e78988e1e6ec40d00b0b1d76bdbbc5419a`, which is what the upstream release tag for version 1.5.23
+resolves to), and a SHA is a valid `ref`. Without the fragment the CLI clones this repository's default
+branch, so what you install is whatever was pushed most recently, which is not a thing you can review
+before it lands or reproduce afterwards. The clone below prints the commit it resolved before anything
+runs.
 
 The files land in your agent's own skills directory: `.claude/skills/` for Claude Code, `.agents/skills/`
 for Codex, Cursor and several others. Add `-g` to install at user level instead of into the project.
@@ -64,14 +67,14 @@ Claude Code users can install it as a plugin instead, which namespaces the skill
 with anything else installed:
 
 ```
-/plugin marketplace add nbailo/financial-engineering-skills@v0.5.0
+/plugin marketplace add nbailo/financial-engineering-skills
 /plugin install financial-engineering-skills@financial-engineering-skills
 ```
 
-The `@v0.5.0` suffix pins the marketplace source to the release tag. Claude Code's plugin marketplace
+This tracks the default branch, and there is no tag to pin it to. Claude Code's plugin marketplace
 documentation states that a git-based marketplace source supports `ref`, a branch or tag, and not `sha`, and
 that a commit SHA can be pinned only on a plugin source inside `marketplace.json`
-(<https://code.claude.com/docs/en/plugin-marketplaces>). Dropping the suffix tracks the default branch. `/plugin list` shows what is installed, and
+(<https://code.claude.com/docs/en/plugin-marketplaces>). `/plugin list` shows what is installed, and
 `/plugin uninstall financial-engineering-skills@financial-engineering-skills` removes it.
 
 **Optional routing reinforcement.** The skills are self-sufficient. What a skill cannot do is guarantee it
@@ -83,14 +86,15 @@ This one is a shell script that edits files in your repository, so install it fr
 at, not from whatever is on the default branch at the moment you run it.
 
 ```bash
-# 1. Fetch exactly the released tree. --branch takes the tag, so this is a pin, not a branch.
-git clone --depth 1 --branch v0.5.0 https://github.com/nbailo/financial-engineering-skills fes
+# 1. Clone, then pin. There is no tag, so the pin is the commit you check out.
+git clone https://github.com/nbailo/financial-engineering-skills fes
 cd fes
+git checkout <commit>   # a commit you have read, not whatever moved into the branch since
 
-# 2. Verify what you got before running any of it. The first command prints the commit the tag
-#    resolves to: compare it with the commit shown on the v0.5.0 release page. The second prints
-#    the digest of the one file that is about to execute.
-git rev-parse v0.5.0^{commit}
+# 2. Verify what you got before running any of it. The first command prints the commit you are
+#    actually on, which is the thing to record. The second prints the digest of the one file
+#    that is about to execute.
+git rev-parse HEAD
 shasum -a 256 scripts/install-guardrails.sh   # or sha256sum, whichever your system has
 
 # 3. Run its own test suite, which is what CI runs, then install into the repository you want.
@@ -151,7 +155,7 @@ is paid for by everyone, and their audience is a small fraction of the users of 
 deliberately:
 
 ```bash
-npx skills add nbailo/financial-engineering-skills#v0.5.0 --full-depth --skill fin-matching-engine
+npx skills add nbailo/financial-engineering-skills#<commit> --full-depth --skill fin-matching-engine
 ```
 
 `advanced/README.md` explains which of the two you want, and the distinction that decides it: these are for

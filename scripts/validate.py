@@ -66,6 +66,7 @@ TOTAL_DESC_BUDGET = 2600
 MIN_REF_LINES = 120
 MIN_REF_PROSE_WORDS = 400
 AGENTS_BUDGET = 2048   # routing reinforcement only; a rule layer cannot fit in 2 KB
+DEV_VERSION = "0.0.0"  # a tree between releases; pairs with a '## Unreleased' changelog entry
 
 # ══════════════════════════════════════════════════════════════════════════════════════
 # BUDGET POLICY, canonical. One statement for the whole repo; nothing restates it.
@@ -133,7 +134,7 @@ LOADED_PATH_RATCHET: dict[str, int] = {
     # case id in evals/routing-cases.yaml -> ceiling in estimated tokens.
     # Measured 2026-08-25 and rounded up to the next 500; the comment carries the raw
     # measurement, so a re-measure that has moved is visible without running anything.
-    # fin-matching-engine, re-measured after the v0.5.0 decomposition: SKILL.md cut from 6,632 to
+    # fin-matching-engine, re-measured after the reference decomposition: SKILL.md cut from 6,632 to
     # 3,050 estimated tokens, and its three references split into thirty-six narrow ones. Still over
     # the band, and by how much is printed on every run; the ceilings below only record that the debt
     # is now a quarter of what it was.
@@ -495,11 +496,24 @@ def check_repo_consistency() -> None:
     # The changelog's top entry is a version claim like any other: it says what this tree is.
     # A tree whose changelog announces a release its plugin manifest has not reached ships as
     # the older version and documents itself as the newer one.
+    #
+    # A tree between releases states that in both places at once: plugin.json carries DEV_VERSION
+    # and the newest changelog entry is '## Unreleased'. Either half alone is the same defect in
+    # a new direction. DEV_VERSION under a version heading lets an unreleased tree name a release
+    # it never cut; a real version under 'Unreleased' hides a shipped version behind a placeholder.
     changelog = ROOT / "CHANGELOG.md"
     if version and changelog.is_file():
         body = changelog.read_text(encoding="utf-8")
+        top = re.search(r"(?m)^##\s+(.+?)\s*$", body)
+        unreleased = top is not None and top.group(1).strip().lower() == "unreleased"
         headings = re.findall(r"(?m)^##\s+\[?v?(\d+\.\d+\.\d+)\]?", body)
-        if not headings:
+        if version == DEV_VERSION:
+            if not unreleased:
+                err(f"plugin.json says {DEV_VERSION}, so CHANGELOG.md's newest entry must be "
+                    f"'## Unreleased'")
+        elif unreleased:
+            err(f"CHANGELOG.md's newest entry is Unreleased, plugin.json says {version}")
+        elif not headings:
             err("CHANGELOG.md has no version heading, so nothing states what this tree is")
         elif headings[0] != version:
             err(f"CHANGELOG.md's newest entry is v{headings[0]}, plugin.json says {version}")
@@ -509,7 +523,10 @@ def check_repo_consistency() -> None:
                 err(f"CHANGELOG.md lists v{got} twice")
             seen_versions.append(got)
 
-    # A version stated anywhere else must agree with the plugin's.
+    # A version stated anywhere else must agree with the plugin's. This stays on under
+    # DEV_VERSION, where it is the check that catches a 'v0.4.2' left in prose after the tag it
+    # named stopped existing. Naming a target release in prose therefore drops the v: 'a 1.0.0
+    # release' is a plan, 'v1.0.0' is a claim that this tree is one.
     if version:
         for md in [ROOT / "README.md"] + sorted((ROOT / "docs").glob("*.md")):
             if not md.is_file():
