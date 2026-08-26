@@ -1,0 +1,95 @@
+--- a/repo/recovery.py
++++ b/repo/recovery.py
+@@ -1,15 +1,23 @@
+ """Finishes payouts that were in flight when the worker stopped."""
+ 
+ 
++class MissingIdempotencyRef(Exception):
++    """The open row carries no reference, so re-sending it could pay twice."""
++
++
+ def resume_pending(journal, provider):
+     """Re-send every payout still open in the journal, then close the row.
+ 
+     The provider deduplicates on the idempotency reference, so a payout that
+-    already reached it before the stop is not paid a second time here.
++    already reached it before the stop is not paid a second time here. That
++    holds only while the reference is the one the first attempt committed, so
++    it is read back off the row and never minted again.
+     """
+     closed = []
+     for row in list(journal.pending()):
+-        ref = row.get("idempotency_key") or journal.mint_ref(row["payout_id"])
++        ref = row.get("idempotency_ref")
++        if ref is None:
++            raise MissingIdempotencyRef(row["payout_id"])
+         receipt = provider.send_payout(ref, row["account"], row["amount"])
+         journal.complete(row["payout_id"], receipt)
+         closed.append(row["payout_id"])
+--- a/repo/tests/test_recovery.py
++++ b/repo/tests/test_recovery.py
+@@ -9,21 +9,31 @@
+ 
+ 
+ class Dropped(Exception):
+-    """The call did not get through."""
++    """The provider connection died."""
+ 
+ 
+ class FakeProvider:
+-    """One payment per distinct idempotency reference."""
++    """One payment per distinct idempotency reference.
+ 
+-    def __init__(self, fail_next=False):
++    `drop_ack_next` books the payment and then loses the answer, which is the
++    crash worth testing: the request arrived. `fail_before_next` is the mirror,
++    where nothing was booked.
++    """
++
++    def __init__(self, drop_ack_next=False, fail_before_next=False):
+         self.payments = {}
+-        self.fail_next = fail_next
++        self.drop_ack_next = drop_ack_next
++        self.fail_before_next = fail_before_next
+ 
+     def send_payout(self, ref, account, amount):
+-        if self.fail_next:
+-            self.fail_next = False
+-            raise Dropped("connection reset")
+-        self.payments[ref] = {"account": account, "amount": amount}
++        if self.fail_before_next:
++            self.fail_before_next = False
++            raise Dropped("nothing left this process")
++        if ref not in self.payments:
++            self.payments[ref] = {"account": account, "amount": amount}
++        if self.drop_ack_next:
++            self.drop_ack_next = False
++            raise Dropped("the payout was booked and the answer was lost")
+         return "rc-" + ref
+ 
+     def total(self):
+@@ -41,7 +51,7 @@
+ 
+     def test_resume_after_crash_pays_once(self):
+         journal = Journal()
+-        provider = FakeProvider(fail_next=True)
++        provider = FakeProvider(drop_ack_next=True)
+         with self.assertRaises(Dropped):
+             PayoutWorker(journal, provider).submit("po_77", "acct_vendor", "400.00")
+         resume_pending(journal, provider)
+@@ -49,6 +59,15 @@
+         self.assertEqual(provider.total(), Decimal("400.00"))
+         self.assertEqual(journal.row("po_77")["status"], DONE)
+ 
++    def test_resume_after_a_call_that_never_landed_pays_once(self):
++        journal = Journal()
++        provider = FakeProvider(fail_before_next=True)
++        with self.assertRaises(Dropped):
++            PayoutWorker(journal, provider).submit("po_77", "acct_vendor", "400.00")
++        resume_pending(journal, provider)
++        self.assertEqual(len(provider.payments), 1)
++        self.assertEqual(provider.total(), Decimal("400.00"))
++
+     def test_resume_with_nothing_open_does_nothing(self):
+         journal = Journal()
+         provider = FakeProvider()

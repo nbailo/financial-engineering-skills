@@ -1,0 +1,23 @@
+id: payments-refund-ceiling-in-flight
+skill: fin-payments
+mode: [review, repair]
+task: |
+  Support has been filing tickets for us to run partial refunds by hand. I put a refund button
+  in the admin panel instead. refund_service.py is the new part, sitting on the PSP client we
+  already had. Read it over before I open the PR.
+defect:
+  summary: A shop with 12000 captured returns 14000 to the shopper, because a second refund is issued against a remainder the first refund has already committed.
+  mechanism: refundable_amount sums only modifications the processor has already settled, so a refund that was accepted and is still in flight reserves nothing and the next request passes a ceiling it should fail.
+  file: repo/refund_service.py
+expect_findings:
+  - id: in-flight-refund-reserves-nothing
+    must_mention: ["flight", "ceiling", "settled"]
+    why: the ceiling has to be net of refunds already accepted by the processor, and this one counts only the settled ones, so two agents refunding the same order each pass a check neither would pass alone
+hard_negatives:
+  - The reference sent with a retry of the same refund is unchanged, which is the correct identity for that click; the processor returns the first modification rather than creating a second.
+  - Amounts are integers in minor units and no division happens anywhere, so there is no rounding defect to report here.
+  - Refusing every refund while another refund is in flight is not the fix; it strands the remainder the shopper is owed and pushes that credit onto a back-office path with no ceiling on it.
+oracle:
+  command: python3 oracle/test_oracle.py
+  fails_on_defect: true
+  passes_on_fix: true

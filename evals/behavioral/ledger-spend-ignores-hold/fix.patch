@@ -1,0 +1,21 @@
+--- a/repo/spending.py
++++ b/repo/spending.py
+@@ -9,10 +9,16 @@
+ 
+ 
+ def authorize(ledger, account, amount, currency, txn_id, merchant_account):
+-    """Approve or decline one card purchase against the customer's wallet."""
++    """Approve or decline one card purchase against the customer's wallet.
++
++    The posted balance still counts money the customer has already committed
++    elsewhere, a bank withdrawal waiting on the overnight file above all. Available is
++    the posted balance minus those live reservations, and it is the only number that
++    can authorise one more debit.
++    """
+     if amount <= 0:
+         return Decision(False, "invalid_amount")
+-    if ledger.posted_balance(account, currency) < amount:
++    if ledger.available(account, currency) < amount:
+         return Decision(False, "insufficient_funds")
+     ledger.post(txn_id, [(account, -amount, currency),
+                          (merchant_account, amount, currency)])

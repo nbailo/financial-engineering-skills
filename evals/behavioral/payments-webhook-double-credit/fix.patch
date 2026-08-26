@@ -1,0 +1,43 @@
+diff --git a/repo/credit_book.py b/repo/credit_book.py
+index 8c14c7e..73d9833 100644
+--- a/repo/credit_book.py
++++ b/repo/credit_book.py
+@@ -5,6 +5,7 @@ class CreditBook:
+     def __init__(self):
+         self.balances = {}
+         self.journal = []
++        self.credited_refunds = set()
+ 
+     def credit(self, customer_id, amount_minor, memo):
+         if amount_minor <= 0:
+@@ -13,5 +14,16 @@ class CreditBook:
+         self.journal.append({"customer_id": customer_id, "amount": amount_minor, "memo": memo})
+         return self.balances[customer_id]
+ 
++    def credit_refund(self, refund_id, customer_id, amount_minor):
++        """One settled refund is one credit, whichever event type reported it.
++
++        The applied refund id is recorded with the credit, so a second event describing the
++        same refund settling finds it already applied and moves no money.
++        """
++        if refund_id in self.credited_refunds:
++            return self.balance(customer_id)
++        self.credited_refunds.add(refund_id)
++        return self.credit(customer_id, amount_minor, "refund " + refund_id)
++
+     def balance(self, customer_id):
+         return self.balances.get(customer_id, 0)
+diff --git a/repo/handler.py b/repo/handler.py
+index 943b711..65bb200 100644
+--- a/repo/handler.py
++++ b/repo/handler.py
+@@ -20,7 +20,7 @@ class RefundCreditHandler:
+         refund = refund_from_event(event)
+         if refund["status"] != "succeeded":
+             return "not_settled"
+-        self.credit_book.credit(
+-            refund["customer"], refund["amount"], "refund " + refund["id"]
++        self.credit_book.credit_refund(
++            refund["id"], refund["customer"], refund["amount"]
+         )
+         return "credited"

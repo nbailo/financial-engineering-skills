@@ -1,0 +1,23 @@
+id: onchain-xrpl-partial-payment-credit
+skill: fin-onchain
+mode: [review, repair]
+task: |
+  XRP deposits go live for customers on Thursday and I own the watcher. repo/ is all of it:
+  ledger_stream.py is the shape our node hands us for a validated ledger, deposits.py turns
+  that into customer balances. Have a look before I flip the flag on.
+defect:
+  summary: A deposit that moved one drop credits the customer with 500 XRP, so the desk pays out 499.999999 XRP that never arrived.
+  mechanism: credited_drops takes the sender's authorised Amount field, so a payment sent with tfPartialPayment credits the ceiling instead of meta.delivered_amount, which is what the ledger actually moved.
+  file: repo/deposits.py
+expect_findings:
+  - id: credit-from-delivered-amount
+    must_mention: [delivered_amount, partial]
+    why: The credited number has to come from the ledger's own delivery metadata, because Amount on a partial payment is only the ceiling the sender authorised.
+hard_negatives:
+  - The watcher credits on a single validated ledger and should wait for a confirmation depth first; XRPL finality is categorical on a validated ledger, so there is no branch to wait out.
+  - Drops are converted to XRP with float division and lose precision; drops stay integers from the stream through to the balance.
+  - A replayed stream credits the same payment twice; apply_validated records the transaction hash and skips one it already applied.
+oracle:
+  command: python3 oracle/test_oracle.py
+  fails_on_defect: true
+  passes_on_fix: true

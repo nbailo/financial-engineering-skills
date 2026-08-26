@@ -1,0 +1,26 @@
+--- a/repo/payouts.py
++++ b/repo/payouts.py
+@@ -10,10 +10,22 @@
+     Each share is proportional to that member's weight. Amounts are integer
+     minor units, so the arithmetic is exact and no share is ever a fraction of
+     a cent.
++
++    The parts sum to total_minor exactly. Integer division leaves a residue of
++    fewer minor units than there are members; it goes to the members with the
++    largest dropped fraction, ties broken by position, so the split is
++    deterministic and nothing is left unallocated.
+     """
+     if not weights:
+         return []
+     total_weight = sum(weights)
+     if total_weight <= 0:
+         return [0 for _ in weights]
+-    return [total_minor * weight // total_weight for weight in weights]
++    shares = [total_minor * weight // total_weight for weight in weights]
++    residue = total_minor - sum(shares)
++    by_dropped_fraction = sorted(
++        range(len(weights)),
++        key=lambda i: (-((total_minor * weights[i]) % total_weight), i))
++    for i in by_dropped_fraction[:residue]:
++        shares[i] += 1
++    return shares

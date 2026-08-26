@@ -52,6 +52,20 @@ jobs:
       # fail against the rule it replaced, so a green run says the specific wrong answer this
       # suite used to give is still wrong, which prose alone cannot say.
       - run: python3 scripts/run_invariants.py
+      # The behavioral dataset, checked with no model in the loop. For each case it runs the hidden
+      # oracle against the planted defect and requires a FAILURE, then applies the reference fix and
+      # requires a PASS. A fixture that passes on the defect measures nothing and an agent scores it
+      # by changing nothing; a fixture that cannot pass after the fix is unwinnable. Both are dataset
+      # bugs and both are caught here. scripts/eval_runtime.py, which needs a real agent, is not run
+      # in CI and gates nothing.
+      - run: python3 scripts/eval_dataset_check.py
+      # evals/behavioral/ grades an agent, and a grade is only worth reading if the fixtures
+      # are sound. This runs every case's oracle twice, against repo/ as shipped and again
+      # with fix.patch applied, in a copy. A case whose oracle already passes is scored by an
+      # agent that changes nothing; a case that still fails after the reference fix cannot be
+      # won. No model, no network, no API key: the model-in-the-loop harness is manual and is
+      # never called from CI.
+      - run: python3 scripts/eval_dataset_check.py
 
   workflow-hygiene:
     # The checks SECURITY.md cites by name: SHA pins with their release tag, read-only

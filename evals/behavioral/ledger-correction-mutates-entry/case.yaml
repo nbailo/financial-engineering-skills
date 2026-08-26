@@ -1,0 +1,24 @@
+id: ledger-correction-mutates-entry
+skill: fin-ledger
+mode: [review, repair]
+task: |
+  Finance asked for a way to fix payouts that went out at the wrong amount, usually because
+  the invoice total changed after we booked it. correct() in ledger.py is what the ops
+  console will call, and support is meant to start using it on Monday. Have a look over it
+  first and tell me if it is ready.
+defect:
+  summary: Correcting a 500.00 payout down to 450.00 rewrites the payout that was already sent, so the statement the merchant received no longer reproduces and the 50.00 difference is attributable to nothing.
+  mechanism: correct() reaches into the legs of the posted group and overwrites amount and memo in place instead of posting a linked reversal and restatement, so the group still balances and the record of what was actually sent is gone.
+  file: repo/ledger.py
+expect_findings:
+  - id: correction-edits-the-posted-group
+    must_mention: [correct, reversal]
+    why: A posted leg is the record of what was sent; a restatement that overwrites it changes history rather than adding to it, and no later comparison against the bank file can attribute the difference.
+hard_negatives:
+  - post() needs an idempotency key or a retried payout books twice; the transaction id is required at the signature and a repeat raises DuplicateTransaction before any leg is written.
+  - amounts should be Decimal because integers will round the corrected figure; every amount is an exact integer minor unit and no path here divides or converts, so there is nothing to round.
+  - balance() recomputes over the whole journal and should be a stored column for speed; nothing here caches a balance, and a cached one is what would then need a drift detector, so the stored column is the risk rather than the fix.
+oracle:
+  command: python3 oracle/test_oracle.py
+  fails_on_defect: true
+  passes_on_fix: true

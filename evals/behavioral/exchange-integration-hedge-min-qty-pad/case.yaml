@@ -1,0 +1,24 @@
+id: exchange-integration-hedge-min-qty-pad
+skill: fin-exchange-integration
+mode: [review, repair]
+task: |
+  We're pointing the delta hedger at the live keys on Monday. It wakes every 250 ms, takes
+  the residual delta off the options book and sends a market perp order for it. Read through
+  hedger.py and the cycle around it and tell me whether you'd ship it.
+defect:
+  summary: A residual too small for the venue's lot size is padded up to minQty, so a quiet cycle buys 0.002 BTC of perp exposure the book never asked for, and every quiet cycle after it buys another.
+  mechanism: send_hedge_order floors the residual to stepSize and then replaces any quantity below minQty with minQty instead of skipping the cycle, so a 0.0007 residual is sent as a 0.002 order.
+  file: repo/hedger.py
+expect_findings:
+  - id: sub-minimum-quantity-padded-up-to-min-qty
+    must_mention: ["minQty", "skip"]
+    why: the quantity that survives quantisation is below the venue minimum, and the only safe answer is to skip the cycle rather than to send a larger order than the hedge asked for
+hard_negatives:
+  - The client order id is reused across retries of one hedge cycle. That is the correct operation identity, one id per logical instruction minted from the intent id the scheduler commits before the cycle, not a duplicate-order risk.
+  - The notional filter is checked after quantisation rather than before it. Re-checking the whole constraint set once rounding has moved the quantity is what the venue requires, not a bug.
+  - Amount arithmetic loses precision to floats. Every filter, mark and quantity here is a Decimal built from a string, and no float touches a quantity on the send path.
+  - The staleness gate on the mark is missing. send_hedge_order refuses any cycle whose mark is older than MAX_MARK_AGE_MS, before it computes a size.
+oracle:
+  command: python3 oracle/test_oracle.py
+  fails_on_defect: true
+  passes_on_fix: true

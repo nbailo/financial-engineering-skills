@@ -1,0 +1,56 @@
+--- a/repo/reconcile.py
++++ b/repo/reconcile.py
+@@ -11,6 +11,10 @@
+ ZERO = Decimal("0.00")
+ 
+ 
++class ReportUnavailable(Exception):
++    """The report for the book date did not arrive, so nothing was compared."""
++
++
+ def _break(kind, transfer_id, ours, theirs):
+     return {
+         "kind": kind,
+@@ -22,17 +26,25 @@
+ 
+ 
+ def reconcile(local_rows, report_rows):
+-    """One break record per difference between our payouts and the report."""
++    """One break record per difference between our payouts and the report.
++
++    Walks the union of both sides. A transfer the processor executed and we never
++    wrote down has no local row to iterate over, and it is the difference that
++    matters most: the money left the account and nothing here reflects it.
++    """
+     reported = {row["transfer_id"]: row for row in report_rows}
++    ours = {row["transfer_id"]: row for row in local_rows}
+     breaks = []
+-    for row in local_rows:
+-        theirs = reported.get(row["transfer_id"])
++    for transfer_id in sorted(set(ours) | set(reported)):
++        mine = ours.get(transfer_id)
++        theirs = reported.get(transfer_id)
+         if theirs is None:
+-            breaks.append(_break("not_in_report", row["transfer_id"], row["amount"], ZERO))
+-            continue
+-        if theirs["amount"] != row["amount"]:
+-            breaks.append(_break("amount_differs", row["transfer_id"],
+-                                 row["amount"], theirs["amount"]))
++            breaks.append(_break("not_in_report", transfer_id, mine["amount"], ZERO))
++        elif mine is None:
++            breaks.append(_break("not_in_store", transfer_id, ZERO, theirs["amount"]))
++        elif theirs["amount"] != mine["amount"]:
++            breaks.append(_break("amount_differs", transfer_id,
++                                 mine["amount"], theirs["amount"]))
+     return breaks
+ 
+ 
+@@ -44,7 +56,7 @@
+     """
+     report_rows = parse_report(report_text)
+     if not report_rows:
+-        return {"status": "clean", "breaks": []}
++        raise ReportUnavailable(book_date)
+     breaks = reconcile(store.rows_for(book_date), report_rows)
+     for record in breaks:
+         alert(record)

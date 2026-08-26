@@ -1,0 +1,28 @@
+--- a/repo/deposits.py
++++ b/repo/deposits.py
+@@ -24,11 +24,23 @@
+         return self.balances.get(account, 0)
+ 
+ 
++class UnavailableDelivery(Exception):
++    """The ledger reported no usable drop amount for this payment."""
++
++
+ def credited_drops(tx):
+-    """How many drops this payment is worth to the customer."""
+-    return int(tx["Amount"])
++    """How many drops this payment is worth to the customer.
+ 
++    The ledger's own delivery metadata decides this. `Amount` is only what the sender
++    authorised, and a payment sent with tfPartialPayment moves less than that. Where the
++    metadata carries no drop amount the watcher stops instead of guessing one.
++    """
++    delivered = tx["meta"].get("delivered_amount")
++    if not isinstance(delivered, str) or not delivered.isdigit():
++        raise UnavailableDelivery(tx["hash"])
++    return int(delivered)
+ 
++
+ def apply_validated(book, transactions):
+     """Credit every deposit in a batch of validated transactions."""
+     for tx in transactions:

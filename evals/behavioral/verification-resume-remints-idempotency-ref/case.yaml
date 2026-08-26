@@ -1,0 +1,26 @@
+id: verification-resume-remints-idempotency-ref
+skill: fin-verification
+mode: [review, repair]
+task: |
+  We are moving the payout worker onto spot instances, so it gets killed mid-run most days
+  instead of once a quarter. Read recovery.py and the tests around it and tell me whether we
+  are covered before I flip it over.
+defect:
+  summary: "A payout finished by the resume path after the worker stops between the call and the outcome write goes out under a second reference, so the vendor is paid 400.00 twice and the journal records one of the two payments."
+  mechanism: "resume_pending reads a field named idempotency_key while journal.begin commits the reference under idempotency_ref, so the fallback mints a fresh reference on every resume and the provider has nothing to deduplicate on."
+  file: repo/recovery.py
+expect_findings:
+  - id: resume-sends-under-a-second-reference
+    must_mention: [idempotency, resume]
+    why: the reference committed ahead of the call is written and never read back, so the resumed send looks new to the provider and pays again.
+  - id: crash-test-fake-fails-before-delivery
+    must_mention: [test_resume_after_crash, deliver]
+    why: the fake raises before it books the payment, so the test covers a call that never arrived and stays green over a resume path that pays twice.
+hard_negatives:
+  - submit() should catch the provider error and mark the row failed; swallowing an outcome it cannot know is the failure mode, and leaving the row open is what makes the payout recoverable.
+  - The provider call should be retried with backoff inside submit(); an immediate retry is the same unresolved send, and one open row plus one resume is the design here.
+  - The journal is in-memory so nothing survives a restart; it stands in for the durable table, and the ordering it carries, intent committed before the call, is what the resume path reads.
+oracle:
+  command: python3 oracle/test_oracle.py
+  fails_on_defect: true
+  passes_on_fix: true
