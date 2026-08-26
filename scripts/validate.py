@@ -432,6 +432,59 @@ def check_structure(skill_md: Path) -> None:
 
 
 
+def check_readme_evidence() -> None:
+    """The README's evidence table states counts. A count is a claim like any other.
+
+    Four of the five numbers are derivable from the tree without running anything, so they are
+    derived and compared here. The README said "58 Decimal cases in 12 fixtures" for one commit
+    after a thirteenth fixture landed, which is exactly the drift this catches: the number was
+    true when written and nobody re-read it.
+
+    The installer's figure is NOT checked. That count is accumulated at run time by the shell
+    suite's own counter across loops, so there is no honest way to derive it from the source
+    without executing the suite, and executing it here would make every validator run slow. It is
+    therefore unguarded, and this comment says so rather than leaving a reader to assume the whole
+    row is covered.
+    """
+    readme = ROOT / "README.md"
+    if not readme.is_file():
+        return
+    body = readme.read_text(encoding="utf-8")
+
+    fixtures = sorted((ROOT / "evals" / "invariants").glob("*.yaml"))
+    cases = 0
+    for f in fixtures:
+        try:
+            doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001  the fixture runner reports the parse error itself
+            continue
+        cases += len(doc.get("cases") or [])
+
+    behavioral = [d for d in (ROOT / "evals" / "behavioral").glob("*/") if (d / "case.yaml").is_file()]
+
+    tests = 0
+    for f in (ROOT / "examples" / "prediction-market-bot" / "tests").glob("*.py"):
+        tests += len(re.findall(r"(?m)^\s+def test_", f.read_text(encoding="utf-8")))
+
+    routing = 0
+    cases_file = ROOT / "evals" / "routing-cases.yaml"
+    if cases_file.is_file():
+        doc = yaml.safe_load(cases_file.read_text(encoding="utf-8"))
+        routing = len(doc["cases"] if isinstance(doc, dict) else doc)
+
+    claims = [
+        (rf"\b{tests}\s+example tests\b", f"{tests} example tests"),
+        (rf"\b{cases}\s+Decimal cases in\s+{len(fixtures)}\s+fixtures\b",
+         f"{cases} Decimal cases in {len(fixtures)} fixtures"),
+        (rf"\b{len(behavioral)}\s+behavioral cases\b", f"{len(behavioral)} behavioral cases"),
+        (rf"\b{routing}\s+routing lint cases\b", f"{routing} routing lint cases"),
+    ]
+    for pattern, expected in claims:
+        if not re.search(pattern, body):
+            err(f"README.md's evidence table does not state '{expected}', which is what the tree "
+                f"actually contains")
+
+
 def check_repo_consistency() -> None:
     """Cheap structural checks that stop documentation drifting away from the code.
 
@@ -1680,6 +1733,7 @@ def main() -> int:
     check_artefacts()
     check_hidden_characters()
     check_repo_consistency()
+    check_readme_evidence()
 
     agents = ROOT / "AGENTS.md"
     if not agents.is_file():

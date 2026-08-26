@@ -85,7 +85,9 @@ that edits files in your repository.
 | `fin-verification` | needs tests, reconciliation, or proof before shipping |
 
 A skill loads when the mechanism it owns appears in the change, and opens a reference only when that
-reference's mechanism appears. An ordinary change loads one skill.
+reference's mechanism appears. A change confined to one domain should normally load that one
+domain skill; cross-domain work, and anything about tests, reconciliation or a ship decision, can
+reasonably load more. Nothing here measures how often that actually happens.
 
 ## Where it applies
 
@@ -109,16 +111,19 @@ field is not the credited value.
 
 ## Evidence, and what is not proven
 
-Every rule traces to something you can check: vendor documentation, a protocol specification, source
-read at a pinned commit, or a cited incident. Where a venue's behaviour could not be confirmed, the
-reference says so in place rather than stating it flatly.
+Every rule is meant to trace to something you can check: vendor documentation, a protocol
+specification, source read at a pinned commit, or a cited incident. That is the standard, not a
+guarantee about every sentence. Where a venue's behaviour could not be confirmed, the reference
+marks the claim unverified at the point it is used and its provenance block records what was and
+was not read. Material marked that way is **non-normative**: it is context for a human to check,
+never a rule for an agent to apply.
 
 What actually runs, on every push:
 
 | Check | What it proves |
 | --- | --- |
 | 86 example tests | the worked prediction-market bot behaves as described, offline |
-| 58 Decimal cases in 12 fixtures | the arithmetic behind each corrected rule, with at least one case per fixture written to fail against the rule it replaced |
+| 63 Decimal cases in 13 fixtures | the arithmetic behind each corrected rule, with at least one case per fixture written to fail against the rule it replaced |
 | 12 behavioral cases | each planted defect is real: the hidden oracle fails on it and passes on the reference fix, with no model involved |
 | 198 installer tests | the routing-block installer does what [SECURITY.md](SECURITY.md) says, on Linux and macOS |
 | 82 routing lint cases | a description has not lost the vocabulary of the tasks it owns |
@@ -128,9 +133,10 @@ What is **not** proven, stated plainly:
 - **No published score against a baseline.** `scripts/eval_runtime.py` runs the behavioral cases
   against a real agent with skills on and off, but no paired result is published here. Treat any
   claim that these skills improve an agent as unproven until you run it yourself.
-- **The routing lint is a lint.** It scores word overlap between a task and eight descriptions. No
-  model runs, and it allows 124 recorded over-activations. A green result is not evidence that an
-  agent routes correctly.
+- **The routing lint is a lint, not a routing measurement.** It scores word overlap between a task
+  and eight descriptions. No model runs, nothing observes an agent choosing a skill, and 124
+  over-activations are recorded in the fixture and not charged. A green result says a description
+  still carries the vocabulary of its cases. It is not an accuracy figure and implies none.
 - **Coverage is uneven.** [docs/providers.md](docs/providers.md) says which venues have dedicated
   references and how fresh the sourcing is behind each.
 - **Some provider claims are unverified and say so.** A reference that could not be re-read against
