@@ -1,0 +1,26 @@
+id: polymarket-lost-response-recovery
+invariant: >-
+  A Polymarket CLOB V2 POST whose response is lost is resolved by looking up the order hash persisted
+  before the send, so recovery leaves exactly one order and never adds a second order's exposure.
+source: skills/fin-exchange-integration/references/prediction-market-polymarket-v2.md:152
+cases:
+  - name: collateral committed after a hash-resolved recovery is one order, not two
+    expr: "Decimal('1') * Decimal('100') * Decimal('0.60')"
+    op: eq
+    value: "60.00"
+    why: re-signing after the lost response commits 120.00 pUSD against a 60.00 intent, so this equality fails
+  - name: the intent's collateral ceiling is never breached across a recovery
+    expr: "Decimal('60.00') - Decimal('1') * Decimal('100') * Decimal('0.60')"
+    op: ge
+    value: "0"
+    why: with a re-signed second order this is -60.00, a breach of one whole order's collateral
+  - name: shares held after a recovery do not exceed the shares intended
+    expr: "Decimal('1') * Decimal('100')"
+    op: le
+    value: "100"
+    why: a fresh signature carries a new salt and a new timestamp, so the retry can fill 200 shares
+  - name: querying the hash without the exchange it was signed for is a reachable double
+    expr: "Decimal('2') * Decimal('100') * Decimal('0.60')"
+    op: gt
+    value: "60.00"
+    why: the standard and neg risk exchanges hash one struct two ways, so a lookup against the wrong one answers unknown and a resend commits this

@@ -85,12 +85,16 @@ authority can change it.
 
 **rounding and conservation.** Direction comes from the operation's category, never from a global default: a statute
 or scheme that names the mode is copied as per-jurisdiction configuration; an exchange between two representations
-rounds per leg in a declared direction, which absent a scheme rule floors what the system pays out and ceils what it
-collects; a split of one exact total is deterministic and its parts sum to that total, which largest-remainder with a
-declared tie-break achieves. Every call site names the scale as well as the direction, because a ceiling at 18
-decimals rounds nothing. The residue is posted to a named account, and no round trip returns more than it put in,
-including when different principals open and close it. A helper shared by both legs of a convertible relationship
-rounds the same way in both directions and leaks value unless the direction is a parameter of the leg.
+declares a direction per leg such that no repeatable sequence of legs extracts value, of which EIP-4626's vault table
+(floor the derived payout, ceil the derived collection) is one declaration and not a default for money paths at large;
+where nothing names a direction, the exact liability survives and the residue is posted to an account with a named
+owner. A split of one exact total is deterministic and its parts sum to that total, which largest-remainder with a
+declared tie-break achieves. Every call site names the scale as well as the direction, because a ceiling at 18 decimals
+rounds nothing. A conservation assertion states the boundary it holds over: across one atomic sequence, against a state
+nothing else credits, no round trip returns more than it put in, including when different principals open and close it.
+Fees, mints, burns, accrual, external transfers and rounding residue cross that boundary, so an assertion spanning any
+of them carries it as an explicit term or it is not a conservation check. A helper shared by both legs of a convertible
+relationship rounds the same way in both directions and leaks value unless the direction is a parameter of the leg.
 
 **operation identity.** One identity per economic decision to act: stable across every retry of that decision,
 distinct for two intents with byte-identical payloads, never a hash of the request body, and impossible for a caller
@@ -123,7 +127,7 @@ range rejection, a truncated page or a result count at the documented cap is a h
 write: check and act are one step no interleaving can enter, whether by a conditional `UPDATE ... WHERE` whose
 rowcount decides the effect or by a lock taken before the check and held past the act. Three properties, all required,
 because any two without the third still race: duration (the whole check-to-act section, not a block that dedents in
-between), key determinism (a stable digest or a small registry, never a per-process salted `hash()`), and subject (the
+between, where the act is the authoritative write and not an external effect that resolves long after it), key determinism (a stable digest or a small registry, never a per-process salted `hash()`), and subject (the
 key the act mutates, which is often a nonce or a batch rather than the row you read). A money transaction states its
 isolation level explicitly.
 
@@ -139,8 +143,9 @@ real number and neither can the control downstream of it.
 scheduled comparison that actually runs in production, reading through a path independent of the writer. Breaks are
 aged, counted, and delivered to a fail-closed destination, so a missing configuration stops the system rather than
 silencing the alert. An invariant that exists as SQL in a comment, as a docstring, or as a "worth running as a cron"
-note is absent. Where no external authority exists, say so, and substitute an internal invariant: conservation,
-solvency, sum of parts. This is the only control that catches the failures of every other rule.
+note is absent. Where no external authority exists, say so, and substitute an internal invariant stated with the
+boundary it holds over: conservation, solvency, sum of parts. This is the only control that catches the failures of
+every other rule.
 
 **hard limits.** A limit rejects the proposed operation rather than observing it, in the same transaction as the write
 and before any external effect; a warning, a log line or a metric nobody alerts on is not a control, and declining

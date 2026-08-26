@@ -158,6 +158,24 @@ class Resolution(unittest.TestCase):
         _, events = scenario.winner_takes_all()
         self.assertEqual(events[-1]["winning_outcome_index"], 0)
 
+    def test_a_determination_is_provisional_and_the_resolution_is_the_payout(self):
+        venue = FakeVenue(load_market())
+        determined = venue.determine([1, 0], 1)
+        self.assertEqual(determined["type"], "MARKET_DETERMINED")
+        self.assertTrue(determined["provisional"])
+        self.assertIsNone(venue.resolution)
+        # A result exists, so the book is shut.
+        req = request(venue, "ck-late")
+        with self.assertRaises(Rejected) as caught:
+            venue.place_order(req, sign_request(req.payload()))
+        self.assertEqual(caught.exception.reason, "MARKET_DETERMINED")
+        resolved = venue.resolve([1, 0], 1)
+        self.assertEqual(resolved["type"], "MARKET_RESOLVED")
+        self.assertNotIn("provisional", resolved)
+        # And the terminal state has no way back to a revisable one.
+        with self.assertRaises(Rejected):
+            venue.determine([0, 1], 1)
+
     def test_a_reconnect_redelivers_without_renumbering(self):
         venue, events = scenario.winner_takes_all()
         again = venue.events_since(0)

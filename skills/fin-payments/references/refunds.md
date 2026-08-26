@@ -20,34 +20,51 @@ ledger shape of a refund, which is not the mirror of the charge.
 
 ## The refundable ceiling, per charge and per currency
 
-`refundable = amount_captured − already_refunded − pending_refunds − disputed_amount`, computed in your code,
-per `(charge_id, currency)`. Four inputs, each with a wrong-but-plausible source:
+`refundable = amount_captured − already_refunded − pending_refunds − claimed_amount`, computed in your code,
+per `(charge_id, currency)`. The four terms are one combined exposure against one capture: refunds you have
+made, refunds in flight, and value a counterparty claim has already taken or may still take all return the same
+money, and their total can never exceed what the processor says it captured. Each term has a wrong-but-plausible
+source:
 
 | term | read it from | never from | why |
 |---|---|---|---|
 | `amount_captured` | `Charge.amount_captured` (Stripe) / sum of `CAPTURE` webhooks with `success=true` (Adyen) | `PaymentIntent.amount`, `Charge.amount`, `orders.amount_cents` | `PaymentIntent.amount` is the *authorized* amount; on a partial capture the two differ and your own order total was never the thing the processor took |
 | `already_refunded` | your own `refunds` rows for that charge, status `succeeded` | `Charge.amount_refunded`, or `SUM(balance_transaction.amount) WHERE type='refund'` | `amount_refunded` is the processor's view of *its* object graph; it knows nothing about your store credit, a goodwill credit issued on a second processor, or a manual back-office credit. The balance-transaction sum is worse: a partial capture emits a `type=refund` line for the *uncaptured* portion (Stripe, balance-transaction types) |
 | `pending_refunds` | your own rows, status `pending` **and** `requires_action` | omitting them | Stripe blocks a second refund only after its own object graph updates; in-flight money that reserves nothing is FM-18's mechanism |
-| `disputed_amount` | the dispute object, **as a gate** | subtracting `dispute.amount` from a charge-currency ceiling | the dispute is denominated at *dispute-time* FX and may not be in the charge's currency at all. When the currencies differ there is no arithmetic to do; the correct behaviour is the gate below |
+| `claimed_amount` | the claim objects on that charge, summed per currency, counting every claim that has taken value or may still take it | a boolean `disputed` column, or dropping the term because the provider blocks the call anyway | a lost claim took the money and an open one may; both consume the capture. A claim the provider reports as won, prevented, or closed without escalation consumes nothing. The claim is denominated at *claim-time* FX and may not be in the charge's currency at all, which is the one case with no arithmetic in it |
 
-**The dispute term is a gate before it is a subtrahend.** While any dispute on the charge is not in a closed
-status, `refundable = 0` for every non-dispute-process path. Stripe: *"You can't issue a refund outside the
-dispute process while the dispute is open."* Once the dispute closes `lost`, the money is already gone;
-subtract what the **settlement report** debited in your settlement currency, not `dispute.amount`.
+**A claim consumes the capture; it does not by itself forbid the refund.** Subtract it like any other term, so
+what you return plus what the network takes can never exceed what you took. Two cases carry no arithmetic and
+must refuse rather than guess: a claim in a currency you did not capture in, because claim FX is struck at claim
+time and there is no rate you may invent, and a claim the provider itself reports as no longer refundable.
+Refusing every refund while any claim is open is not the conservative version of this rule. It strands the
+remainder a partial claim leaves behind, and the credit is then issued on a back-office path, a second
+processor, or store credit, none of which this ceiling covers.
+
+**What a refund does to an open claim is that provider's documented behaviour, per claim type and per rail.**
+Providers do not agree, so read it from the claim object for that claim and never from a constant compiled into
+your refund path. The Stripe and Adyen semantics, quoted and dated, are in the disputes reference. Once a claim
+closes with the money gone, subtract what the **settlement report** debited in your settlement currency, not the
+claim's own `amount`.
 
 ### Worked example: partially captured charge with everything in flight
 
 USD charge, authorized 12000 (USD 120.00), captured 9000. Then: one `succeeded` refund of 2000, one `pending`
-refund of 1500, one open dispute for 4000.
+refund of 1500, one open dispute for 4000 in USD, which the provider still reports as refundable.
 
 ```
 amount_captured      9000
 − already_refunded  −2000   (succeeded only)
 − pending_refunds   −1500   (pending + requires_action)
-− disputed_amount   −4000   (…and the dispute is OPEN, so the gate fires first)
+− claimed_amount    −4000   (open, same currency, so it subtracts)
                     ------
-refundable           1500   → gated to 0 while the dispute is open
+refundable           1500   → the remaining 1500 is refundable, and only 1500
 ```
+
+Refund that 1500 and the combined exposure is exactly 9000: nothing returned twice, nothing legitimate
+stranded. Drop the claim term and the ceiling reads 5500, which returns 13000 against a 9000 capture. Force the
+ceiling to 0 because a claim is open and the customer never sees the 1500 they are owed, which is how the credit
+ends up being issued by hand, outside every control on this page.
 
 Three wrong answers the same code base produces:
 
@@ -63,22 +80,35 @@ funded the credit from house money instead. It was found by a partner bank repor
 not by any internal control (FT, reported via Payments Dive, "Criminals stole $20M from Revolut via payment
 loophole", 2023-07).
 
-### The gate, as code
+### The ceiling, as code
 
 ```python
-OPEN_DISPUTE_STATUSES = {"warning_needs_response", "warning_under_review",
-                         "needs_response", "under_review"}   # see disputes.md: verify this enum
+# Claim statuses that return nothing to the cardholder, from Stripe's dispute status enum
+# (docs.stripe.com/api/disputes/object, read 2026-08-26). Every other value consumes the
+# capture, an unrecognised one included: a lost claim already took the money, an open one
+# may still take it, and a status you do not recognise is not evidence that it will not.
+RETURNS_NOTHING = {"won", "warning_closed", "prevented"}
 IN_FLIGHT_REFUND_STATUSES = {"pending", "requires_action"}
+
+class RefundRefused(Exception):
+    """No ceiling exists for this charge. A human decides, and no refund is sent."""
 
 def refund_ceiling_minor(conn, charge_id: str, currency: str) -> int:
     # Serialize refund issuance on this charge. Postgres rejects FOR UPDATE in the same
     # SELECT as an aggregate: ERROR: FOR UPDATE is not allowed with aggregate functions
     conn.execute("SELECT 1 FROM charges WHERE id = %s FOR UPDATE", (charge_id,))
 
-    if conn.execute("""SELECT 1 FROM disputes
-                        WHERE charge_id = %s AND status = ANY(%s) LIMIT 1""",
-                    (charge_id, list(OPEN_DISPUTE_STATUSES))).fetchone():
-        return 0                                    # gate, not arithmetic; currencies may differ
+    claimed = 0
+    for amount, claim_ccy, status, refundable in conn.execute(
+            "SELECT amount_minor, currency, status, charge_still_refundable "
+            "  FROM disputes WHERE charge_id = %s", (charge_id,)).fetchall():
+        if status in RETURNS_NOTHING:
+            continue                  # closed-lost rows carry what settlement debited
+        if not refundable:        # the provider's answer for THIS claim, not a house rule
+            raise RefundRefused(f"{charge_id}: provider reports the claim non-refundable")
+        if claim_ccy != currency:  # claim-time FX; there is no rate you may invent here
+            raise RefundRefused(f"{charge_id}: claim in {claim_ccy}, capture in {currency}")
+        claimed += amount
 
     row = conn.execute("""
         SELECT c.amount_captured_minor
@@ -89,13 +119,16 @@ def refund_ceiling_minor(conn, charge_id: str, currency: str) -> int:
          WHERE c.id = %s AND c.currency = %s
          GROUP BY c.amount_captured_minor""",
         (list(IN_FLIGHT_REFUND_STATUSES), charge_id, currency)).fetchone()
-    return row[0] if row else 0
+    return max(0, row[0] - claimed) if row else 0
 ```
 
-`amount_captured_minor` is refreshed from `stripe.Charge.retrieve(charge_id)` inside the same unit of work,
-not from the webhook payload, not from an `orders` row. Currency is part of the key, not an assumption: a
-charge and its dispute can carry different currency codes, and a `refunds` row in another currency must not
-join into the sum.
+`amount_captured_minor` and `charge_still_refundable` are refreshed from the processor inside the same unit of
+work, not from the webhook payload and not from an `orders` row. Stripe exposes the second one on the dispute
+object as `is_charge_refundable`; on a provider that publishes no such flag, the honest local default is to
+treat an open claim as refundable up to the ceiling and to let the provider's own refusal be the answer, which
+is why that call needs a branch and not an `assert`. Currency is part of the key, not an assumption: a charge
+and its claim can carry different currency codes, and a `refunds` row in another currency must not join into
+the sum.
 
 ## Cancel vs refund on an uncaptured intent; phantom refunds from a partial capture
 
@@ -170,7 +203,7 @@ up to 30 days, and it lands *after* the month it belongs to.
 
 ## `failure_reason` values and the branch each one implies
 
-Verified set (Stripe refunds documentation): `charge_for_pending_refund_disputed`, `declined`,
+Verified set (Stripe refunds documentation, read 2026-08-26): `charge_for_pending_refund_disputed`, `declined`,
 `expired_or_canceled_card`, `insufficient_funds`, `lost_or_stolen_card`, `merchant_request`, `unknown`.
 
 | `failure_reason` | what actually happened | branch |

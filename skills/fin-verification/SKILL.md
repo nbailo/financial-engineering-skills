@@ -62,11 +62,12 @@ domain skill does not cover. They design the control; this skill proves it.
    independent of the writer, with a fail-closed delivery path for breaks. When authority is SELF,
    replace it with replay from the append-only log plus continuous conservation checks.
 5. Plant a break of a known size on a known entity against a freshly migrated store, and assert it is
-   detected: break record, balanced corrective posting, exactly one alert, zero breaks on a clean run.
+   detected: break record, the amount quarantined, one alert, zero breaks on a clean run.
 6. Kill the process at each boundary between a local commit and a foreign mutation, restart, run the
    recovery path, and assert exactly one external effect and exactly one local record.
 7. Replay every event consumer in the recorded order, then shuffled, duplicated and interrupted by a
-   restart; assert identical terminal state, with conservation and idempotence asserted after every step.
+   restart; assert each run converges on the recorded order's state once anything order-dependent is
+   sorted into the order the design depends on, with conservation and idempotence asserted after every step.
 8. Read the design notes as a numbered claim list. Bind each claim to a named test or delete the
    sentence. Then emit a finding for everything described and not implemented.
 
@@ -105,18 +106,21 @@ assert no resubmission, assert the code queries the counterparty by the identity
 effect exists afterwards. Run the mirror case where the effect genuinely did not happen, or you have proved only
 that the code gave up, not that it distinguishes UNKNOWN from "did not happen".
 
-### An event consumer is correct only if every arrival order produces the same state
+### An event consumer converges: arrival order must not change the state, economic order must
 
 Specialises *authority*, whose pushed-payload clause this proves. Apply a recorded stream in order, then apply
-shuffled permutations of it with duplicates and with a restart in the middle, and assert the terminal state is
-identical every time. Assert conservation and idempotence after every step, not only at the end: that is what
+shuffled permutations of it with duplicates and with a restart in the middle, and assert each run converges on
+the state the recorded order reaches, having first sorted anything order-dependent into the order the design
+depends on. A realized figure computed under FIFO, LIFO or average cost moves with an arbitrary swap, so
+asserting it invariant passes a fold that guessed the sequence. Assert conservation and idempotence after every step, not only at the end: that is what
 catches an in-memory dedupe set, a version watermark stored on the live object, and an illegal transition, in one
 pass. Assert generator coverage explicitly, or the generator quietly never produces the case the bug lives in.
 
 ### Five properties matter for money, and the rest are decoration
 
 Conservation: `sum(all account deltas) == 0` after every step, and globally `sum(balances) + fees == sum(deposits)
-- sum(withdrawals)`. Idempotence: `f(f(x)) == f(x)` for every operation a retry can repeat.
+- sum(withdrawals)` over a boundary nothing crosses unaccounted; interest accrual, a mint and a burn each carry
+their own term or the identity is wrong on correct books rather than failing on broken ones. Idempotence: `f(f(x)) == f(x)` for every operation a retry can repeat.
 Permutation-invariance, only for operation sets the design *claims* are order-independent; if it is not claimed,
 find out which order the design depends on and test that order. Reservation-implies-postable: no reachable state
 holds a committed reservation that cannot be posted. Allocation totality: `sum(allocate(total, weights)) ==

@@ -246,7 +246,7 @@ def recover(client_id: str) -> Order | None:   # None means three different thin
 after 2 hours, Bybit fully-cancelled after 24 hours, Binance futures cancelled-with-no-fills after 3 days),
 and *this venue has no lookup by client ID at all* (Coinbase Advanced Trade, Deribit). Only the first
 justifies resubmitting. Return a tri-state (`Found(order)` / `ProvenAbsent` / `Unresolved(reason)`) and let
-`Unresolved` hold the order `INFLIGHT_UNKNOWN` at full notional.
+`Unresolved` hold the order `INFLIGHT_UNKNOWN` at the worst-case exposure that instrument can reach.
 
 Third: verify the ID reaches the field you think it does. ccxt#23370 records the unified `clientOrderId`
 being mapped to Kraken's integer `userref`, not the native `cl_ord_id`. So "I set clientOrderId" did not mean

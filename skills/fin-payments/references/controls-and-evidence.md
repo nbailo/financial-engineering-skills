@@ -21,7 +21,7 @@ Emit only the rows whose predicate this change matches. Each emitted row carries
 
 | emit when the diff… | the control | the property to assert |
 |---|---|---|
-| issues or sizes a reversal | refund ceiling computed from the authority's captured amount (Stripe: `amount_captured`), net of reversals in flight (Stripe: `pending` and `requires_action`) and gated on open claims | a refund exceeding the ceiling is refused, and a refund is refused outright while a dispute on the charge is open |
+| issues or sizes a reversal | refund ceiling computed from the authority's captured amount (Stripe: `amount_captured`), net of reversals in flight (Stripe: `pending` and `requires_action`) and of every claim that has taken value or may still take it | a reversal that would push reversals plus claims above the captured amount is refused; a partial claim still leaves its remainder reversible; and a claim in another currency, or one the provider reports as non-reversible, refuses rather than guesses |
 | handles a pushed event | the object is re-read from its own authority inside the handler, before the first value-moving decision | with a payload whose status disagrees with the live object, the effect follows the live object |
 | handles a pushed event | per-object watermark on the authority's own sequence value **plus** the identities already applied at that value, the guarded `UPDATE` being the write | two events sharing one coarse timestamp on one object both apply, exactly once each |
 | handles a pushed event | an event that cannot be resolved is dead-lettered and alerted, and is **not** marked processed | after an unresolvable delivery, a redelivery of the same event still reaches the handler |
@@ -54,8 +54,9 @@ payments-specific ones; the generic identity and retry properties belong to the 
 
 1. **The ceiling holds under concurrency.** Two refund requests issued concurrently against one charge, whose
    amounts sum to more than the captured amount net of everything in flight, produce exactly one success.
-2. **The dispute gate fires before the arithmetic.** With an open dispute in a currency different from the
-   charge, the refund path refuses rather than attempting a cross-currency subtraction.
+2. **A claim consumes the ceiling, and only the ceiling.** With an open dispute in the charge's currency for
+   part of the capture, a refund of the remainder succeeds and a refund above it is refused; with an open
+   dispute in a different currency, the path refuses rather than attempting a cross-currency subtraction.
 3. **The re-read wins over the payload.** Feed the handler a payload rendered at an older status than the live
    object; the ledger effect matches the live object.
 4. **The coarse-clock tie admits.** Deliver `created` and `updated` events for one object sharing one second,

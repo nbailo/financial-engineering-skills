@@ -33,9 +33,13 @@ time.
 | `redeem(shares)` | shares (exact) | assets (derived) | assets out | **Floor** | `_convertToAssets(s, Math.Rounding.Floor)` |
 | `convertToShares` / `convertToAssets` | n/a | n/a | view/oracle estimate, not an obligation | **Floor**, both, by spec | n/a |
 
-The same table governs an FX booking, a points-to-cash redemption, a fee taken in a different asset from the
-one quoted, a base↔quote conversion. One sentence: **floor the amount the system pays out, ceil the amount
-it collects, measured in the unit the counterparty receives or supplies, per leg.**
+The same shape recurs wherever the counterparty picks when and how often to trade the two representations: an
+FX booking against a quote you publish, a points-to-cash redemption, a fee taken in a different asset from the
+one quoted, a base↔quote conversion. The property is that no repeatable sequence of legs extracts value, and
+the table above is one declaration of it: **round the derived quantity per leg, in the unit the counterparty
+receives or supplies, flooring the leg the pool pays out and ceiling the leg it collects.** Declared per leg,
+never a global default, and it yields to any scheme, statute or contract that fixes the mode for that
+instrument. Where nothing fixes one, keep the liability exact and give the residue a named owner.
 
 Note the *shape* of the preview spec: `previewDeposit` "MUST return as close to and **no more than** the
 exact amount of Vault shares that would be minted"; `previewMint` and `previewWithdraw` "no fewer than";
@@ -64,10 +68,22 @@ for TS in range(40):
 Ship that as a property test, not a comment, and ship the **multi-actor** form, which survives a real
 extraction: for an adversarially ordered sequence by *different* principals, assert `Σ outputs ≤ Σ inputs` per
 asset and that no user-initiated round trip returns more than it put in. A single-actor test passes on designs
-that leak when A deposits and B withdraws. Second property test, from the Balancer post-mortem: run **N ≥ 50
-minimum-magnitude operations inside one atomic transaction** and assert the pool is not worse off: the
-attacker packed 65 micro-swaps (amounts as small as 17 units) into one `batchSwap`, so losses accumulated
-against transient internal balances before settlement and no per-operation tolerance test could see them.
+that leak when A deposits and B withdraws.
+
+**That inequality holds over a closed boundary, and the test has to close it.** It is a statement about a
+sequence run against a state nothing else changes. Yield accrual, a fee credited to or taken from the pool, a
+mint or burn outside the entrypoint, a reward drop, and the direct transfer described in the next section all
+cross that boundary, and each one makes `Σ outputs ≤ Σ inputs` the wrong assertion rather than a failing one:
+a vault that accrues between the two legs returns more than it took in and is correct. So either freeze the state
+for the length of the test, no accrual step and no external transfer, or carry every crossing as its own measured
+term, `Σ outputs ≤ Σ inputs + accrued + donated - fees retained`, each term read from its own source and never
+inferred from the difference. An assertion whose boundary is unstated fires on correct code, gets a tolerance
+bolted on, and then stops detecting the leak it was written for.
+
+Second property test, from the Balancer post-mortem: run **N ≥ 50 minimum-magnitude operations inside one atomic
+transaction** and assert the pool is not worse off: the attacker packed 65 micro-swaps (amounts as small as 17
+units) into one `batchSwap`, so losses accumulated against transient internal balances before settlement and no
+per-operation tolerance test could see them.
 
 ## Direction is necessary, not sufficient: empty denominators and the first depositor
 
@@ -141,3 +157,4 @@ check sees.
 | The exchange has two direction constants, not one helper | one `_q()` / `mulDown()` / `floor()` used on both legs |
 | The share/price ratio guards its denominator | `assets * totalSupply / totalAssets` with no `totalSupply == 0` guard and no virtual offset or seed-and-burn |
 | Property tests: multi-actor `Σ outputs ≤ Σ inputs`, and N ≥ 50 dust operations in one transaction | only single-actor, single-operation tests |
+| The round-trip inequality names the boundary it is taken over | it spans an accrual, a fee, a mint, a burn or a donation that appears in no term |

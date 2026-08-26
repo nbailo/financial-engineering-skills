@@ -48,8 +48,9 @@ Only `finalized` is terminal, described as, quoted, "Settlement complete. Positi
 
 Read that as three instants: **trading stops** at `closed`, **a result exists** at `determined`, and **the result stops being
 revisable** at `finalized`, with money moving somewhere between the second and the third. A client that credits at
-`determined` has credited a revisable number. That is allowed, and is often what a user expects to see, but only if the
-credit is booked as provisional and the reversal path exists before the first credit is written.
+`determined` has credited a revisable number. Recording it is allowed, and is often what a user expects to see, but only
+as a claim that releases nothing: no balance a user can spend, transfer or withdraw moves against a result the venue still
+documents as changeable. Value is released once, at the terminal state, for the amount the venue's own record says it paid.
 
 Do not carry Kalshi's status names to another venue. What generalises is the shape: the instant trading stops, the instant a
 result first exists, and the instant the venue says it can no longer change, are three instants and you must find all three
@@ -86,7 +87,7 @@ than of Limitless:
   either order within a few seconds." A handler that assumes an execution precedes its settlement frame will process a
   settlement for a trade it has not booked.
 - **A provisional frame is flagged.** `isEstimate: true` is the venue telling you the number is not yet a fact. Persist the
-  flag with the row rather than dropping it, because it is the only thing that distinguishes a credit you may have to reverse.
+  flag with the row rather than dropping it, because it is the only thing that distinguishes a number that can still change.
 - **Server-side dedupe is a window, not a guarantee.** Quoted: "Repeated emissions within a 60-second sliding window are
   dropped, so retries and replays will not double-deliver." Sixty seconds is a convenience. Your own dedupe must be durable
   and must survive a restart, because the venue also documents that "Subscriptions are not persisted server-side across
@@ -105,8 +106,10 @@ This is the reason to take terminality from the venue's own enum rather than fro
 Polymarket's per-status descriptions, quoted: `MATCHED` is "Trade matched, sent to executor for onchain submission",
 `MINED` is "Transaction mined into the blockchain", `CONFIRMED` is "Trade achieved finality, successful", `RETRYING` is
 "Transaction failed, being retried", `FAILED` is "Trade failed permanently". A trade that reached `MINED` on Polymarket has
-not reached finality by the venue's own description; the same word on Limitless is where the venue stops sending. A shared
-adapter that maps the string `MINED` to a single internal `SETTLED` state books one venue's trades a step too early.
+not reached finality by the venue's own description; the same word on Limitless is where the venue stops sending *on that stream*. A
+shared adapter that maps the string `MINED` to a single internal `SETTLED` state books one venue's trades a step too early.
+Limitless's REST `settlementStatus` field carries `CONFIRMED` and `RETRYING` as well, and no Limitless page read on
+2026-08-26 defines either, so treat both as unresolved and do not carry Polymarket's definitions of those words across.
 
 **A second enum on the same venue is a second trap.** Polymarket documents order statuses `live`, `matched`, `delayed` and
 `unmatched`, which is a different enum from the trade statuses above and uses `matched` in a different case and a different
@@ -159,13 +162,16 @@ settled against the count you held, and treat a difference as a break rather tha
 
 Kalshi's status set includes `disputed` and `amended`, with `amended` described as re-determined after a dispute, reached
 from `determined` by way of `disputed`. Nothing about why a dispute succeeds belongs in a client. What belongs in a client is
-this: **a result you have already credited can be replaced by a different result before the market is terminal.**
+this: **a result you have already recorded can be replaced by a different result before the market is terminal.**
 
-The handling rule is the ledger rule, and it is not specific to prediction markets. **Reverse, then post the new fact. Never
-edit the original.** The original posting is the record of what you believed and acted on at the time, and a system that
-edits it cannot answer what a user's balance was yesterday, cannot explain a statement that has already been sent, and cannot
+Where that record released nothing spendable, the amendment replaces the claim and no balance moved, so there is nothing to
+reverse. Where an entry was posted, the handling rule is the ledger rule and is not specific to prediction markets.
+**Reverse, then post the new fact. Never edit the original.** The original posting is the record of what you believed and
+acted on at the time, and a system that edits it cannot answer what a user's balance was yesterday, cannot explain a statement that has already been sent, and cannot
 tell a genuine amendment apart from a replayed message. Post a reversal carrying the identity of the entry it reverses, then
-post the new settlement as its own entry with its own identity, and let the net be the balance.
+post the new settlement as its own entry with its own identity, and let the net be the balance. Nothing in the documented
+lifecycle leaves `finalized`, so a reversal path armed against a payout released at the terminal state codes for an event the
+venue does not document; if one ever arrives, escalate it as an incident rather than taking a branch.
 
 Two guards make this safe rather than merely correct in principle.
 
@@ -281,7 +287,13 @@ def test_payout_is_stored_as_published(store):
     with pytest.raises(NotRepresentable):
         store.as_bool()
 
-def test_amendment_reverses_rather_than_edits(ledger, venue):
+def test_a_determination_releases_nothing_spendable(ledger, venue):
+    venue.determine(market="X", result="yes", amount=Decimal("100"))
+    ledger.apply(market="X")
+    assert ledger.available("X") == Decimal("0")     # a revisable result moves no balance
+    assert ledger.unsettled_claim("X") == Decimal("100")
+
+def test_amendment_reverses_only_what_was_actually_posted(ledger, venue):
     original = ledger.credit_settlement(market="X", result="yes", amount=Decimal("100"))
     venue.amend(market="X", result="no")
     ledger.apply_amendment(market="X")

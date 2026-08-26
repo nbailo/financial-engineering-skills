@@ -19,17 +19,25 @@
 > `nonce`; `side` and `signatureType` encodings; 1e6 amount scaling and the FOK `takerAmount` convention; `venue.exchange`
 > as `verifyingContract` and `venue.adapter` for Neg Risk SELL approvals; `clientOrderId` as an optional 128-character
 > dedupe key and the 409 on reuse; the batch order-status endpoint and its one-identifier-per-item rule; the
-> `settlementStatus` enum; cancel, batch cancel and cancel-replace semantics including non-atomicity and 207; the
-> maintenance modes and the 425; the `orderEvent` source, type and `eventId` model; the 60-second dedupe window; the
+> `settlementStatus` enum as a list of values; cancel, batch cancel and cancel-replace semantics including
+> non-atomicity and 207; the maintenance modes and the 425; the `orderEvent` `source` and `type` values with the page's
+> own gloss of `OME` and `SETTLEMENT`, the `eventId` model, `MATCHED` as provisional, `MINED` and `FAILED` as the
+> terminal pair sharing `tradeEventId`, and `DELAYED` with its `eligibleAt`; the 60-second dedupe window; the
 > cross-source ordering statement; both subscription statements; the merged YES-side orderbook; the market `status` enum
 > and the CLOB versus AMM price scale; redemption preconditions; the withdrawal allowlist rule; the absence of a sandbox.
 > unverified: tick size, minimum order size and rate limits; whether the create-order response carries a top-level venue
 > order id; how the user-guide fee curve relates to the signed `rank.feeRateBps` and the response `effectiveFeeBps`;
-> whether reads can be served by a lagging replica, so whether a 404 from cancel is durable; the scope and storage of the
-> 60-second dedupe window; the full field list of the positions and history endpoints; whether redeem is idempotent;
+> whether a status read is guaranteed to reflect an order the API has just accepted, so whether a 404 from cancel is
+> durable; the meaning of `RETRYING` and of `CONFIRMED`, and where `CONFIRMED` sits relative to `MINED`; whether
+> `eligibleAt` equals the submit time plus `settings.takerDelayMs`; what the 60-second dedupe window is keyed on; the
+> full field list of the positions and history endpoints; whether redeem is idempotent;
 > whether the WebSocket replays anything on resubscribe; orderbook `size` units, any sequence anchor joining a snapshot
 > to `orderbookUpdate`, and the difference between `midpoint` and `adjustedMidpoint`; the `CREATED` market status. Each
 > is labelled again inline where it matters.
+> re-read: the settlement surface (`developers/websocket-events`, `api-reference/trading/create-order`,
+> `api-reference/trading/order-status-batch`, `api-reference/markets/get-market`) was read again on 2026-08-26, and the
+> settlement statements below rest on that read. The rest of this block still rests on the 2026-08-25 read, which is why
+> `verified_at` is unchanged.
 > revalidate_when: any changelog entry touching orders, `clientOrderId`, cancel-replace, the venue system, EIP-712 or
 > WebSocket events; a signing-page domain `version` other than `"1"` or `chainId` other than `8453`; a new value in
 > `settlementStatus`; an SDK minor release. The changelog ships multiple entries per week, so treat anything hard-coded
@@ -67,7 +75,7 @@ address>"}`, and the venue page says that address is obtained by fetching market
 client that hard-codes one exchange address, the shape every Polymarket-derived client starts from, signs valid-looking
 orders addressed to the wrong contract.
 
-Second, an order's fate reaches you from **two independent sources** with no ordering guarantee between them. The
+Second, an order's fate reaches you on **one event name from two sources**, with no ordering guarantee between them. The
 WebSocket page states: "**Ordering is not guaranteed across sources.** OME and SETTLEMENT events for the same order can
 arrive in either order within a few seconds." A state machine that assumes matching precedes settlement, or that a
 settlement frame is the last word, will book a fill it later has to unbook.
@@ -91,9 +99,11 @@ fields that change what your code does:
   market"), `RESOLVED` ("the winning outcome is known"), `FUNDED_FLAGGED` ("the market is live but flagged for review")
   and `DRAFT` ("the market exists but has not been funded yet"). The orderbook page adds that a book is returned only for
   markets with status `CREATED` or `FUNDED`, and that "AMM markets do not have an order book."
-- `settings.takerDelayMs`. The market page documents the field and the trading pages document a `DELAYED`
-  `settlementStatus` with an `eligibleAt` release time; **that the first causes the second is an inference, UNVERIFIED**,
-  so read `eligibleAt` off the response rather than computing a release time from `takerDelayMs`.
+- `settings.takerDelayMs`. The market page states that when it is greater than `0`, "marketable (taker) orders on this
+  market are briefly held before the matching engine fills them", and the create-order page returns
+  `settlementStatus: "DELAYED"` with an `eligibleAt` for such an order. The association is documented. **The arithmetic
+  is not: no page states that `eligibleAt` equals your submit time plus `takerDelayMs`, so that identity is UNVERIFIED.**
+  Read `eligibleAt` off the response, and never compute a release time locally.
 - `winningOutcomeIndex` and `payoutNumerators`, the resolution fields.
 
 **Tick size and minimum order size are UNVERIFIED.** Neither the market-details page nor the orderbook page as read on
@@ -181,8 +191,8 @@ order whose signed struct means something else.
 page as "Unique order identifier (typically timestamp-based)". A wall-clock millisecond is not stable across a retry and
 is not unique across concurrent workers. Do not use `salt` as your correlation key, and do not let a retry re-derive it:
 either the retry sends the byte-identical signed payload, or it is a different order. The create-order page confirms the
-venue deduplicates on the signed hash as well as on `clientOrderId`: a 409 is returned for a "Duplicate `clientOrderId`
-or signed order hash."
+venue deduplicates on the signed hash as well as on `clientOrderId`: the 409 as read on 2026-08-26 says the
+"`clientOrderId` or the signed order hash already exists or is being processed."
 
 ## Four identities: `clientOrderId`, `orderId`, `eventId`, `tradeEventId`
 
@@ -226,23 +236,29 @@ So the ladder is:
    either a 409 or a second order.
 2. **Ask by `clientOrderId`** through `POST /orders/status/batch`. A `"found"` item carries `order`, optional
    `makerMatches` and `execution`, and settles the question.
-3. **Read a 409 as evidence, not as failure.** A 409 naming a duplicate `clientOrderId` says the venue already holds an
-   order under that identity. Treat it as a positive answer to "did my first attempt land", then query for the detail.
-   The common bug is a retry wrapper that classifies 4xx as terminal-failure and marks the intent dead while a live order
+3. **Read a 409 as evidence, not as failure.** A 409 naming a duplicate `clientOrderId` says the identity is taken:
+   the page's wording is "already exists or is being processed", which is a positive answer to "did my first attempt
+   arrive" and not yet an answer to what became of it. Query for the detail rather than concluding either way. The
+   common bug is a retry wrapper that classifies 4xx as terminal-failure and marks the intent dead while a live order
    rests on the book.
 4. **A `"not_found"` is not proof of non-creation.** The page states that "An unknown identifier, including an order owned
    by another profile, returns item-level `status: "not_found"`", which folds a permissions answer and an absence answer
-   into one value. **Whether a read can be served by a replica lagging the write is UNVERIFIED**, so re-query across a
-   short window you declare as config before concluding the order never existed, and hold the intent as unresolved
-   meanwhile.
-5. **Reserve the worst case while unresolved.** Hold the order at full notional, close new sends for that token, and give
-   the state a wall-clock budget. Cancel by `clientOrderId` is the safe expiry action, with the caveat in the next
-   section that cancel is not a no-op here.
+   into one value. **Whether a status read is guaranteed to reflect an order the API has just accepted is UNVERIFIED**:
+   no page states a read-after-write guarantee. Re-query across a short window you declare as config before concluding
+   the order never existed, and hold the intent as unresolved meanwhile.
+5. **Reserve the worst case while unresolved.** Hold the order at its worst-case exposure, which for a collateralised
+   binary buy is the collateral it commits, close new sends for that token, and give the state a wall-clock budget.
+   Cancel by `clientOrderId` is the safe expiry action, with the caveat in the next section that cancel is not a
+   no-op here.
 
 The `settlementStatus` values the create-order page documents are `UNMATCHED`, `MATCHED`, `MINED`, `CONFIRMED`,
-`RETRYING`, `FAILED`, `DELAYED`, `CANCELED`. `RETRYING` and `DELAYED` are both non-terminal: `eligibleAt` is documented as
-the "ISO-8601 time when delayed orders release", produced by the market's `settings.takerDelayMs`. Neither is a reason to
-send anything.
+`RETRYING`, `FAILED`, `DELAYED`, `CANCELED`. The batch status endpoint reports the same list without `CANCELED`: it
+"does not include ... a historical `CANCELED` state". A cancelled order therefore does not report
+`settlementStatus: "CANCELED"` there, so do not read a cancellation out of that field. `DELAYED` is non-terminal, its
+`eligibleAt` being the "ISO-8601 time the order is released to the matching engine". **`RETRYING` and `CONFIRMED` are
+UNVERIFIED**: no page read on 2026-08-26 defines either, and neither appears among the `SETTLEMENT` event types, so
+where `CONFIRMED` sits relative to `MINED` is not established. Treat both as unresolved rather than terminal, and
+resolve them by re-querying. None of these is a reason to send anything.
 
 The `425` on the create path is a receive-window rejection, and the page is explicit: "Do not retry the same signed
 payload after a receive-window `425`; build and sign a fresh order." A fresh order means a fresh `salt` and signature.
@@ -297,13 +313,16 @@ delayed taker orders you should "continue monitoring events if `eligibleAt` pass
 
 The authenticated `orderEvent` stream carries a `source` discriminator with exactly two values.
 
-- `source: "OME"`, the matching lifecycle. `type` is `PLACEMENT`, `UPDATE`, `CANCELLATION` or `EXECUTION`. A
+- `source: "OME"`, glossed by the page as "off-chain matching engine updates: resting-order state changes
+  (`PLACEMENT`, `UPDATE`, `CANCELLATION`) and the terminal result of an immediate-or-cancel order (`EXECUTION`)". A
   `CANCELLATION` may carry `reason: "STP_MAKER_CANCELLED"`, the self-trade-prevention outcome; the `stpPolicy` you sent
   on `POST /orders` (`cancel_maker`, `cancel_taker`, `cancel_both`) decides which of your own orders dies, and the taker
   side surfaces as `reason: "STP_TAKER_REJECTED"`. An `EXECUTION` carries `status` in `FILLED`, `PARTIALLY_FILLED` or
-  `KILLED`.
-- `source: "SETTLEMENT"`, the chain lifecycle. `type` is `MATCHED`, `MINED` or `FAILED`. **`MATCHED` is provisional**: it
-  carries `isEstimate: true` and no `txHash` yet.
+  `KILLED`, and all three are documented against FAK and FOK outcomes. Do not wait for an `EXECUTION` to learn that a
+  resting order filled: the page promises one only for an immediate-or-cancel order.
+- `source: "SETTLEMENT"`, glossed as the "settlement lifecycle for CLOB trades: a provisional `MATCHED` the moment the
+  engine fills your order (before the on-chain transaction), then a terminal `MINED` or `FAILED`". On a `MATCHED`,
+  "`isEstimate: true`, there is no `txHash` yet, and the fill can still be rolled back by a later `FAILED`".
 
 Three rules follow directly from the documented text.
 
@@ -314,16 +333,18 @@ reject arm rather than a silent ignore, and it must accept a settlement frame ar
 single status enum forces you to pick a winner between two frames that are both true.
 
 **Do not credit an estimate as cash.** A `MATCHED` frame with `isEstimate: true` and no `txHash` is a claim that a match
-occurred, not that value moved. `MINED` and `FAILED` are the terminal pair, correlated to the provisional frame by
-`tradeEventId`. If a fill is going to become a ledger posting, the posting waits for the terminal frame or is written in a
-provisional state that a later `FAILED` reverses by a new entry rather than by editing the original. Treating `MATCHED`
-as final is how a `FAILED` becomes a phantom position that reconciliation later reports as a break with no cause.
+occurred, not that value moved. `MINED` and `FAILED` are the terminal pair on this source: the page says a `MATCHED`
+"and its terminal `MINED` / `FAILED` share the same `tradeEventId`", which is the join key. If a fill is going to become
+a ledger posting, the posting waits for the terminal frame or is written in a provisional state that a later `FAILED`
+reverses by a new entry rather than by editing the original. Treating `MATCHED` as final is how a `FAILED` becomes a
+phantom position that reconciliation later reports as a break with no cause.
 
 **Do not rely on the dedupe window.** The page says: "Repeated emissions within a 60-second sliding window are dropped, so
 retries and replays will not double-deliver." That is a 60-second window and nothing more. It is not a durable
-guarantee, it says nothing about a redelivery 61 seconds later, and it cannot survive your own restart. **Whether the
-window is per connection, per subscription or per profile is UNVERIFIED.** Your dedupe is the `eventId` you persisted, in
-the same transaction as the state it protects. An in-memory set re-applies every counted fill after a restart, and the
+guarantee, it says nothing about a redelivery 61 seconds later, and it cannot survive your own restart. **What the
+window is keyed on is UNVERIFIED**: the page does not say whether a redelivery after a reconnect is suppressed at all,
+so do not let a reconnect count as protected. Your dedupe is the `eventId` you persisted, in the same transaction as the
+state it protects. An in-memory set re-applies every counted fill after a restart, and the
 60-second window will not save you because your restart took longer than that.
 
 Timestamps are four distinct quantities: `occurredAt` (lifecycle fact time), `matchedAt` (persisted match time, on
@@ -469,8 +490,8 @@ control is absent.
 
 1. **A lost response creates no second order.** Simulate a timeout on `POST /orders`, run the recovery path, and assert it
    issues `POST /orders/status/batch` keyed on the committed `clientOrderId` and never a second `POST /orders`. Assert
-   separately that a 409 naming a duplicate `clientOrderId` resolves the intent to "the venue holds it" rather than to
-   failure.
+   separately that a 409 naming a duplicate `clientOrderId` resolves the intent to "the venue has this identity, query
+   it" rather than to failure.
 2. **A `425` branches on `code`.** Assert that a receive-window `425` re-signs a fresh order, that a maintenance `425`
    stops and refreshes `GET /maintenance/status`, and that `cancel_only` and `disabled` gate different operations.
 3. **Amounts and the fee asset are right.** Assert BUY and SELL amount computation at 1e6 scaling, assert the FOK
@@ -480,9 +501,11 @@ control is absent.
    `verifyingContract == venue.exchange` for the market being traded, and `feeRateBps == rank.feeRateBps` read in the same
    flow rather than from a process-lifetime cache.
 5. **Events converge under shuffling.** Replay a stream of `orderEvent` frames in arrival order, then reversed,
-   duplicated, and interrupted by a simulated restart, and assert the final state is identical and that `eventId` dedupe
-   is read from storage rather than memory. Include a `SETTLEMENT MATCHED` arriving before its `OME EXECUTION`, and a
-   `FAILED` after a `MATCHED` that was already booked.
+   duplicated, and interrupted by a simulated restart, and assert every run converges on the same state once each fold
+   sorts into the venue's canonical economic order, and that `eventId` dedupe is read from storage rather than memory. Include a `SETTLEMENT MATCHED` arriving before its `OME EXECUTION`, and a
+   `FAILED` after a `MATCHED` that was already booked. Assert separately that a `DELAYED` response releases on the
+   `eligibleAt` the venue returned and never on a locally computed submit time plus `settings.takerDelayMs`, and that
+   `RETRYING` and `CONFIRMED` leave the order unresolved rather than terminal.
 6. **Reconnect closes the hole.** Assert that the `connect` handler re-sends the complete subscription set in one call
    per subscription type, that no local state is acted on until the REST rebuild completes, and that a `user-orders`
    result of exactly `limit` items is treated as a hole rather than the end.
@@ -496,15 +519,18 @@ control is absent.
 
 ## What is verified here and what is not
 
-Everything quoted above was read from the documentation pages named in the provenance block on 2026-08-25. The following
-are stated as unverified and must not be presented otherwise:
+Everything quoted above was read from the documentation pages named in the provenance block on 2026-08-25, and the
+settlement pages again on 2026-08-26. The following are stated as unverified and must not be presented otherwise:
 
 - Tick size, minimum order size and rate limits. Not documented on the market, orderbook or introduction pages as read.
 - Whether the `POST /orders` response carries a top-level venue order id.
 - How the user-guide fee curve, the signed `rank.feeRateBps` and the response `effectiveFeeBps` relate.
-- Whether a read can be served by a replica lagging a write, and therefore whether a `404` from cancel or a `not_found`
-  from the batch status endpoint is durable.
-- The scope, storage and restart behaviour of the 60-second dedupe window.
+- Whether a status read is guaranteed to reflect a write the API has just accepted, and therefore whether a `404` from
+  cancel or a `not_found` from the batch status endpoint is durable.
+- What the 60-second dedupe window is keyed on, and whether it suppresses anything after a reconnect or a restart.
+- The meanings of `RETRYING` and `CONFIRMED`, and where `CONFIRMED` sits relative to `MINED`.
+- Whether `eligibleAt` equals your submit time plus `settings.takerDelayMs`. The association is documented. The
+  arithmetic is not.
 - Whether the WebSocket replays or backfills anything on resubscribe.
 - The complete response field lists of `GET /portfolio/positions` and `GET /portfolio/history`.
 - Whether `POST /portfolio/redeem` is idempotent, and what it returns.

@@ -21,13 +21,20 @@ arguments; the commonest defect here is applying one column's answer in another.
 |---|---|---|---|
 | **Observable trigger** | two representations of one value are traded, and the counterparty chooses when and how often (shares↔assets, LP tokens↔reserves, base↔quote, points↔cash) | a statute, regulation, scheme rule or contract names the mode, the level, or the day-count | one exact total is divided among N parts |
 | **What goes wrong** | a repeatable free-money loop, profitable at 1 wei × ∞ calls | non-compliance; a two-sided tolerance breached systematically in one direction | value created or destroyed; `Σ parts ≠ total` |
-| **Rule** | opposing directions per leg: **floor what the system pays out, ceil what it collects** | **copy the specified mode AND level** from the instrument/jurisdiction | **direction is irrelevant**; largest-remainder + exact-sum assert |
+| **Rule** | **opposing directions per leg**, each declared so that no repeatable sequence of legs extracts value; the EIP-4626 vault table is one worked declaration | **copy the specified mode AND level** from the instrument/jurisdiction | **direction is irrelevant**; largest-remainder + exact-sum assert |
 | **Residue goes to** | the pool/vault/ledger holding the conservation invariant | wherever the specification says | distributed one minor unit at a time; nothing is left |
 | **Canonical source** | EIP-4626 Security Considerations; OZ `ERC4626.sol`; Balancer `_upscale` | CJEU C-302/07; Reg (EC) 1103/97 Arts. 4–5; IRS i1040; 12 CFR 1030.3(f), 1026.22(a); FpML/ISDA | Fowler `Money.allocate`; Dinero.js v2 `allocate`; IRS "round only the total" |
 
 "Round in the house's favour" is the **Exchange** column only, and wrong even there as one global helper;
 the sources say *opposing* directions per leg. In a Prescribed calculation it is a supervisory finding; in a
 Split it destroys conservation.
+
+**Where nothing names a direction, the direction is still not free.** There is no default that floors payouts
+and ceils collections; that is a policy, and an unwritten one drifts one way in every reconciliation it
+touches. Two policies preserve the exact liability, and either is defensible written down: compute once at the
+level the obligation is owed and derive the parts from it, or round the parts and post the difference between
+their sum and the exact amount to an account whose owner is named. Anything else creates or destroys value at
+the rounding step, and the amount it creates belongs to nobody.
 
 ## Rounding mode names, and what each one actually does
 
@@ -38,8 +45,8 @@ modes ignore the midpoint and always go one way.
 |---|---|---|---|---|---|
 | nearest, ties away from 0 | `ROUND_HALF_UP` | `HALF_UP` | `MidpointRounding.AwayFromZero` | `roundTiesToAway` | IRS filing; euro conversion; VAT where the state mandates it |
 | nearest, ties to even | `ROUND_HALF_EVEN` | `HALF_EVEN` | `MidpointRounding.ToEven` (default) | `roundTiesToEven` | statistical/interbank contexts that want zero cumulative bias |
-| toward −∞ | `ROUND_FLOOR` | `FLOOR` | n/a | `roundTowardNegative` | the leg the system **pays out** |
-| toward +∞ | `ROUND_CEILING` | `CEILING` | n/a | `roundTowardPositive` | the leg the system **collects** |
+| toward −∞ | `ROUND_FLOOR` | `FLOOR` | n/a | `roundTowardNegative` | the exchange leg a declaration rounds down (EIP-4626 `deposit`, `redeem`) |
+| toward +∞ | `ROUND_CEILING` | `CEILING` | n/a | `roundTowardPositive` | the opposing leg of that same exchange (EIP-4626 `mint`, `withdraw`) |
 | toward 0 (truncate) | `ROUND_DOWN` | `DOWN` | n/a | `roundTowardZero` | almost never; a directed mode whose bias flips with the sign |
 
 Sources: Python `decimal` docs (default `prec=28`, `ROUND_HALF_EVEN`); Java `RoundingMode` (which calls
@@ -107,3 +114,4 @@ day-adjustment algorithms are not verified here; only the enumeration and sectio
 | Every rounding call site names a scale **and** a mode | `round(x)`, `int(x)`, `x // 1`, `mulDown(x, f)` with no scale argument |
 | The prescribed mode and **level** are configuration | a hardcoded `ROUND_HALF_UP`, or per-line rounding where the statute names the total |
 | The day-count convention and definitions version live on the instrument | an accrual that divides by `365` or `360` inline |
+| Where no scheme names the direction, the written policy keeps the liability exact | "floor payouts, ceil collections" applied as a default, with the difference kept by whoever computed it |

@@ -1,14 +1,14 @@
 # Breaks: classification, the break record, suspense, and the detect-test
 
 What the comparison does with a difference once it has one: how it is classified, what the break row holds, how
-long it may age before it escalates, how the trial balance stays balanced while it is open, and how to prove
+long it may age before it escalates, what may lawfully be posted while it is open, and how to prove
 the job detects anything at all.
 
 ## Contents
 
 - Break classification: six classes, and the action each one implies
 - The break record schema, the aged bucket, and the periodic sweep
-- Suspense and clearing accounts: keeping the trial balance balanced while a break is open
+- Suspense and clearing accounts: what may lawfully be posted to each, and what may not
 - Alert routing and the detect-test
 
 ## Break classification
@@ -20,9 +20,9 @@ Six classes. The class decides the action; a job that emits one undifferentiated
 | **Timing difference** | present in A, absent in B, and B's documented lag has not elapsed | hold in an `aging` state, re-evaluate next run; escalate only past the lag |
 | **Missing-here** | authority has a record you do not | ingest it idempotently by the authority's key, then re-run. A processor-side reconciliation object surfaces **only via webhooks** on Stripe, so a job that never polls will never see it |
 | **Missing-there** | you have a record the authority does not, past the lag | you may have acted on an effect that did not happen. Fail-closed on that scope; never re-send |
-| **Amount mismatch** | same key, different amount beyond tolerance | post the authority's value, book the delta to suspense, escalate |
+| **Amount mismatch** | same key, different amount beyond tolerance | raise the break, quarantine the amount so nothing spends or nets it, escalate. No corrective posting until a cause is established, and then only for the part that cause explains |
 | **Attribution mismatch** | amounts net to zero but land on different accounts/instruments/currencies | the trial balance still balances, so nothing else will catch it. Always a break, never auto-corrected |
-| **Duplicate** | two local records for one authority key, or vice versa | the join key was yours, not theirs. Fix the key; the duplicate itself goes to suspense pending reversal |
+| **Duplicate** | two local records for one authority key, or vice versa | the join key was yours, not theirs. Fix the key; the duplicate itself is quarantined pending its reversal |
 
 Two shapes that masquerade as amount mismatches and are not:
 
@@ -75,8 +75,11 @@ entrypoint. An automatic corrective writer that is itself wrong writes the error
 
 ## Suspense and clearing accounts
 
-The delta posts to a real `suspense`/`clearing` account **in the chart of accounts** (not a nullable column,
-not a log line), so the trial balance still balances while the break is open. Square's Books is append-only:
+A break whose cause is **established** waits for its approved correction in a real `suspense`/`clearing`
+account **in the chart of accounts** (not a nullable column, not a log line). A difference you cannot yet
+attribute does not go there. A disagreement with an external record never unbalanced your own journal, so
+nothing has to be posted to keep the trial balance balancing, and posting it anyway moves the amount into an
+account nobody reconciles and makes the next run report agreement. Square's Books is append-only:
 *"there are no update statements for the tables presented on the diagram, only inserts"*, and errors are
 corrected by **new balancing entries**.
 
@@ -130,7 +133,8 @@ def test_recon_detects_seeded_amount_mismatch(fresh_migrated_db, fake_authority,
     assert (b.class_, b.amount, b.currency) == ("amount", 100, "USD")
     assert (b.source_a, b.source_b) == ("ledger:entries", "processor:settlement")
     assert b.authority_key == "PSP123"
-    assert trial_balance_is_zero_per_currency()      # suspense posting kept it balanced
+    assert b.quarantined and b.suspense_txn_id is None  # unexplained: nothing posted away
+    assert trial_balance_is_zero_per_currency()      # your own journal never unbalanced
     assert len(alert_sink.messages) == 1             # exactly one, not zero and not one per row
 
 def test_recon_clean_run_produces_no_break_and_no_alert(fresh_migrated_db, fake_authority, alert_sink):

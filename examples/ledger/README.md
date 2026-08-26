@@ -248,8 +248,9 @@ CREATE CONSTRAINT TRIGGER entries_balance_floor
 -- these grants are absent.
 REVOKE UPDATE, DELETE ON entries FROM ledger_app;
 
--- The suspense account and the break log live in the chart of accounts, so a
--- discrepancy still leaves the trial balance balanced.
+-- The break log records a difference; it is not posted away. The suspense account
+-- below holds only a break whose cause is established, waiting for its approved
+-- correction, so its balance stays attributable line by line.
 INSERT INTO accounts (id, name, currency) VALUES
     (2, 'revenue:transfer_fees', 'USD'),
     (3, 'suspense:reconciliation', 'USD');
@@ -262,6 +263,8 @@ CREATE TABLE breaks (
     account_id   bigint      REFERENCES accounts(id),
     currency     char(3)     NOT NULL,
     amount_cents bigint      NOT NULL,
+    -- An open row IS the quarantine: the withdrawal, netting and sweep paths read it
+    -- and fail closed on that scope, so nothing spends an amount nobody can attribute.
     status       text        NOT NULL DEFAULT 'open'
 );
 
@@ -381,7 +384,8 @@ def post(conn, *, legs, kind, idempotency_key, posting_type="ordinary", reverses
 
 def transfer(conn, *, from_id, to_id, amount_cents, currency, idempotency_key):
     """Enumerate the legs before writing the insert. Three, not two."""
-    fee = -(-amount_cents * FEE_BPS // 10_000)  # ceil what the system collects
+    fee = -(-amount_cents * FEE_BPS // 10_000)  # direction declared for this leg;
+    #                                             the sub-cent is revenue, and named
     net = amount_cents - fee
     return post(
         conn,
@@ -438,12 +442,8 @@ import os
 
 import httpx
 
-from .ledger import Leg, post
-
 # No default. Import fails rather than alerting into a void.
 ALERT_SINK = os.environ["LEDGER_ALERT_SINK"]
-SUSPENSE_ACCOUNT = int(os.environ["LEDGER_SUSPENSE_ACCOUNT"])
-CUSTODY_ACCOUNT = int(os.environ["LEDGER_CUSTODY_ACCOUNT"])
 ESCALATE_AFTER_HOURS = int(os.environ["LEDGER_BREAK_ESCALATION_HOURS"])
 
 
@@ -485,16 +485,14 @@ def run(conn):
             " VALUES (%s,%s,%s,%s,%s)",
             (source_a, source_b, account_id, currency, delta),
         )
-        if source_b == "custodian":
-            # A disagreement with an EXTERNAL record posts to suspense, in the chart
-            # of accounts, so the trial balance still balances while a human works it.
-            # Not a nullable column, not a log line.
-            post(conn, kind="reconciliation_break", posting_type="clawback",
-                 idempotency_key=f"break-custodian-{currency}-{delta}-{run_id()}",
-                 legs=[Leg(CUSTODY_ACCOUNT, currency, -delta),
-                       Leg(SUSPENSE_ACCOUNT, currency, delta)])
-        # A materialised-against-journal drift gets NO auto-posting. The journal is
-        # the authority; writing a correcting entry would launder a bug into history.
+        # NO break gets an automatic corrective posting, external or internal. A
+        # disagreement with an external record never unbalanced this journal, so
+        # nothing has to be posted to keep the trial balance balancing. Posting the
+        # delta to suspense would move it into an account nobody reconciles and make
+        # the next run report agreement over a break nobody explained. The difference
+        # stays visible and the open row quarantines it. A corrective posting waits
+        # for an authoritative cause, covers only what that cause explains, carries
+        # its approval, and leaves any residual open.
 
     aged = conn.execute(
         "SELECT count(*) FROM breaks WHERE status = 'open'"
@@ -508,11 +506,21 @@ def run(conn):
                     f"{ESCALATE_AFTER_HOURS}h"
         }, timeout=10)
     return found
+
+
+def quarantined_scopes(conn):
+    """Every scope with an open break. The withdrawal, netting and sweep paths call
+    this and refuse; the rest of the system keeps serving."""
+    return conn.execute(
+        "SELECT account_id, currency FROM breaks WHERE status = 'open'"
+    ).fetchall()
 ```
 
 ```python
 # tests/test_reconcile_detects.py: a detector that has never detected is not known
 # to detect. The cheapest test in the suite.
+SUSPENSE = 3   # 'suspense:reconciliation', from 001_ledger.sql
+
 def test_reconciliation_detects_an_external_break(fresh_db, alert_sink):
     """Feed it a known discrepancy and assert it produces the break AND the alert.
 
@@ -534,8 +542,10 @@ def test_reconciliation_detects_an_external_break(fresh_db, alert_sink):
         "SELECT source_a, source_b, amount_cents, status FROM breaks"
     ).fetchone()
     assert row == ("customer_balances", "custodian", 13, "open")
-    assert trial_balance(conn) == 0            # suspense keeps the books balanced
-    assert balance(conn, SUSPENSE_ACCOUNT) == 13
+    assert trial_balance(conn) == 0            # this journal was never unbalanced
+    assert balance(conn, SUSPENSE) == 0        # unexplained: nothing posted away
+    assert (None, "USD") in reconcile.quarantined_scopes(conn)
+    assert reconcile.run(conn)                 # and the next run still reports it
     assert len(alert_sink.messages) == 1       # exactly one, to the routed channel
 
 
@@ -681,13 +691,15 @@ WHY       The two invariant queries are correct and they run nowhere. There is n
 EVIDENCE  migrations/001_ledger.sql, the invariant comment block
 FIX       reconcile.py run(), scheduled at `*/15 * * * *`, reading through a path the writer does not
           share: three axes, a breaks table, an aging threshold at ESCALATE_AFTER_HOURS, and a custodian
-          disagreement posted to a real suspense account so the trial balance still balances while a human
-          works it. ALERT_SINK and its siblings are environment reads with no default, so import fails
-          rather than alerting into a void.
+          disagreement recorded as a break and quarantined rather than posted away, because an
+          unexplained difference booked to suspense balances the books while making the break
+          unattributable and the next run silent. ALERT_SINK and its siblings are environment reads
+          with no default, so import fails rather than alerting into a void.
 TEST      tests/test_reconcile_detects.py test_reconciliation_detects_an_external_break plants a 13-cent
-          discrepancy against a freshly migrated database and asserts the break record, the suspense
-          posting and exactly one alert; test_materialised_drift_breaks_but_does_not_self_correct asserts
-          the recompute raises rather than papering over the drift.
+          discrepancy against a freshly migrated database and asserts the break record, a zero suspense
+          balance, the quarantined scope and exactly one alert;
+          test_materialised_drift_breaks_but_does_not_self_correct asserts the recompute raises rather
+          than papering over the drift.
 
 FINDING   When the recipient has spent the money, the fraud reversal aborts, so the safety operation cannot
           be performed at the moment it is needed. Full loss of the disputed amount, plus whatever drains

@@ -1,39 +1,52 @@
 # Suspense, breaks, and repair
 
-What a ledger does with a difference it cannot yet attribute: the suspense and difference accounts that keep
-the trial balance balancing while a break is open, the sweep and escalation tempo that keep the control
-switched on, why a recomputation is idempotent only when its input set is total, and the reviewed pipeline a
-repair to committed state goes through.
+What a ledger does with a difference it cannot yet attribute: the break record and the quarantine that keep the
+difference visible instead of posting it away, when a corrective posting is allowed to land and what a suspense
+account is actually for, the escalation tempo that keeps the control switched on, why a recomputation is
+idempotent only when its input set is total, and the reviewed pipeline a repair to committed state goes through.
 
 ## Contents
 
-- Suspense, breaks, and the monthly sweep
+- Breaks: record, quarantine, and post only with a cause
 - "Recompute from the whole ledger" is idempotent only if the recomputation is total
 - Repair pipelines
 - Review checklist
 
-## Suspense, breaks, and the monthly sweep
+## Breaks: record, quarantine, and post only with a cause
 
-A correction driven by a *reconciliation* difference (your record versus someone else's) is not a
-conservation breach and does not halt anything. It posts to a real `suspense`/`clearing` account **in the chart
-of accounts** so the trial balance still balances, and raises a `break` row: `detected_at`, `source_a`,
-`source_b`, `amount`, `currency`, `status`, plus an owner and an age. The Fed's own manual distinguishes the two
-destinations: the **Suspense** account holds *"miscellaneous debit items that are temporarily held in abeyance
-pending disposition"* (items believed collectable) while the **Difference** account absorbs *"an
-out-of-balance condition resulting from the normal operation of a department"* where resolution is not
-economically feasible, and *"entries to this account are subject to reversal."* Unresolved differences are
-expensed monthly, not carried forever and not escalated into an outage. Route an unmatched item to a named
-owner and never auto-adjust it: an automatic correcting posting for an unexplained difference converts a
-detectable break into an undetectable one.
+A *reconciliation* difference (your record against someone else's) is not a conservation breach inside your own
+journal. Every group still nets to zero, so your trial balance is untouched by it and nothing has to be posted
+to keep it balancing. What the difference tells you is that one of the two sides is wrong and you do not yet
+know which one.
 
-**A break is a reason to keep operating carefully, not a reason to halt.** SEC Rule 17a-11(c) is the shipped
-precedent for the tempo: a broker-dealer whose books are not current gives **same-day** notice and files the
-corrected computation within **48 hours**, and nowhere in the rule is it told to cease operating. Copy that
-shape. The break row carries `detected_at`, `source_a`, `source_b`, `amount`, `currency`, `status`, an owner
-and an age; the escalation threshold is on the *age and size* of an open break, not on its existence; and the
-sweep runs on a fixed schedule so an unresolved difference is expensed rather than carried indefinitely. A
-reconciliation that halts the system on the first difference is switched off within a quarter, which is the
-same outcome as never having written it.
+**Raise a break record, then quarantine.** The record has to answer when the difference was detected, which
+two sources disagree, by how much and in what currency, where it stands, who owns it and how old it is; a row
+of `detected_at`, `source_a`, `source_b`, `amount`, `currency`, `status`, `owner` and an age is one shape that
+answers all eight. The quarantine is whatever makes the affected item
+unusable while the break is open: it cannot be spent, netted, swept or closed over, and every path whose answer
+depends on the disputed quantity fails closed rather than guessing. The difference stays visible, and the next
+run of the comparison reports it again.
+
+**An automatic corrective posting for an unexplained difference converts a detectable break into an
+undetectable one.** Booking the delta to suspense makes the books balance, moves the amount into an account
+nobody reconciles, leaves the ledger asserting a figure no one can attribute, and makes the next comparison
+report agreement. A corrective posting waits for an **authoritative cause**, covers only the amount that cause
+explains, and carries whatever approval the scheme or your organisation requires; any residual stays an open
+break. Where the governing accounting policy provides a suspense or difference account, what belongs in it is a
+break with a known cause and a pending correction, so its balance stays attributable line by line. The Fed's
+own manual separates the two destinations: the **Suspense** account holds *"miscellaneous debit items that are
+temporarily held in abeyance pending disposition"* (items believed collectable) while the **Difference** account
+absorbs *"an out-of-balance condition resulting from the normal operation of a department"* where resolution is
+not economically feasible, and *"entries to this account are subject to reversal."* Neither description reaches
+a difference you cannot explain, so a monthly sweep to expense is not a disposal route for one.
+
+**A break is a reason to keep operating carefully, not a reason to halt.** The quarantine fails closed on the
+disputed item; the rest of the system keeps serving. SEC Rule 17a-11(c) is the shipped precedent for the tempo:
+a broker-dealer whose books are not current gives **same-day** notice and files the corrected computation
+within **48 hours**, and nowhere in the rule is it told to cease operating. Copy that shape. The escalation
+threshold is on the *age and size* of an open break, not on its existence, and a break that ages past its
+threshold escalates to a named owner instead of expiring. A reconciliation that halts the whole system on the
+first difference is switched off within a quarter, which is the same outcome as never having written it.
 
 **Reconcile on three axes, not one.** A balance comparison alone misses the two failures that matter most:
 
@@ -41,7 +54,7 @@ same outcome as never having written it.
 |---|---|---|
 | completeness | are all the records that should exist present on both sides? | a count and a set difference on the join key, not a sum: two missing records with offsetting amounts pass a sum |
 | clearing | did every clearing and in-transit account return to zero? | a non-zero balance past the account's settlement window, which needs no external counterparty at all |
-| balance | do the two sides agree on the amount for each joined record? | the per-record difference, posted to suspense and aged |
+| balance | do the two sides agree on the amount for each joined record? | the per-record difference, raised as a break and quarantined against the record, not posted away |
 
 The alert destination for all three is a configuration key with no default, so an unset destination fails at
 startup rather than discarding the alert at the moment it fires.
@@ -119,3 +132,6 @@ self-repair automatically. A per-aggregate `frozen_reason` checked on the write 
 | Present in the diff? | Artifact |
 |---|---|
 | Any "recompute makes this idempotent" claim has an out-of-order + duplicate delivery test | the test |
+| A reconciliation difference with no established cause | the break record, the quarantine that makes the affected item unspendable, and no corrective posting |
+| A corrective posting closing a break | the authoritative cause named on the break record, the approval it required, and any residual left open |
+| A suspense or difference account with a balance | every line attributable to a break whose cause is known and whose correction is pending |

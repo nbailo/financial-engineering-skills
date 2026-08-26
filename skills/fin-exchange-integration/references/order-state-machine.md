@@ -187,13 +187,20 @@ stays in flight, pending reconciliation**.
 
 | Category | Meaning | Risk treatment | Exit |
 |---|---|---|---|
-| `INTENT_RECORDED` | row committed, socket not yet written | full notional | flips on the write returning |
-| `SENT_UNCONFIRMED` | write returned, no venue ack | full notional | ack, rejection, or the ladder |
-| `INFLIGHT_UNKNOWN` | ladder exhausted; venue answer unknown | **full notional**, instrument gate closed | successful query, or the budget fires |
+| `INTENT_RECORDED` | row committed, socket not yet written | worst-case exposure | flips on the write returning |
+| `SENT_UNCONFIRMED` | write returned, no venue ack | worst-case exposure | ack, rejection, or the ladder |
+| `INFLIGHT_UNKNOWN` | ladder exhausted; venue answer unknown | **worst-case exposure**, instrument gate closed | successful query, or the budget fires |
+
+The reserved number is the **venue-and-product-defined worst case for that instrument**, read from the venue's
+own margin or risk model, not a universal notional. For a spot buy the two coincide. For a long option the
+worst case is the premium paid; for a short option it is unbounded or whatever the venue's margin model
+defines; under leverage and for any nonlinear payoff it is neither the notional nor the premium. An
+initial-margin or order-cost figure the venue publishes for the instruction you sent is one defensible source
+for that number; the venue's documented risk model for the instrument class is another.
 
 `INFLIGHT_UNKNOWN` must be a **real state on the order row**, not a `None` and not an exception in a log.
-Anything that sizes, hedges or flattens reads position including in-flight notional; an order in this state
-that risk cannot see is exactly the naked residual the client-order-ID rule exists to prevent. The state
+Anything that sizes, hedges or flattens reads position including that in-flight exposure; an order in this
+state that risk cannot see is exactly the naked residual the client-order-ID rule exists to prevent. The state
 carries a **wall-clock budget declared as a config value**, and what the budget expires into is ordered by
 whether the action reduces risk in every state still possible. Stopping the sends and cancelling by client ID
 is always safe, because a cancel against an order that never existed is a no-op and a cancel against one that
@@ -247,6 +254,12 @@ freqtrade `recalc_trade_from_orders` (`trade_model.py:1265`), which walks the or
 call, because recomputation is a pure function of a *set*, so it is correct under out-of-order delivery,
 redelivery and voids, while a fold over a *sequence* is not. Ship
 `test_avg_px_invariant_to_fill_arrival_order`: ascending and descending arrival produce byte-identical output.
+
+That invariance belongs to `avg_px` and does not extend to realized PnL, which under FIFO, LIFO or average
+cost is a function of the order in which the fills economically occurred. Sort the persisted fills into the
+venue's canonical economic order, trade identity, execution sequence number and transaction time in the
+precedence that venue documents, then fold. Where the venue's own data cannot establish that order, reject
+explicitly rather than guessing a sequence: a guessed order produces a realized number nothing disagrees with.
 
 Fills and statuses are different report types with different reconciliation rules: a status report may carry a
 *cumulative* filled quantity (`z`, `Z`, `cumExecQty`) while a fill report is a *single* trade (`l`, `L`, `t`).

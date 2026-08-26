@@ -6,8 +6,8 @@ next to the version that gets them right.
 """
 import unittest
 
-from fake_venue import BUY, MICRO, SELL, FakeVenue, load_market
-from safe_bot import SafeBot, rebuild
+from fake_venue import BUY, MICRO, SELL, TAKER, FakeVenue, load_market
+from safe_bot import InsufficientAvailable, SafeBot, rebuild
 from tests import scenario
 from unsafe_bot import UnsafeBot
 
@@ -42,6 +42,29 @@ class UnsafeIsWrong(unittest.TestCase):
         self.assertEqual(unsafe.available["FUSD"], START_FUSD,
                          "the unsafe bot shows the full balance as spendable")
         self.assertFalse(hasattr(unsafe, "reserved"))
+
+    def test_nothing_is_held_for_the_fee_the_fill_will_owe(self):
+        """Design note 1, on the asset the fee is charged in. The fee is not FUSD, so
+        holding the collateral says nothing about being able to pay it. The safe bot cannot
+        rest an order whose worst-case fee it could not cover. The unsafe bot rests it, the
+        fill arrives, and the fee owed is larger than the whole FPOINT balance."""
+        balances = {"FUSD": START_FUSD, "FPOINT": 1 * MICRO}
+        venue = FakeVenue(load_market())
+        safe = SafeBot(market=load_market(), authority=venue, available=dict(balances))
+        with self.assertRaises(InsufficientAvailable) as caught:
+            safe.submit(venue, "ck-safe", "YES", BUY, 100, 400000)
+        self.assertIn("FPOINT", str(caught.exception))
+        self.assertEqual(venue.orders, {}, "the order never reached the venue")
+
+        unsafe = UnsafeBot(market=load_market(), available=dict(balances))
+        self.assertEqual(unsafe.submit(venue, "ck-unsafe", "YES", BUY, 100, 400000), "SENT")
+        fill = venue.fill("ck-unsafe", 100, 400000, TAKER)
+        unsafe.apply_all(venue.events_since(0))
+        self.assertEqual(fill["fee"]["amount_micro"], 1680000)
+        self.assertGreater(fill["fee"]["amount_micro"], balances["FPOINT"],
+                           "the fill owes more fee than the bot holds")
+        self.assertEqual(unsafe.available["FPOINT"], 1 * MICRO,
+                         "and the fee asset balance never moves, so nothing shows it")
 
     def test_short_reserve_is_the_wrong_side(self):
         """Design note 2. Short exposure is a purchase of the complement, so the obligation

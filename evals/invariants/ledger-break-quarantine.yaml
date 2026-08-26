@@ -1,0 +1,24 @@
+id: ledger-break-quarantine
+invariant: An unexplained reconciliation difference is never posted; it stays a break record over a quarantined amount that no path may spend, and only an established cause authorises a corrective posting, for the amount that cause explains.
+source: skills/fin-ledger/references/suspense-and-repair.md:30
+cases:
+  - name: the disputed amount is quarantined out of the spendable balance
+    expr: "Decimal('113.00') - Decimal('0.00') - Decimal('13.00')"
+    op: le
+    value: "100.00"
+    why: the old rule books the 13.00 to suspense instead of quarantining it, leaving the quarantine term at zero and 113.00 spendable, so a customer spends an amount nobody can attribute.
+  - name: the next reconciliation run still reports the difference
+    expr: "abs(Decimal('113.00') - Decimal('100.00'))"
+    op: eq
+    value: "13.00"
+    why: an automatic corrective posting moves your side to the authority's 100.00 while the cause is unknown, so the next run computes abs(100.00 - 100.00) = 0.00 and the detector reports agreement over a break that was never explained.
+  - name: a corrective posting covers only the amount its cause explains
+    expr: "Decimal('13.00') - Decimal('8.00')"
+    op: eq
+    value: "5.00"
+    why: the old rule posts the whole 13.00 once any part of it is understood, asserting 8.00 that no cause supports and closing the break with it.
+  - name: only breaks with an established cause reach a suspense account
+    expr: "Decimal('13.00') * Decimal('0') + Decimal('5.00') * Decimal('1') + Decimal('2.00') * Decimal('0')"
+    op: eq
+    value: "5.00"
+    why: the old rule gives every open break a coefficient of one, so 20.00 sits in an account nobody reconciles and only 5.00 of it can be attributed line by line.

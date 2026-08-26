@@ -1,0 +1,29 @@
+id: kalshi-terminal-payout
+invariant: No spendable balance moves against a Kalshi determination the venue may still change; the payout is released once, at the documented terminal state, for the amount on the settlement row.
+source: skills/fin-exchange-integration/references/prediction-market-kalshi.md:325
+cases:
+  - name: at determined the payout sits in an unsettled claim, not in the spendable balance
+    expr: "Decimal('170.00') - Decimal('70.00')"
+    op: eq
+    value: "100.00"
+    why: equity minus the unsettled claim is the spendable balance; the old rule booked the determination as a payout, leaving the claim at 0.00 and reading 170.00 as spendable while the settlement timer still ran
+  - name: a withdrawal of free balance plus pending payout is not covered at determined
+    expr: "Decimal('100.00') - Decimal('170.00')"
+    op: lt
+    value: "0"
+    why: a client that credited the provisional determination computes 170.00 minus 170.00, passes its own solvency gate at 0.00, and lets the payout leave before the outcome is final
+  - name: the terminal release equals the settlement row, not a local estimate
+    expr: "Decimal('100.00') + Decimal('7000') / Decimal('100') - Decimal('0.0000')"
+    op: eq
+    value: "170.00"
+    why: revenue is integer cents and fee_cost is a fixed-point dollar string; reading revenue as dollars releases 7100.00, and dropping fee_cost overstates a fee-bearing settlement
+  - name: a scalar terminal release is the rounded payout, not the pre-rounding value
+    expr: "Decimal('100.00') + (Decimal('71') * Decimal('0.6533')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)"
+    op: eq
+    value: "146.38"
+    why: settlement_value_dollars fills at determined and carries sub-cent precision; releasing 46.3843 pays a fraction of a cent the venue never moved, and releasing it at determined pays a result that may still be amended
+  - name: a redelivered settlement row releases the total, not another increment
+    expr: "Decimal('100.00') + max(Decimal('70.00'), Decimal('70.00'))"
+    op: eq
+    value: "170.00"
+    why: the settlements response carries no unique id, so a handler that adds on every delivery reads 240.00 after one reconnect

@@ -9,7 +9,9 @@ None of them raises an exception here. They produce wrong numbers quietly.
 The five, and where they are refuted
 ------------------------------------
 1. "Collateral is committed when a trade happens, so there is nothing to hold while an order
-   rests."                              refuted by test_resting_orders_are_not_reserved
+   rests, and the fee is not owed until it is charged."
+                                        refuted by test_resting_orders_are_not_reserved and
+                                        test_nothing_is_held_for_the_fee_the_fill_will_owe
 2. "A sell is a short, and a short reserves what it sells."
                                         refuted by test_short_reserve_is_the_wrong_side
 3. "A repeated response is one we already handled, so booking it again is harmless."

@@ -132,11 +132,16 @@ advance the durable cursor only inside the same conditional and the same transac
 coverage. A result count at the cap is a hole, not an empty result, and a branch that skips the query must
 skip the advance. The failure is permanent silent under-crediting, with no error and no log line.
 
-**The sequence allocator is a single writer, and the lock outlives the effect.**
-Where the external ledger orders your instructions by a number you assign, that number is authoritative state
-with exactly one writer. One lock spans allocation, signing, broadcast and the durable record of what was
-sent, under a key derived from stable bytes that are identical in every replica. A lock released before the
-broadcast protects nothing. Specialises *concurrency on authoritative state*.
+**A sequence number is durably owned before it is signed, and a stale owner is fenced at the write.**
+Where the external ledger orders your instructions by a number you assign, exactly one signer may hold a given
+value, and the record of who holds it commits before any signature exists and before any externally visible
+effect. Carry a monotonic ownership epoch and check it at the authoritative write, so a signer that lost
+ownership fails its write instead of landing it. A lock, where you use one, serialises the allocation and
+nothing beyond it: the outcome of a broadcast arrives minutes later or never, and a holder that spans it
+either blocks every other send or loses the lease while still believing it holds. A signer that cannot
+establish ownership refuses to sign, and the refusal is a distinguishable typed error, not a retry, a generic
+exception or a silent skip. Recovery reads the durable record and the chain, never a number re-derived from a
+balance or a count. Specialises *concurrency on authoritative state*.
 
 **The outbound queue proves it can succeed before it adds to the wall.**
 Before each broadcast, assert that ordering is not blocked, that the fee-paying reserve covers the queued
@@ -177,7 +182,7 @@ Each row is an instruction: when the trigger appears, read that file and apply i
 | [wallet-utxo-construction.md](references/wallet-utxo-construction.md) | the code contains `PSBT`, `outpoint`, `vout`, coin selection, `changeAddress`, dust, `min_viable_change`, `getbalances`, `listunspent`, `-maxtxfee`, `maxTotalFee`, or an import of `bitcoinjs-lib` |
 | [wallet-derivation.md](references/wallet-derivation.md) | the code contains `derivationPath`, `xpub`, `gapLimit`, `importdescriptors`, `purpose'`, `avoid_reuse`, `DestinationTag`, `destination_tag`, a Stellar `Memo`, an X-address or a muxed account |
 | [wallet-sweeps.md](references/wallet-sweeps.md) | the code contains `sweep`, `gasTank`, `forwarder`, `INSUFFICIENT_FUNDS_FOR_FEE`, a spendable-versus-confirmed balance read, a hot / warm / cold account tree, or an unattributed / house account |
-| [wallet-withdrawal-queue.md](references/wallet-withdrawal-queue.md) | the code contains `treatAsGrossAmount`, `AMOUNT_TOO_SMALL`, `PARTIALLY_FAILED`, `PENDING_AUTHORIZATION`, `INSUFFICIENT_RESERVED_FUNDING`, a payout batch, a nonce or sequence allocator lock, or an outbound withdrawal queue |
+| [wallet-withdrawal-queue.md](references/wallet-withdrawal-queue.md) | the code contains `treatAsGrossAmount`, `AMOUNT_TOO_SMALL`, `PARTIALLY_FAILED`, `PENDING_AUTHORIZATION`, `INSUFFICIENT_RESERVED_FUNDING`, a payout batch, a nonce or sequence allocator, or an outbound withdrawal queue |
 | [crossing-contract.md](references/crossing-contract.md) | the task is a review or a ship decision on a crediting or broadcast path, or you hold the signing keys, or you need the per-model table that turns an observable in the repo into the rule for that chain |
 
 ## Output

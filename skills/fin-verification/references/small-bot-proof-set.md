@@ -19,11 +19,13 @@ them ship as executable code in `fin-exchange-integration`.
    (ccxt #17545). On one venue that reads: `price % tickSize == 0`, `qty % stepSize == 0`,
    `price*qty >= minNotional`, `minQty <= qty <= maxQty`, a LIMIT/MARKET parameterisation to exercise
    `MARKET_LOT_SIZE`, and filter values loaded from `exchangeInfo`.
-3. **`test_fill_stream_replayed_shuffled_and_duplicated`**: every arrival order produces the same state, on
-   one recorded session: place, partial, partial, amend/cancel, reject, disconnect, reconnect-with-replay.
+3. **`test_fill_stream_replayed_shuffled_and_duplicated`**: every arrival order converges on the same state,
+   on one recorded session: place, partial, partial, amend/cancel, reject, disconnect, reconnect-with-replay.
    Assert `position == sum(signed filled qty)` and `cash == -sum(price*qty) - sum(fees)` computed
    **independently of the bot's own accumulators**, and that its fee equals the venue's reported fee per
-   fill. Then feed the same stream with duplicates and one swapped pair and assert identical terminal state.
+   fill. Then feed the same stream with duplicates and one swapped pair and assert identical position and cash.
+   A realized figure under FIFO, LIFO or average cost moves with that swap, so fold it from the venue's
+   canonical economic order rather than asserting it invariant under an arbitrary one.
 4. **`test_kill_after_send_places_no_second_order`**: one crash boundary, not three. `SIGKILL` between
    "request sent" and "order persisted locally"; restart; assert startup reconciliation converges to exactly
    one order and the correct position. If the bot has no startup reconciliation, this test is what forces

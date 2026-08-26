@@ -52,8 +52,7 @@ alone triggers neither.
    can still receive.
 3. Treat every push as a notification. Re-read the object from the processor before any decision that moves
    value, and make the ordering guard the write.
-4. Compute every ceiling from the processor's own numbers, net of everything in flight, and gate it on open
-   claims.
+4. Compute every ceiling from the processor's own numbers, net of everything in flight and of every open claim.
 5. Decide fee, currency and reversal treatment, and where each of them lands in the books.
 6. Reconcile against the settlement report, joined on the processor's own identifier, on a schedule, in
    production.
@@ -92,10 +91,15 @@ makes the miss permanent. Dead-letter it, alert, and leave it undeduped.
 ### The refund ceiling is the processor's number, net of everything in flight
 
 Specialises *hard limits*: the ceiling rejects the reversal rather than observing it. It derives from what the
-processor says it captured, minus completed reversals, minus reversals in flight, minus anything under
-counterparty claim, per object and per currency. Your own order record is not an input. An open claim is a gate
-before it is a subtrahend: refuse while any dispute on that object is open. Anything in flight that you do not
-count reserves nothing, so two concurrent reversals each pass a check that neither would pass alone.
+processor says it captured, minus completed reversals, minus reversals in flight, minus whatever a counterparty
+claim has already returned or may still return, per object and per currency. Your own order record is not an
+input. Model the reversal and the claim as one combined exposure against that capture: what you return plus what
+the network takes can never exceed what you took. Whether a reversal is permitted while a claim is open, and
+what it does to that claim, is the provider's documented answer for that claim type on that rail, read from the
+claim object rather than assumed. Refusing every reversal strands legitimate customer credits; allowing every
+reversal pays the customer twice. Where the claim is denominated in a currency you did not capture in, no
+subtraction exists, so refuse and route it to a human. Anything in flight that you do not count reserves
+nothing, so two concurrent reversals each pass a check that neither would pass alone.
 
 ### A terminal state of someone else's object accepts economic corrections
 

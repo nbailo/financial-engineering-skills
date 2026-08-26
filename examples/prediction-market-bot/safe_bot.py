@@ -2,9 +2,9 @@
 """The version that is correct about the things this example is about.
 
 Read it next to unsafe_bot.py. The two consume the same frozen event log and disagree about
-five things: when collateral is reserved, which side of the book a short obligates, what a
-fee is, whether a redelivered message is a new fact, and whether a payout is a vector or an
-index.
+six things: when collateral is reserved, whether the fee asset is reserved at all, which side
+of the book a short obligates, what a fee is, whether a redelivered message is a new fact,
+and whether a payout is a vector or an index.
 
 Scope of the claims below
 -------------------------
@@ -36,7 +36,7 @@ DEFAULT_BALANCES = {"FUSD": 1000 * MICRO, "FPOINT": 100 * MICRO}
 # cross-source case is the one test_the_credit_comes_from_the_authority_not_from_local_state
 # covers: a fill this process has not seen yet is already in the authority's number.
 SOURCE = {"ORDER_ACCEPTED": "orders", "FILL": "orders", "ORDER_CANCELLED": "orders",
-          "MARKET_RESOLVED": "settlement"}
+          "MARKET_DETERMINED": "settlement", "MARKET_RESOLVED": "settlement"}
 
 # The legal (state, event) pairs, enumerated. Everything absent is refused with an explicit
 # error rather than ignored. A terminal state accepts exactly the correction the venue makes
@@ -76,6 +76,7 @@ class OrderRecord:
     order_id: str | None = None
     filled: int = 0
     reserved_micro: int = 0
+    fee_reserved_micro: int = 0
     locked_shares: int = 0
 
 
@@ -102,6 +103,7 @@ class SafeBot:
     watermark: dict = field(default_factory=dict)
     settled: set = field(default_factory=set)
     settlement_credit: dict = field(default_factory=dict)
+    provisional_credit: dict = field(default_factory=dict)
     settlement_dust: Fraction = Fraction(0)
     alerts: list = field(default_factory=list)
 
@@ -119,6 +121,10 @@ class SafeBot:
     @property
     def payout_micro(self) -> int:
         return self.market["payout_per_share_micro"]
+
+    @property
+    def fee_asset(self) -> str:
+        return self.market["fee"]["asset"]
 
     def _reserve(self, asset: str, amount: int) -> None:
         if amount > self.available[asset]:
@@ -148,6 +154,26 @@ class SafeBot:
         """
         return qty * price_micro if side == BUY else 0
 
+    def worst_case_fee_micro(self, side: str, qty: int, price_micro: int) -> int:
+        """The largest fee any fill of this order can be charged, in micro-units of the fee
+        asset.
+
+        The property is that a fill can never arrive owing more fee than the order held for.
+        This venue makes that bound computable: the fee is a function of the fill price, it
+        peaks at the midpoint, and a resting buy fills at or below its bid while a resting
+        sell fills at or above its offer. The worst price is therefore the midpoint when the
+        order straddles it and the resting price otherwise. The worst rate is the higher of
+        the two liquidity rates, because which one a fill takes is not known while the order
+        rests. A venue whose fee is not a function of price bounds it some other way, and
+        the bound is what matters rather than this formula. Holding nothing is the one
+        answer that is wrong on every venue.
+        """
+        midpoint = self.payout_micro // 2
+        worst_price = min(price_micro, midpoint) if side == BUY else max(price_micro, midpoint)
+        fee = self.market["fee"]
+        worst_rate = max(fee["maker_rate_ppm"], fee["taker_rate_ppm"])
+        return expected_profit_fee_micro(self.market, qty, worst_price, worst_rate)
+
     def complement_of(self, outcome: str) -> str:
         outcomes = self.market["outcomes"]
         if len(outcomes) != 2:
@@ -175,10 +201,10 @@ class SafeBot:
                qty: int, price_micro: int) -> str:
         """Three phases, and the first one commits.
 
-        The key is minted from this intent instance, the intent row and its reserve exist
-        before the call, and the outcome is recorded after. A response that does not prove
-        the outcome leaves the intent standing as UNKNOWN and is never resubmitted under a
-        new key: `reconcile_unknown` asks the venue about the identity that was sent.
+        The key is minted from this intent instance, the intent row and both its reserves
+        exist before the call, and the outcome is recorded after. A response that does not
+        prove the outcome leaves the intent standing as UNKNOWN and is never resubmitted
+        under a new key: `reconcile_unknown` asks the venue about the identity that was sent.
         """
         if client_key in self.orders:
             raise ValueError(f"client key already used for a different intent: {client_key}")
@@ -189,14 +215,50 @@ class SafeBot:
 
         rec = OrderRecord(client_key, outcome, side, qty, price_micro)
         self.orders[client_key] = rec
-        self._hold(rec)
+        try:
+            self._hold(rec)
+        except (InsufficientAvailable, UnknownFeeAsset):
+            # The row stays, because the key was minted and is never reused, and it is marked
+            # so that an order which never rested is not counted as one that did.
+            rec.state = "REFUSED"
+            raise
         return self._send(venue, rec)
 
     def _hold(self, rec: OrderRecord) -> None:
+        """Hold everything the order can owe, or hold nothing at all.
+
+        Two assets are at stake and they are not netted against each other: the collateral a
+        fill costs, and the fee a fill is charged, which this venue charges in a different
+        asset. Reserving the collateral alone lets an order rest that a fill can leave
+        unable to pay its fee. Both are checked before either is taken, so a refusal on the
+        second leaves no hold standing from the first.
+        """
         obligation = self.collateral_obligation(rec.side, rec.qty, rec.price_micro)
+        fee_worst = self.worst_case_fee_micro(rec.side, rec.qty, rec.price_micro)
+        if fee_worst and self.fee_asset not in self.available:
+            raise UnknownFeeAsset(
+                f"fees are charged in {self.fee_asset!r}, which this process holds no "
+                f"balance for, so the worst case cannot be held")
+        need: dict[str, int] = {}
+        if obligation:
+            need[self.collateral] = need.get(self.collateral, 0) + obligation
+        if fee_worst:
+            need[self.fee_asset] = need.get(self.fee_asset, 0) + fee_worst
+        for asset, amount in sorted(need.items()):
+            if amount > self.available[asset]:
+                raise InsufficientAvailable(
+                    f"{asset}: need {amount}, available {self.available[asset]}")
+        if rec.side == SELL:
+            free = self.positions[rec.outcome] - self.locked[rec.outcome]
+            if rec.qty > free:
+                raise InsufficientAvailable(
+                    f"{rec.outcome}: need {rec.qty} shares, free {free}")
         if obligation:
             self._reserve(self.collateral, obligation)
             rec.reserved_micro = obligation
+        if fee_worst:
+            self._reserve(self.fee_asset, fee_worst)
+            rec.fee_reserved_micro = fee_worst
         if rec.side == SELL:
             self._lock_shares(rec.outcome, rec.qty)
             rec.locked_shares = rec.qty
@@ -205,6 +267,9 @@ class SafeBot:
         if rec.reserved_micro:
             self._release(self.collateral, rec.reserved_micro)
             rec.reserved_micro = 0
+        if rec.fee_reserved_micro:
+            self._release(self.fee_asset, rec.fee_reserved_micro)
+            rec.fee_reserved_micro = 0
         if rec.locked_shares:
             self.locked[rec.outcome] -= rec.locked_shares
             rec.locked_shares = 0
@@ -263,7 +328,9 @@ class SafeBot:
             self.seen_events.add(event_id)
             return "STALE"
 
-        if event_type == "MARKET_RESOLVED":
+        if event_type == "MARKET_DETERMINED":
+            self._on_determined(ev)
+        elif event_type == "MARKET_RESOLVED":
             self._on_resolved(ev)
         else:
             self._on_order_event(ev)
@@ -345,7 +412,7 @@ class SafeBot:
             self.alerts.append(
                 f"{rec.client_key}: position on {rec.outcome} went negative, which this "
                 f"venue cannot represent")
-        self._book_fee(ev["fee"], qty, price, ev["liquidity"])
+        self._book_fee(rec, ev["fee"], qty, price, ev["liquidity"])
         rec.filled += qty
         if rec.filled == rec.qty:
             # A terminal state is not rewritten by a later event. An order the venue
@@ -356,18 +423,42 @@ class SafeBot:
                 rec.state = "FILLED"
             self._unwind(rec)
 
-    def _book_fee(self, fee: dict, qty: int, price_micro: int, liquidity: str) -> None:
+    def _release_fee_hold(self, rec: OrderRecord, qty: int) -> int:
+        """Release this fill's slice of the worst-case fee hold, and never more than is held.
+
+        The slice is the worst case for the quantity that filled. A late fill on an order
+        whose hold was already released has nothing left to release, exactly as with
+        collateral, and the fee is owed either way.
+        """
+        slice_held = min(self.worst_case_fee_micro(rec.side, qty, rec.price_micro),
+                         rec.fee_reserved_micro)
+        if slice_held:
+            self._release(self.fee_asset, slice_held)
+            rec.fee_reserved_micro -= slice_held
+        return slice_held
+
+    def _book_fee(self, rec: OrderRecord, fee: dict, qty: int, price_micro: int,
+                  liquidity: str) -> None:
         """Amount, rate and asset are three different things.
 
         The amount is what the venue charged. The rate is the parameter it says it used. The
         asset is which balance it came out of. Recomputing the amount from the rate is a
         check on the venue, not a substitute for reading it, and neither one tells you which
-        balance to debit.
+        balance to debit. The hold this fill releases is in the asset the market metadata
+        names, so a charge in any other asset is unheld and says so.
         """
         asset, amount, rate_ppm = fee["asset"], fee["amount_micro"], fee["rate_ppm"]
         if asset not in self.available:
             raise UnknownFeeAsset(
                 f"fee charged in {asset!r}, which this process holds no balance for")
+        held = self._release_fee_hold(rec, qty)
+        if asset != self.fee_asset:
+            self.alerts.append(
+                f"fee charged in {asset}, metadata names {self.fee_asset}, so nothing was "
+                f"held for it")
+        elif amount > held:
+            self.alerts.append(
+                f"fee of {amount} {asset} exceeds the {held} held for this fill")
         expected_rate = rate_ppm_for(self.market, liquidity)
         if rate_ppm != expected_rate:
             self.alerts.append(
@@ -378,8 +469,46 @@ class SafeBot:
                 f"fee amount {amount} does not match {expected_amount} at {rate_ppm} ppm")
         self.available[asset] -= amount
         self.fees_paid[asset] += amount
+        if self.available[asset] < 0:
+            self.alerts.append(
+                f"{asset} went negative paying a fee the venue already charged")
 
     # ------------------------------------------------------------------ settlement
+
+    def _distribution(self, ev: dict) -> tuple[list, int]:
+        numerators, denominator = ev["payout_numerators"], ev["payout_denominator"]
+        if len(numerators) != len(self.market["outcomes"]) or sum(numerators) != denominator:
+            raise ValueError(f"payout vector {numerators}/{denominator} is not a distribution")
+        return numerators, denominator
+
+    def _payout_for(self, numerators: list, denominator: int, held: dict) -> tuple:
+        """What the payout vector is worth against a position, and the dust it leaves."""
+        credited, dust = 0, Fraction(0)
+        for index, outcome in enumerate(self.market["outcomes"]):
+            exact = held.get(outcome, 0) * self.payout_micro * numerators[index]
+            share = exact // denominator
+            dust += Fraction(exact - share * denominator, denominator)
+            credited += share
+        return credited, dust
+
+    def _on_determined(self, ev: dict) -> None:
+        """A determination is a result. It is not a payout.
+
+        The venue says the outcome is known and says in the same breath that it can still
+        change, so nothing here moves a balance. The number is recorded as provisional and
+        stays out of available until the terminal payout state arrives. Crediting at
+        determination is a different design: it needs the reversal path written before the
+        first credit is, and this example does not ship one.
+        """
+        market_id = ev["market_id"]
+        if market_id in self.settled:
+            self.alerts.append(
+                f"{market_id}: a determination arrived after the terminal payout")
+            return
+        numerators, denominator = self._distribution(ev)
+        credit, _ = self._payout_for(numerators, denominator,
+                                     self.authority.positions(market_id))
+        self.provisional_credit[market_id] = credit
 
     def _on_resolved(self, ev: dict) -> None:
         market_id = ev["market_id"]
@@ -388,11 +517,8 @@ class SafeBot:
             # redelivery of the same message; this catches a resolution that arrives again
             # with a fresh identity, which is what a stream that renumbers on reconnect does.
             return
-        numerators = ev["payout_numerators"]
-        denominator = ev["payout_denominator"]
+        numerators, denominator = self._distribution(ev)
         outcomes = self.market["outcomes"]
-        if len(numerators) != len(outcomes) or sum(numerators) != denominator:
-            raise ValueError(f"payout vector {numerators}/{denominator} is not a distribution")
 
         still_open = [ck for ck, r in self.orders.items()
                       if r.state in ("PENDING", "WORKING", "UNKNOWN")]
@@ -410,13 +536,15 @@ class SafeBot:
                     f"position break at settlement on {outcome}: authority "
                     f"{held.get(outcome, 0)}, local {self.positions.get(outcome, 0)}")
 
-        credited = 0
-        for index, outcome in enumerate(outcomes):
-            qty = held.get(outcome, 0)
-            exact = qty * self.payout_micro * numerators[index]
-            share = exact // denominator
-            self.settlement_dust += Fraction(exact - share * denominator, denominator)
-            credited += share
+        credited, dust = self._payout_for(numerators, denominator, held)
+        self.settlement_dust += dust
+        # This is the state that releases the value. A provisional determination recorded a
+        # number and moved nothing; the terminal payout is what reaches available.
+        provisional = self.provisional_credit.pop(market_id, None)
+        if provisional is not None and provisional != credited:
+            self.alerts.append(
+                f"terminal payout {credited} differs from the provisional {provisional} "
+                f"on {market_id}")
         self.available[self.collateral] += credited
         self.settlement_credit[market_id] = credited
         self.settled.add(market_id)
@@ -448,8 +576,10 @@ class SafeBot:
             "positions": dict(sorted(self.positions.items())),
             "locked": dict(sorted(self.locked.items())),
             "settlement_credit": dict(sorted(self.settlement_credit.items())),
+            "provisional_credit": dict(sorted(self.provisional_credit.items())),
             "settlement_dust": str(self.settlement_dust),
-            "orders": {ck: (r.state, r.filled, r.reserved_micro, r.locked_shares)
+            "orders": {ck: (r.state, r.filled, r.reserved_micro, r.fee_reserved_micro,
+                            r.locked_shares)
                        for ck, r in sorted(self.orders.items())},
         }
 

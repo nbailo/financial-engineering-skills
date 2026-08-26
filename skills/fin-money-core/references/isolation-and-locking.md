@@ -168,7 +168,7 @@ one thing the retry loop cannot do for you.
 
 | # | Instance | What is actually protected |
 |---|---|---|
-| 1 | `with db.engine.begin() as conn: SELECT … FOR UPDATE`: the lock dies at the dedent, before the sign and broadcast | nothing after the dedent |
+| 1 | `with db.engine.begin() as conn: SELECT … FOR UPDATE`: the lock dies at the dedent and no row was committed to say who took the number | nothing; the fix is to claim by writing and fence the later write on that claim, never to stretch a lock across a broadcast whose outcome arrives minutes later or never |
 | 2 | `poll_batch()` does `FOR UPDATE SKIP LOCKED LIMIT 50`, `fetchall()`, then closes the transaction | nothing; N confirmer instances process the same 50 rows |
 | 3 | **Headline money loss (H-withdrawal#2):** admin `reject()` drops the row lock between the status check and `reverse()` | nothing; the withdrawal is broadcast in the window, `reverse()`'s guard still accepts `'broadcast'`, and the user keeps both the coins and the balance |
 | 4 | Confirmer uses `async with session_factory()` with no `session.begin()` | nothing; `FOR UPDATE` outside a transaction holds no lock |

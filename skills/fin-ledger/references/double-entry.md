@@ -13,7 +13,7 @@ than as marketing.
 2. **The transaction and its legs**: the four hard conditions; the three shapes an unbalanced journal takes.
 3. **Sign conventions**: magnitude + direction versus uniformly-signed amount; why carrying both is the bug.
 4. **Account normality and contra accounts**: the two balance formulas and the inverted-balance-sheet mistake.
-5. **The chart of accounts**: suspense, clearing and residue as the *named* home for breaks.
+5. **The chart of accounts**: clearing, suspense and residue, and what may lawfully be posted to each.
 6. **External counterparty accounts**: `world`, nostro, hot wallet; the worked five-leg withdrawal.
 7. **Schema sketch**: the constraints and grants that actually enforce the invariants, in Postgres.
 
@@ -56,7 +56,8 @@ unbalanced state, so nothing is left for a runtime "do the books balance" check 
 TigerBeetle documents the same discipline on its own rejections: `exceeds_credits` means "The transfer was
 not created.", so the rejection leaves nothing behind, not a partial group. And halting is the wrong response
 even when such a checker does fire, because a discrepancy against an *external* record is a reconciliation
-break, which takes a suspense posting rather than an outage (§5).
+break: it raises a break record and quarantines the item rather than causing an outage, and it is not posted
+away to suspense while its cause is unknown (§5).
 
 **The three shapes an unbalanced journal takes.** Ledger code that names itself double-entry and enforces the
 balance condition nowhere fails in three recognisable ways:
@@ -147,12 +148,13 @@ Beyond the five types, three roles carry the operational weight:
 | role | example path | steady state | what it buys |
 |---|---|---|---|
 | clearing / in-transit | `clearing:processor:stripe:USD`, `clearing:onchain:pending_finality:USDC` | **zero** | Stripe's invariant, "terminal (nonclearing) reservoirs are full, and intermediate (clearing) pipes are empty", makes reconciliation a query: a nonzero clearing balance past its settlement window *is* the detector |
-| suspense | `suspense:recon:{source}:USD` | zero, aged | the named home for a break you cannot yet attribute; the discrepancy posts here so the **trial balance still balances** while the break is open. Fed FAM §4.50's **Difference account** absorbs "an out-of-balance condition resulting from the normal operation of a department" and is swept monthly |
+| suspense | `suspense:recon:{source}:USD` | zero, aged | where a break whose **cause is established** waits for its approved correction to post. A difference you cannot yet attribute does not belong here: posting it balances the books and makes the break unattributable, so it stays a break record over a quarantined item instead |
 | residue | `expense:rounding_residue:USD`, `revenue:fx_residue:USD` | small, monitored | minor units a split or conversion cannot allocate go somewhere by name. Numscript allocates split remainders deterministically top-down the list, so there are "no invisible fractions or mystery money" |
 
-A nullable `discrepancy_cents` column and a log line are not a suspense account: they leave the books
-unbalanced and the break invisible to every report. Give each clearing and suspense account an owner and an
-aging policy at creation; an expected-zero account with no owner becomes a permanent residue bucket.
+A nullable `discrepancy_cents` column and a log line are not a break record: nobody owns them, nothing ages
+them, and no report shows them. Give each clearing and suspense account an owner and an aging policy at
+creation; an expected-zero account with no owner becomes a permanent residue bucket, and a suspense balance you
+cannot attribute line by line is the break you believed you had recorded.
 
 ## 6 · External counterparty accounts
 
@@ -273,4 +275,4 @@ fine at four legs, measurable at four hundred; check only on the group's first r
 `post_group` and keep the trigger as the backstop for anything that later gets a direct grant. A superuser
 setting `session_replication_role = replica` disables the trigger, so the revoked grant is the load-bearing
 control. And this schema enforces conservation *within* a group; whether the group describes reality is
-reconciliation's job and takes a suspense posting (§5).
+reconciliation's job, and a difference it finds is a break record over a quarantined item, not a posting (§5).

@@ -141,8 +141,10 @@ it can change between the claim and the advance, the claim is not proven.
 
 ## The tests this reference owes
 
-1. **Permutation.** For a fixed set of events on one entity, every arrival permutation converges to the same
-   final state, and each illegal permutation raises rather than silently returning.
+1. **Permutation.** For a fixed set of events on one entity whose result the design claims is
+   order-independent, every arrival permutation converges to the same final state. Where the result depends on
+   economic order, sort into that order before folding, and assert an order you cannot establish is rejected
+   rather than guessed. Each illegal permutation raises rather than silently returning.
 2. **Redelivery.** Applying any event twice, including the terminal one, produces exactly one economic
    effect, asserted on the balance and on the count of postings, not on a return value.
 3. **Same-clock pair.** Two events sharing a coarse timestamp both apply, in either order, and neither is

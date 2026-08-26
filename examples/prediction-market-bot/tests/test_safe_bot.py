@@ -8,7 +8,9 @@ import json
 import unittest
 from fractions import Fraction
 
-from fake_venue import BUY, MAKER, MICRO, SELL, TAKER, FakeVenue, load_market, load_session
+from fake_venue import (BUY, MAKER, MICRO, SELL, TAKER, FakeVenue, Rejected,
+                        expected_profit_fee_micro, load_market, load_script, load_session,
+                        run_script)
 from safe_bot import (INTENTS, IllegalTransition, InsufficientAvailable, SafeBot,
                       UnknownFeeAsset, rebuild)
 from tests import scenario
@@ -81,6 +83,129 @@ class ReserveWhileResting(unittest.TestCase):
         self.assertEqual(bot.positions["YES"], 100)
         self.assertEqual(bot.available["FUSD"], START_FUSD - 40 * MICRO - 275 * MICRO // 10)
         self.assertEqual(bot.reserved["FUSD"], 275 * MICRO // 10)
+
+
+class FeeAssetReservation(unittest.TestCase):
+    """The fee is charged in FPOINT and the position is in FUSD.
+
+    Holding the collateral alone lets an order rest that a fill can leave unable to pay its
+    fee, so the worst-case fee is held in the asset the fee is charged in, before the order
+    can rest.
+    """
+
+    def test_a_resting_order_holds_the_worst_case_fee_in_the_fee_asset(self):
+        _, bot = working_buy()
+        self.assertEqual(bot.reserved["FPOINT"], 1680000)
+        self.assertEqual(bot.available["FPOINT"], START_FPOINT - 1680000)
+        self.assertEqual(bot.reserved["FUSD"], 40 * MICRO)
+
+    def test_the_hold_is_taken_at_the_price_that_maximises_the_fee(self):
+        bot = SafeBot(market=load_market(), authority=None)
+        # A bid above the midpoint fills at or below itself, and the fee peaks at the
+        # midpoint, so the fee at the bid is not the worst case.
+        self.assertEqual(bot.worst_case_fee_micro(BUY, 100, 900000), 1750000)
+        self.assertEqual(expected_profit_fee_micro(load_market(), 100, 900000, 70000), 630000)
+        # An offer above the midpoint fills at or above itself, where the fee only falls.
+        self.assertEqual(bot.worst_case_fee_micro(SELL, 30, 700000), 441000)
+
+    def test_an_order_whose_fee_cannot_be_held_never_reaches_the_venue(self):
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue,
+                      available={"FUSD": START_FUSD, "FPOINT": 1 * MICRO})
+        with self.assertRaises(InsufficientAvailable) as caught:
+            bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        self.assertIn("FPOINT", str(caught.exception))
+        self.assertEqual(venue.orders, {})
+        # The collateral it could afford is not left held for an order that never rested.
+        self.assertEqual(bot.available["FUSD"], START_FUSD)
+        self.assertEqual(bot.reserved["FUSD"], 0)
+        self.assertEqual(bot.orders["ck-1"].state, "REFUSED")
+
+    def test_an_order_whose_fee_asset_this_process_does_not_hold_cannot_rest(self):
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue, available={"FUSD": START_FUSD})
+        with self.assertRaises(UnknownFeeAsset):
+            bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        self.assertEqual(venue.orders, {})
+        self.assertEqual(bot.orders["ck-1"].state, "REFUSED")
+        self.assertEqual(bot.available["FUSD"], START_FUSD)
+
+    def test_a_fill_pays_its_fee_out_of_what_the_order_held(self):
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue,
+                      available={"FUSD": START_FUSD, "FPOINT": 1680000})
+        bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        self.assertEqual(bot.available["FPOINT"], 0, "the whole fee balance is committed")
+        venue.fill("ck-1", 100, 400000, TAKER)
+        bot.apply_all(venue.events_since(0))
+        self.assertEqual(bot.fees_paid["FPOINT"], 1680000)
+        self.assertEqual(bot.available["FPOINT"], 0)
+        self.assertEqual(bot.reserved["FPOINT"], 0)
+        self.assertEqual(bot.alerts, [])
+
+    def test_a_cancel_releases_the_fee_hold(self):
+        venue, bot = working_buy()
+        venue.cancel("ck-1")
+        bot.apply_all(venue.events_since(1))
+        self.assertEqual(bot.reserved["FPOINT"], 0)
+        self.assertEqual(bot.available["FPOINT"], START_FPOINT)
+
+
+class ConcurrentRestingOrders(unittest.TestCase):
+    """Two orders resting at once. The holds add, so one balance cannot back both."""
+
+    def test_two_resting_orders_reserve_the_sum_of_their_worst_cases(self):
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue)
+        bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        bot.submit(venue, "ck-2", "NO", BUY, 50, 550000)
+        bot.apply_all(venue.events_since(0))
+        self.assertEqual(bot.orders["ck-1"].state, "WORKING")
+        self.assertEqual(bot.orders["ck-2"].state, "WORKING")
+        self.assertEqual(bot.reserved["FUSD"], 40 * MICRO + 275 * MICRO // 10)
+        self.assertEqual(bot.reserved["FPOINT"], 1680000 + 875000)
+        self.assertGreater(bot.reserved["FPOINT"], max(1680000, 875000),
+                           "the sum, not the larger of the two")
+        self.assertEqual(bot.available["FUSD"], START_FUSD - bot.reserved["FUSD"])
+        self.assertEqual(bot.available["FPOINT"], START_FPOINT - bot.reserved["FPOINT"])
+
+    def test_a_second_order_affordable_alone_is_refused_beside_the_first(self):
+        # 60 FUSD. The first order commits 40 of it. The second costs 55, which the balance
+        # covers on its own and does not cover beside the first.
+        balances = {"FUSD": 60 * MICRO, "FPOINT": START_FPOINT}
+        alone_venue = FakeVenue(load_market())
+        alone = SafeBot(market=load_market(), authority=alone_venue, available=dict(balances))
+        self.assertEqual(alone.submit(alone_venue, "ck-2", "NO", BUY, 100, 550000), "SENT")
+
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue, available=dict(balances))
+        bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        with self.assertRaises(InsufficientAvailable) as caught:
+            bot.submit(venue, "ck-2", "NO", BUY, 100, 550000)
+        self.assertIn("FUSD", str(caught.exception))
+        self.assertEqual(bot.reserved["FUSD"], 40 * MICRO)
+        self.assertEqual(bot.available["FUSD"], 20 * MICRO)
+        self.assertEqual(bot.orders["ck-2"].state, "REFUSED")
+        self.assertEqual(list(venue.by_client_key), ["ck-1"])
+
+    def test_the_fee_holds_add_up_the_same_way(self):
+        # 2 FPOINT. Either order's worst-case fee fits alone. Together they do not.
+        balances = {"FUSD": START_FUSD, "FPOINT": 2 * MICRO}
+        alone_venue = FakeVenue(load_market())
+        alone = SafeBot(market=load_market(), authority=alone_venue, available=dict(balances))
+        self.assertEqual(alone.submit(alone_venue, "ck-2", "NO", BUY, 50, 550000), "SENT")
+        self.assertEqual(alone.reserved["FPOINT"], 875000)
+
+        venue = FakeVenue(load_market())
+        bot = SafeBot(market=load_market(), authority=venue, available=dict(balances))
+        bot.submit(venue, "ck-1", "YES", BUY, 100, 400000)
+        with self.assertRaises(InsufficientAvailable) as caught:
+            bot.submit(venue, "ck-2", "NO", BUY, 50, 550000)
+        self.assertIn("FPOINT", str(caught.exception))
+        # The collateral was never the constraint: 67.5 FUSD of 1000 was affordable.
+        self.assertEqual(bot.reserved["FUSD"], 40 * MICRO)
+        self.assertEqual(bot.reserved["FPOINT"], 1680000)
+        self.assertEqual(list(venue.by_client_key), ["ck-1"])
 
 
 class ShortExposure(unittest.TestCase):
@@ -282,6 +407,68 @@ class Settlement(unittest.TestCase):
             bot.apply_event({"seq": 1, "event_id": "ev-001", "type": "MARKET_RESOLVED",
                              "market_id": MARKET_ID, "payout_numerators": [1, 1],
                              "payout_denominator": 1, "winning_outcome_index": None})
+
+
+class ProvisionalDetermination(unittest.TestCase):
+    """A result exists is not the same fact as the payout has been made.
+
+    The venue publishes the outcome while saying it can still be revised, and publishes a
+    terminal payout later. Only the second one moves a balance, and nothing moves it back.
+    """
+
+    def trading_done(self):
+        """The frozen scenario up to the point the market stops trading."""
+        venue = FakeVenue(load_market())
+        events = run_script(venue, [s for s in load_script() if s["action"] != "resolve"])
+        return venue, rebuild(load_market(), venue, events)
+
+    def test_a_provisional_determination_moves_no_balance(self):
+        venue, bot = self.trading_done()
+        before = json.dumps(bot.snapshot(), sort_keys=True)
+        determined = venue.determine([1, 0], 1)
+        self.assertTrue(determined["provisional"])
+        self.assertEqual(bot.apply_event(determined), "APPLIED")
+        self.assertEqual(bot.provisional_credit[MARKET_ID], 70 * MICRO)
+        # The 70 FUSD the position is worth is not spendable and is not credited.
+        self.assertEqual(bot.available["FUSD"], 981 * MICRO)
+        self.assertNotIn(MARKET_ID, bot.settlement_credit)
+        self.assertNotIn(MARKET_ID, bot.settled)
+        self.assertEqual(json.dumps(dict(bot.snapshot(), provisional_credit={}),
+                                    sort_keys=True), before)
+
+    def test_only_the_terminal_payout_state_releases_the_value(self):
+        venue, bot = self.trading_done()
+        bot.apply_event(venue.determine([1, 0], 1))
+        # A redelivery of the determination is still not a payout.
+        self.assertEqual(bot.apply_event(dict(venue.events[-1], event_id="reconnect-1")),
+                         "STALE")
+        self.assertEqual(bot.available["FUSD"], 981 * MICRO)
+        self.assertEqual(bot.settlement_credit, {})
+
+        self.assertEqual(bot.apply_event(venue.resolve([1, 0], 1)), "APPLIED")
+        self.assertEqual(bot.settlement_credit[MARKET_ID], 70 * MICRO)
+        self.assertEqual(bot.available["FUSD"], 1051 * MICRO)
+        self.assertEqual(bot.provisional_credit, {}, "the provisional record is spent")
+        for event in venue.settlement_events():
+            bot.apply_event(dict(event, event_id="reconnect-2", seq=900))
+        self.assertEqual(bot.available["FUSD"], 1051 * MICRO)
+
+    def test_a_determination_after_the_terminal_payout_pays_nothing(self):
+        venue, bot = self.trading_done()
+        bot.apply_event(venue.resolve([1, 0], 1))
+        self.assertEqual(bot.available["FUSD"], 1051 * MICRO)
+        # The venue has no path back from the terminal state.
+        with self.assertRaises(Rejected):
+            venue.determine([0, 1], 1)
+        # And a message claiming one is refused a credit, whatever it carries.
+        late = {"seq": 900, "event_id": "ev-900", "type": "MARKET_DETERMINED",
+                "market_id": MARKET_ID, "payout_numerators": [0, 1],
+                "payout_denominator": 1, "provisional": True}
+        self.assertEqual(bot.apply_event(late), "APPLIED")
+        self.assertEqual(bot.available["FUSD"], 1051 * MICRO)
+        self.assertEqual(bot.settlement_credit[MARKET_ID], 70 * MICRO)
+        self.assertEqual(bot.provisional_credit, {})
+        self.assertTrue(any("after the terminal payout" in a for a in bot.alerts), bot.alerts)
 
 
 class AmbiguousSubmission(unittest.TestCase):

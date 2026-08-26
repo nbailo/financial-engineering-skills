@@ -150,7 +150,7 @@ def resolve_ambiguous_create(ex, symbol, cid, sent_at):
     # 3. open orders  4. order history over [sent_at - skew, now]  5. fetch_my_trades, same window
     #    (5) is the ONLY rung that speaks to economic effect: an order can be invisible in every
     #    order endpoint and still have moved your position
-    return None                        # -> INFLIGHT_UNKNOWN at full notional, gate closed, clock running
+    return None                        # -> INFLIGHT_UNKNOWN at worst-case exposure, gate closed, clock
 ```
 
 ## `precisionMode` and the ROUND/TRUNCATE asymmetry

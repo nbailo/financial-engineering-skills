@@ -437,7 +437,8 @@ at the test that proves it or delete the sentence. **Owner:** `fin-money-core`, 
 **A signature of F7 · The decorative transaction: the lock released before the section it protects.**
 Reviewing for the *presence* of a lock passes this every time; what fails is the *extent* of the critical
 section. The shapes: `with db.engine.begin() as conn: SELECT ... FOR UPDATE`, where the lock dies at the
-dedent, before the sign and broadcast it was meant to protect · `poll_batch()` doing
+dedent and no committed row says who claimed the number, which is fixed by claiming in a write and fencing
+the later write on that claim rather than by stretching the lock across a broadcast · `poll_batch()` doing
 `FOR UPDATE SKIP LOCKED LIMIT 50` and closing the transaction after `fetchall()`, so N workers process the
 same 50 rows · an admin `reject()` that drops the row lock between the status check and `reverse()` · a worker
 using `async with session_factory()` with no `session.begin()`, so `FOR UPDATE` holds nothing · an

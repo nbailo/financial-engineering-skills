@@ -5,9 +5,9 @@
 > verified_at: 2026-08-25
 > sources: https://docs.kalshi.com/openapi.yaml · https://docs.kalshi.com/asyncapi.yaml · https://docs.kalshi.com/getting_started/order_direction · https://docs.kalshi.com/getting_started/orderbook_responses · https://docs.kalshi.com/getting_started/fixed_point_migration · https://docs.kalshi.com/getting_started/fee_rounding · https://docs.kalshi.com/getting_started/market_lifecycle · https://docs.kalshi.com/getting_started/market_settlement · https://docs.kalshi.com/getting_started/exchange_sharding · https://docs.kalshi.com/getting_started/rate_limits · https://docs.kalshi.com/fix/order-entry · https://docs.kalshi.com/changelog
 > pinned: `openapi.yaml` 3.29.0 and `asyncapi.yaml` 2.0.0 as served on 2026-08-25; the Fixed-Point Representation page carries "Last Updated: August 20, 2026". The newest changelog entry carried the label "August 27, 2026", which is ahead of the fetch date; that is the vendor's own label, reproduced rather than corrected, and it is a reason to re-read the changelog rather than to trust any date arithmetic over it. No client SDK source was read in this pass, so nothing below is a claim about SDK behaviour.
-> verified: the direction vocabularies and their equivalence table; the REST orderbook shape and sort order; `use_yes_price` and its migration plan; `price_ranges` and `price_level_structure`; the fixed-point dollar and count types and their precisions; the three fee components and the per-order accumulator; the series/event/market fee-authority chain and the `FeeType` enum; the market status enum and its transitions; the settlement record fields; the FIX reject vocabulary; exchange sharding and per-shard collateral; the amend `count` semantics.
-> unverified: whether resending an order with a `client_order_id` already used creates a second order on REST, the create-order-v2 reference page giving that field no description and never using the word idempotency, and `openapi.yaml` being too large to search exhaustively in this pass; the numeric fee rate tables, which live in a PDF that returned HTTP 429 on 2026-08-25; whether a settlement row carries any stable unique id, the documented field list carrying none; the WebSocket `seq` gap-recovery procedure, which the AsyncAPI describes only as a number to check.
-> revalidate_when: `use_yes_price` changes default or is removed; the legacy `action`/`side` fields are actually removed, their stated floor of May 28, 2026 having already passed; a new `price_level_structure` name appears; `FeeType` gains a member; a new `exchange_index` shard is announced; the OpenAPI `info.version` moves off 3.29.0.
+> verified: the direction vocabularies and their equivalence table; the REST orderbook shape and sort order; `use_yes_price` and its migration plan; `price_ranges` and `price_level_structure`; the fixed-point dollar and count types and their precisions; the three fee components and the per-order accumulator; the series/event/market fee-authority chain and the `FeeType` enum; the market status enum and its transitions, whose per-status sentences were re-read on 2026-08-26, including `finalized` as the only status described as a terminal state and the only one whose description says positions have been paid out; the settlement record fields; the FIX reject vocabulary; exchange sharding and per-shard collateral; the amend `count` semantics.
+> unverified: whether resending an order with a `client_order_id` already used creates a second order on REST, the create-order-v2 reference page giving that field no description and never using the word idempotency, and `openapi.yaml` being too large to search exhaustively in this pass; the numeric fee rate tables, which live in a PDF that returned HTTP 429 on 2026-08-25; whether a settlement row carries any stable unique id, the documented field list carrying none; the WebSocket `seq` gap-recovery procedure, which the AsyncAPI describes only as a number to check; whether a payout released at `finalized` can be reversed or re-paid by the venue, the lifecycle page documenting no transition out of `finalized` and making no promise either way; how soon after `finalized` a balance read reflects the payout, which no page read here states.
+> revalidate_when: `use_yes_price` changes default or is removed; the legacy `action`/`side` fields are actually removed, their stated floor of May 28, 2026 having already passed; a new `price_level_structure` name appears; `FeeType` gains a member; a new `exchange_index` shard is announced; a transition out of `finalized` is documented or a status appears between `determined` and `finalized`; the OpenAPI `info.version` moves off 3.29.0.
 
 Kalshi is a binary event exchange whose API has moved twice under integrators in the last year: integer cents became
 fixed-point dollar strings, and a two-field direction vocabulary replaced `action` plus `side`. Both migrations leave code
@@ -25,7 +25,7 @@ choosing a direction, quantizing a price, predicting a fee, keeping a position a
 - Order identity, the ambiguous response, and the cancel you cannot send
 - Amend takes a total, not a delta
 - Position, open interest and netting are three different numbers
-- Lifecycle: closed, determined, disputed, amended, finalized
+- Lifecycle: a determination is not a payout
 - Shards: collateral lives inside one matching engine
 - Assertions to write
 - What is verified here, and what is not
@@ -305,9 +305,9 @@ per event with `total_cost_shares_fp` covering "both YES and NO contracts". Key 
 `Market.notional_value_dollars` is "The total value of a single contract at settlement in dollars". Read it rather than
 assuming `$1.00`, and read `Market.settlement_value_dollars` after determination, "The settlement value of the YES/LONG
 side of the contract in dollars. Only filled after determination", which is how a scalar market pays something in
-between.
+between. It fills at `determined`, so it prices an unsettled claim; a populated price field is not a payout.
 
-## Lifecycle: closed, determined, disputed, amended, finalized
+## Lifecycle: a determination is not a payout
 
 The market status enum is `initialized`, `active`, `inactive`, `closed`, `determined`, `disputed`, `amended`,
 `finalized`. Trading stopped and outcome final are four states apart. From the lifecycle page:
@@ -319,9 +319,22 @@ The market status enum is `initialized`, `active`, `inactive`, `closed`, `determ
   Settlement timer restarts."
 - `finalized` means "Settlement complete. Positions have been paid out. Terminal state."
 
-So a result you observed at `determined` is not final, and an `amended` market restarts the clock on a result you may
-already have booked. Book determination as provisional, book `finalized` and the settlement row as the payout, and
-express a correction as a reversing entry rather than an edit.
+**A determination is an announcement, not money.** At `determined` the result may still be disputed while
+`settlement_timer_seconds` runs, `disputed` may be re-determined, and `amended` restarts the timer. `finalized` is the
+only status the page calls a terminal state, and the only one whose description says positions have been paid out. So
+the rule is not "book the result you see": **no spendable, transferable or withdrawable value is released against an
+outcome the venue still documents as changeable.** Value is released at the documented terminal payout state, for the
+amount the venue's own record says it paid. One mechanism: hold the determination as an unsettled claim keyed on
+`(exchange_index, ticker)`, outside available balance, outside withdrawal and outside the collateral a new order may
+consume, then release it in one posting at `finalized` for the settlement row's amount. A hold, an unsettled account
+and a claim table all satisfy the property; crediting available balance at `determined` does not, whatever the credit
+is labelled.
+
+A claim that was never spendable needs no reversal when the result moves: `disputed` and `amended` replace the claim
+and no balance changed. **Nothing in the documented lifecycle leaves `finalized`.** No transition out of it is
+described, so a client that keeps a reversal path armed against a payout released at the terminal state is coding for
+an event the venue does not document. Reverse an entry you posted in error on your own side; treat a terminal payout
+that later changes as an incident to escalate, not a branch to take.
 
 Two transition details that break state machines. Reactivation is destructive: "`inactive` → `active`: exchange
 reactivates a paused market. Event: `activated`. **All resting orders are cancelled on this reactivation.**" And a
@@ -399,12 +412,22 @@ def test_fee_is_reconciled_per_order_not_per_fill(order):
     # the rounding accumulator is per order across taker and maker fills
     assert sum(f.fee_cost for f in order.fills) == order.taker_fees_dollars + order.maker_fees_dollars
 
-def test_determined_is_not_final(ledger, market_events):
+def test_a_determination_releases_nothing_spendable(ledger, market_events):
+    # determined and amended are outcomes the venue's own page says may still change
+    opening = ledger.available
     ledger.apply(market_events.determined(result="yes"))
-    assert ledger.payout_posted is False          # settlement_timer_seconds still running
+    assert ledger.available == opening and ledger.withdrawable == opening
+    assert ledger.unsettled_claim("T") > 0        # recorded, and not spendable
     ledger.apply(market_events.amended(result="no"))
-    ledger.apply(market_events.settled())
-    assert ledger.reversals == 1                  # corrected by reversal, not by edit
+    assert ledger.available == opening            # a re-determination moved no money
+
+def test_only_the_terminal_state_releases_value(ledger, market_events, settlement_row):
+    opening = ledger.available
+    ledger.apply(market_events.finalized(row=settlement_row))
+    assert ledger.available == opening + payout_of(settlement_row)
+    assert ledger.unsettled_claim("T") == 0
+    ledger.apply(market_events.finalized(row=settlement_row))     # redelivered
+    assert ledger.available == opening + payout_of(settlement_row)
 
 def test_position_keys_include_the_shard(store, positions):
     assert {(p.exchange_index, p.ticker) for p in positions} == set(store.keys())
@@ -430,6 +453,9 @@ Explicitly unverified, and labelled as such wherever it appears above:
   credit is composed by you.
 - **WebSocket gap recovery.** The AsyncAPI describes `seq` as a number to check and documents `get_snapshot`, but states
   no recovery procedure. The re-snapshot approach above is the conservative reading, not a quoted rule.
+- **What happens after `finalized`.** The lifecycle page names it a terminal state and documents no transition out of
+  it. It does not separately say a credited payout is never reversed. The rule above therefore rests on the absence of
+  any documented way out of the terminal state, and on the client-side control of releasing nothing before it.
 - **Anything dated, and every quoted floor here has already passed.** The `action`/`side` floor of May 28, 2026 is the
   venue's own "no earlier than" language, not a commitment to act on that date, and it is historical as of the
   verified_at date above. It is evidence neither that the fields are gone nor that they remain. Read the current spec

@@ -32,9 +32,11 @@ HAVING b.posted_minor <> COALESCE(SUM(e.amount_minor), 0);
 ```
 
 Uber runs offline order-independent checksums over time windows comparing source-of-truth to derived tables; a
-single missing entry breaks the checksum. **The recompute does not fix the balance in place.** It raises a
-`break` row and posts the difference to a suspense account; an in-place repair destroys the evidence of how the
-drift arose and silently absorbs the next one.
+single missing entry breaks the checksum. **The recompute neither fixes the balance in place nor posts the
+difference away.** It raises a `break` row and quarantines the account so nothing spends the disputed amount,
+and it leaves the difference visible until a cause is established. An in-place repair destroys the evidence of
+how the drift arose; a corrective posting to suspense with no cause hides that evidence in an account nobody
+reconciles and silently absorbs the next one.
 
 **The checkpoint pattern.** Recomputing from inception does not scale either, so Monzo materialises *blocks of
 consecutive entries with a stored running sum*, only for hot balances:

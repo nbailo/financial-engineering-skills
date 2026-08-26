@@ -47,6 +47,11 @@ jobs:
       # adds no dependency, and its network guard raises on any socket, name lookup or
       # connection attempt, which is what stops a live call being reintroduced quietly.
       - run: python3 examples/prediction-market-bot/run_tests.py
+      # evals/invariants/ pins the arithmetic behind each corrected rule as an exact Decimal
+      # expression. No model, no network, no clock. At least one case per fixture is written to
+      # fail against the rule it replaced, so a green run says the specific wrong answer this
+      # suite used to give is still wrong, which prose alone cannot say.
+      - run: python3 scripts/run_invariants.py
 
   workflow-hygiene:
     # The checks SECURITY.md cites by name: SHA pins with their release tag, read-only

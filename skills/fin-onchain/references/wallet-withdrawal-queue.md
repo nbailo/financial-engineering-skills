@@ -8,8 +8,9 @@ have nothing to do with the chain. Each gate needs a reversal path bound to it.
 - **Chain reserves and minimums**: why "withdraw max" is wrong; the error codes; coinbase maturity.
 - **Withdrawal orchestration**: gross vs net; the two batch architectures; per-recipient idempotency.
 - **Asynchronous rejecting gates**: screening, freezes, authorisation expiry, returned VASP transfers.
-- **The sequence allocator and the outbound queue**: the single-writer lock and its span; the two ways a
-  lock key stops being a lock; the three preconditions a broadcast must clear before it is sent.
+- **Sequence-number ownership and the outbound queue**: the durable allocation row and the fencing epoch;
+  why a lock covers allocation and not the outcome; typed fail-closed refusal; recovery after a crash; the
+  three preconditions a broadcast must clear before it is sent.
 
 ## Chain reserves and minimums
 
@@ -87,20 +88,21 @@ ledger holding both a debit for the original withdrawal and an unrelated credit 
 returned transfers against the originating payout (amount, asset, counterparty address,
 `travelRuleMessageId`) before any crediting rule runs.
 
-## The sequence allocator and the outbound queue
+## Sequence-number ownership and the outbound queue
 
 Where the external ledger orders your instructions by a number you assign (an EVM nonce, an XRPL `Sequence`),
-that number is authoritative state with exactly one writer. The lock must span **allocation through to the
-durable record of what was sent**, because everything between those two points is the window in which a second
-writer allocates the same number.
+that number is authoritative state, and the property that must hold is **durable ownership with fencing**, not
+a lock held across the send. Exactly one signer owns a value; the record of that ownership commits before any
+signature exists; and the write that produces the externally visible effect is conditional on that ownership
+still being current, so a signer that has lost it fails its write instead of landing it.
 
 ```python
 # WRONG, in two independent ways
-with engine.begin() as cx:                              # (2) the span ends at the dedent
+with engine.begin() as cx:                              # (2) nothing durable records who took the number
     cx.execute("SELECT pg_advisory_xact_lock(:k)", {"k": hash(chain) & 0x7FFFFFFF})   # (1) the key
     nonce = cx.execute("SELECT next_nonce FROM wallet WHERE chain = :c FOR UPDATE", ...).scalar()
-signed = sign(build_tx(nonce))                          # outside the lock
-broadcast(signed)                                       # outside the lock
+signed = sign(build_tx(nonce))
+broadcast(signed)                                       # the first externally visible effect
 ```
 
 **(1) The key is not a lock.** Python's `hash()` is salted per interpreter for `str`, so `hash('ethereum')`
@@ -108,9 +110,38 @@ differs in every process while `hash(1) == 1` everywhere; each replica therefore
 lock and all of them succeed at once. Derive the key from a stable digest of the UTF-8 key bytes, never from
 the language's own hash of a string.
 
-**(2) The span ends before the effect.** `with engine.begin():` commits and releases at the dedent, so
-`SELECT … FOR UPDATE` is released before the sign and the broadcast it exists to protect. Hold the transaction
-across the broadcast, and write the record of what was sent inside it.
+**(2) The allocation leaves no durable trace.** The transaction advances `next_nonce` and commits nothing that
+says which payout took the value. A crash before the broadcast leaves a number that is neither free nor
+attributable, and a restart that re-derives it from `eth_getTransactionCount` or from a balance is guessing: an
+in-flight transaction the node has not mined leaves the `latest` count unchanged, so the guess hands back a
+number that is already signed. Commit the allocation and the intent that owns it in one transaction before any
+signing: `(chain, sequence)` unique, the payout id, the signer's ownership epoch, a state.
+
+**Extending the lock across the broadcast is not the fix.** A broadcast's outcome arrives minutes later, or
+never, and no process holds a lock for that long: it either blocks every other send for the same duration or
+loses a lease to a timeout while still believing it holds one. Both failures produce code that looks safe.
+The lock, where you keep one, serialises the *allocation*; the durable row and the epoch carry ownership from
+there. The epoch is one mechanism for that check, and what makes it work is where it is enforced, at the write
+that matters rather than at whatever handed out the lease:
+
+```sql
+-- the effect is conditional on still owning the number; the resource does the checking
+UPDATE sequence_allocation
+   SET state = 'broadcasting', attempt_id = :attempt
+ WHERE chain = :c AND sequence = :n AND state = 'allocated'
+   AND owner_epoch = :epoch;   -- rowcount 0: a later owner holds it. Refuse; do not retry, do not reallocate
+```
+
+**Failures here are typed and fail closed.** A signer that cannot read its allocation row, cannot show its
+epoch is current, or sees that conditional write affect no rows must refuse to sign or refuse to broadcast and
+raise an error the caller can tell apart from a transport error, whatever you name it. A generic exception, a
+bare retry or a silent skip re-enters the allocator and signs a second transaction at a number another signer
+owns.
+
+**Recovery reads the record, then the chain.** Rows in `broadcasting` resolve by sequence plus the full set of
+handles recorded for them; rows in `allocated` with no signature are still owned and may be re-signed under a
+bumped epoch; the next free number is the durable ceiling, cross-checked against the chain, never inferred
+from a balance or from a count that in-flight transactions do not move.
 
 Fireblocks solves the same problem by serialising and documents the cost: it "can only process a single
 transaction per blockchain standard per vault account". The throughput ceiling is therefore one in-flight

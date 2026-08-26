@@ -6,7 +6,8 @@ What this is
 A stub venue that runs inside the test process. It exists so the example can exercise the
 mechanics that go wrong on real venues without talking to one: an idempotent order key, a
 response that does not prove the outcome, maker and taker fills, a fee charged in an asset
-that is not the collateral asset, and a resolution message that gets redelivered.
+that is not the collateral asset, a result that exists before it is final, and a resolution
+message that gets redelivered.
 
 What this is not
 ----------------
@@ -138,6 +139,7 @@ class FakeVenue:
         self.by_client_key: dict[str, str] = {}
         self.events: list[dict] = []
         self.positions_held: dict[str, int] = {o: 0 for o in market["outcomes"]}
+        self.determination: dict | None = None
         self.resolution: dict | None = None
         self._next_order = 1
 
@@ -158,6 +160,9 @@ class FakeVenue:
             raise Rejected("UNKNOWN_MARKET")
         if self.resolution is not None:
             raise Rejected("MARKET_RESOLVED")
+        if self.determination is not None:
+            # A result exists. The book is shut even though the payout is not final yet.
+            raise Rejected("MARKET_DETERMINED")
         if req.outcome not in m["outcomes"]:
             raise Rejected("UNKNOWN_OUTCOME")
         if req.side not in (BUY, SELL):
@@ -256,17 +261,35 @@ class FakeVenue:
             fee={"amount_micro": fee_micro, "rate_ppm": rate_ppm,
                  "asset": self.market["fee"]["asset"]})
 
-    def resolve(self, payout_numerators: list[int], payout_denominator: int) -> dict:
-        """Winner-take-all is [1, 0] over 1. A split is [1, 1] over 2.
-
-        The payout is a vector, so a split market has no winning index and the field is null.
-        Code that reads only the index credits nothing on exactly the case where reading the
-        vector would have credited half.
-        """
+    def _check_vector(self, payout_numerators: list[int], payout_denominator: int) -> None:
         if len(payout_numerators) != len(self.market["outcomes"]):
             raise Rejected("PAYOUT_VECTOR_WRONG_LENGTH")
         if sum(payout_numerators) != payout_denominator:
             raise Rejected("PAYOUT_VECTOR_DOES_NOT_SUM_TO_ONE")
+
+    def determine(self, payout_numerators: list[int], payout_denominator: int) -> dict:
+        """A result exists and can still change. This is not the payout.
+
+        Trading stops, a result exists, and the result stops being revisable. Those are three
+        instants on the venues this stands in for, and only the last one pays. The event says
+        `provisional` so that a client cannot read it as terminal, and this venue has no path
+        that pays here and takes it back later.
+        """
+        if self.resolution is not None:
+            raise Rejected("MARKET_RESOLVED")
+        self._check_vector(payout_numerators, payout_denominator)
+        self.determination = {"payout_numerators": list(payout_numerators),
+                              "payout_denominator": payout_denominator}
+        return self._emit("MARKET_DETERMINED", provisional=True, **self.determination)
+
+    def resolve(self, payout_numerators: list[int], payout_denominator: int) -> dict:
+        """The terminal payout state. Winner-take-all is [1, 0] over 1. A split is [1, 1] over 2.
+
+        The payout is a vector, so a split market has no winning index and the field is null.
+        Code that reads only the index credits nothing on exactly the case where reading the
+        vector would have credited half. Nothing in this venue undoes what this state pays.
+        """
+        self._check_vector(payout_numerators, payout_denominator)
         winners = [i for i, n in enumerate(payout_numerators) if n == payout_denominator]
         self.resolution = {"payout_numerators": list(payout_numerators),
                            "payout_denominator": payout_denominator,

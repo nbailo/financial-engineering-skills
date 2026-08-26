@@ -29,7 +29,7 @@ leaves behind in the diff.
 | `release` | release of the **pending transfer's own amount, in full**, whether you post less than reserved or void; an over-post is rejected, never clamped |
 | `reverse` | a uniqueness constraint on the link from reversal to original (`reverses_transaction_id`), so no transaction is reversed twice; overdraft permitted on the reversal posting type; the reversal posts while the account is frozen |
 | `close` | the residual swept to a control account and the account closed in one transaction; holds already pending are not resolved by the close, and they still expire on their own clock |
-| `reconcile` | a scheduled entrypoint; a read path the writer does not share; the difference landing in a real account with an aged break record (a suspense account plus a `break` row); opening balances backfilled before the first run |
+| `reconcile` | a scheduled entrypoint; a read path the writer does not share; every difference raising an aged break record and quarantining the affected item, with no corrective posting until an authoritative cause is established; opening balances backfilled before the first run |
 
 ## 2 · How to read a verb row
 
@@ -102,7 +102,7 @@ counterparty:
 - **Replay.** Rebuild every balance from the entries and assert equality with the materialised figures, over a
   data set that includes back-dated entries, reversals and discards.
 - **Conservation.** Assert that the whole journal nets to zero per currency, and that every clearing and
-  suspense account is either zero or has an owner and an age.
+  suspense balance is either zero or attributable line by line to an owner, an age and a known cause.
 - **Permutation.** Apply the same set of postings in a different arrival order and assert the same final
   balances, which is the only cheap test that catches a read-modify-write on a balance.
 - **Crash-boundary recovery.** Kill the process between the entry insert and the balance update and assert the

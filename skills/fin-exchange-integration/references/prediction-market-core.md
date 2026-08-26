@@ -231,11 +231,26 @@ what the buy-complement identity needs in order to survive fees. Kalshi's `FeeTy
 structure, which has the same shape; its numeric rates live in a schedule outside the API, and that schedule returned
 HTTP 429 when fetched on 2026-08-25, so no rate for it is quoted here. A `bps × notional` model has neither property.
 
-**A notional model is not miscalibrated here, it is incoherent.** Buying 100 shares of an outcome at 0.99 costs $99 and can
-earn at most $1.00. A taker fee of 1% of notional is $0.99, which is 99% of the largest profit the trade can produce, so the
-trade is EV-negative at every true probability, certainty included. The expected-profit model charges $0.0693 on the same
-trade, which is the rate applied to `q x p x (1 - p)`, the maximum earnings multiplied by the implied probability of earning
-them.
+**A notional model does not merely mis-set the rate here, it charges nearly all the available profit near the bounds.**
+Buying 100 shares of an outcome at 0.99 costs $99 of notional and can earn at most $1.00. A taker fee of 1% *of notional* is
+$0.99, which is 99% of the largest profit the trade can produce. That is not the same as reversing the sign. Per contract the
+gross gain at certainty is `1 - p`, and a fee quoted as a fraction `f` of notional costs `f * p` on entry, so the trade is
+EV-negative at certainty only when
+
+```
+f * p > 1 - p        equivalently        f > (1 - p) / p
+```
+
+At `p = 0.99` that threshold is `0.01 / 0.99`, about 1.0101%, so a 1% notional fee leaves `$100 - $99.00 - $0.99 = $0.01` on
+100 shares: marginally positive, not negative. The threshold moves fast with the price, 11.11% at `p = 0.90` and 100% at
+`p = 0.50`, which is the real objection to the model rather than a sign flip at any one price.
+
+**Name the base before you compare a rate to that threshold.** A fee quoted on *payout* costs `f` per contract rather than
+`f * p`, so 1% of payout is $1.00 on the same trade, cancels the $1.00 gain exactly, and leaves zero. On that base the
+break-even condition is `f > 1 - p`, which is 1% at `p = 0.99`. The two thresholds coincide only at `p = 0.5` and diverge
+toward either bound, so a rate carried from one base to the other is wrong by a factor of `p`. The expected-profit model
+charges $0.0693 on the same trade, which is the rate applied to `q x p x (1 - p)`, the maximum earnings multiplied by the
+implied probability of earning them.
 
 **Watch which denominator you validate the model against.** Fee over *expected* profit is the rate itself and does not move
 with `p`, which is the property the model is built on. Fee over *maximum* profit is `rate x p`, which does move: 6.93% at
@@ -269,9 +284,10 @@ rounding exceeds $0.01, a whole-cent rebate is issued and the accumulator is red
 the fee on a fill a function of the fills before it, so the net fee is not a pure function of price and quantity and cannot be
 recomputed from one fill in isolation. Reconcile total fee per order rather than per fill.
 
-**Ceiling each fill makes the fee super-additive, and the granularity of the ceiling sets how much that costs.** Where the
-pre-rounding fee is linear in contract count, one hundred 1-lot fills pay one hundred ceilings and one 100-lot fill pays one.
-The documented Kalshi granularity is the centicent: the fee-rounding page, fetched 2026-08-25, says the trade fee is "Fee
+**A per-fill ceiling makes the fee super-additive across identical children, and the granularity sets how much that costs.**
+Where the pre-rounding fee is linear in contract count, one hundred 1-lot fills at one price pay one hundred ceilings and
+one 100-lot fill pays one. The documented Kalshi granularity is the centicent: the fee-rounding page, fetched 2026-08-25,
+says the trade fee is "Fee
 from the fee model, rounded up to the nearest $0.0001 (centicent)". At that granularity the slicing penalty on a single
 component is small, and it is the *rounding fee* and the per-order rebate accumulator, not the trade-fee ceiling, that make
 the per-fill number unpredictable. The page's own worked example is the one to reason from: three 1-lot fills of the same
@@ -283,12 +299,26 @@ rather than small, so the granularity is a per-venue fact with a fetch date besi
 venues. **UNVERIFIED for Kalshi:** the pre-rounding fee formula and the current numeric rate, which live in a schedule PDF
 that returned HTTP 429 on 2026-08-25. Any worked ratio you compute for a specific venue is a hypothesis until you have both.
 
-The property that survives whatever the rate and the granularity turn out to be is
-`sum(fee over the fills) >= fee(one fill of the same total size)`. Assert it, and alert when the ratio crosses a configured
-bound, because execution slicing and an aggressive order walking a thin book both multiply the fee directly and neither
-raises. Fee timing moves where PnL is recognised on top of that: a taker charged at match and a maker reimbursed monthly
-against a threshold are the same headline rate and a different cash-flow schedule, and a reimbursement with a floor is not
-receivable until the floor is met.
+The property that survives whatever the rate and the granularity turn out to be is narrower than "slicing costs more". It
+holds only where every child shares the same price, the same role (maker or taker), the same fee schedule, the same asset,
+the same fee function and the same rounding, and the pre-rounding fee is linear in size with each child rounded up:
+
+```
+sum(fee over the children) >= fee(one fill of the same total size)
+```
+
+**Outside those conditions splitting can be cheaper, so do not assert it there.** An order walking a price ladder pays a
+different `p` per child, and on a `p(1-p)` curve a child near a bound is nearly free. A child that rests rather than takes
+pays the maker side, which on a taker-only schedule is nothing. A rebate breaks it directly: the Kalshi accumulator quoted
+above returns a whole cent mid-order, so the second of three identical fills there costs less than the first, and where the
+rebates outweigh the extra ceilings the sliced total is the cheaper one. Where
+the conditions do not hold, reconcile against the fee the venue actually charged and alert when the realised total crosses a
+configured bound in either direction, because execution slicing and an aggressive order walking a thin book both multiply the
+fee directly and neither raises.
+
+Fee timing moves where PnL is recognised on top of that: a taker charged at match and a maker reimbursed monthly against a
+threshold are the same headline rate and a different cash-flow schedule, and a reimbursement with a floor is not receivable
+until the floor is met.
 
 The operational rule is the same on every venue: **book the venue's own fee field**, and keep your model as a pre-trade
 estimate and a reconciliation tolerance. A fee you recomputed is a hypothesis about the venue's rounding.
@@ -456,9 +486,16 @@ def test_fee_is_symmetric_under_the_venue_identity(fee_model):
     # buy 100 YES at 0.99 is sell 100 NO at 0.01; a bps-on-notional model differs by 99x here
     assert fee_model(qty=100, price=Decimal("0.99")) == fee_model(qty=100, price=Decimal("0.01"))
     whole = fee_model(qty=100, price=Decimal("0.99"))
+    # one price, one role, one schedule, one rounding: the only shape where slicing must cost more
     sliced = sum(fee_model(qty=1, price=Decimal("0.99")) for _ in range(100))
-    assert sliced >= whole                                          # ceilings are super-additive
+    assert sliced >= whole                                          # never asserted across a walked price
     assert sliced <= whole * MAX_SLICING_FEE_RATIO                  # a configured bound, not a log line
+
+def test_notional_fee_break_even_is_one_minus_p_over_p():
+    # 1% of notional at p = 0.99 is NOT EV-negative at certainty; the threshold is 0.01 / 0.99
+    p, f = Decimal("0.99"), Decimal("0.01")
+    assert f * p < Decimal(1) - p                       # notional base: net +$0.0001 per contract
+    assert f * Decimal(1) == Decimal(1) - p             # payout base: the same rate breaks even exactly
 
 def test_identity_survives_an_ambiguous_submit(client, venue):
     # resolve by asking about the identity you sent; never re-sign, never resend

@@ -97,6 +97,11 @@ persisted fills into the venue's canonical order before folding. Do not assert t
 *economic* order, which under FIFO, LIFO or average cost it is not. Arrival order must not change it; economic order
 must.
 
+Ship the negative half of the same property. Strip or blank the venue's ordering fields on one fill so the canonical
+order cannot be established from the venue's own data, and assert the fold **rejects** rather than falling back to
+arrival order, insertion order or a timestamp it invented. A guessed sequence produces a realized number that looks
+like every other realized number, so nothing downstream disagrees with it.
+
 ## One instantiation, in Python
 
 This is one language's version, not the specification. `bot` is the client under test and `venue` is a

@@ -285,8 +285,10 @@ def gate_closed(symbol):
 
 
 def reserved_notional(symbol):
-    """An unresolved instruction is held at FULL notional, as though it filled, until
-    the venue says otherwise. Releasing the reserve on a guess is the error."""
+    """An unresolved instruction is held at its worst case, as though it filled, until
+    the venue says otherwise. On a spot buy that is the full notional; an option or a
+    leveraged product is bounded by the venue's own risk model instead. Releasing the
+    reserve on a guess is the error."""
     total = Decimal(0)
     for (blob,) in db.execute(
         "SELECT request_json FROM order_intents WHERE symbol=?"

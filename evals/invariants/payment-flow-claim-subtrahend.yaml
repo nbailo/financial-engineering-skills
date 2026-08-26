@@ -1,0 +1,24 @@
+id: payment-flow-claim-subtrahend
+invariant: A closed claim ends the block, not the exposure. A claim the network settled against you is subtracted from the refund ceiling, so refunds plus claims never exceed the captured amount, and a claim that took nothing subtracts nothing.
+source: examples/payment-flow/README.md:258
+cases:
+  - name: a lost claim is subtracted, leaving only the unclaimed remainder refundable
+    expr: "max(Decimal('0'), Decimal('10000') - Decimal('2500') - Decimal('0') - Decimal('4000'))"
+    op: eq
+    value: "3500"
+    why: the old closed-means-refundable reading counted a lost dispute as closed and subtracted nothing, admitting a 7500 refund.
+  - name: the old reading returns more than was ever captured
+    expr: "(Decimal('2500') + Decimal('0') + Decimal('4000') + Decimal('7500')) - Decimal('10000')"
+    op: gt
+    value: "0"
+    why: refunds plus the lost claim reach 14000 against a 10000 capture, so the cardholder is paid the disputed amount twice.
+  - name: a claim that took nothing subtracts nothing
+    expr: "max(Decimal('0'), Decimal('10000') - Decimal('2500') - Decimal('0') - Decimal('0'))"
+    op: eq
+    value: "7500"
+    why: subtracting a won or warning_closed claim strands 4000 the customer is owed and pushes the credit onto a back-office path no ceiling covers.
+  - name: refunding the corrected ceiling lands the combined exposure exactly on the capture
+    expr: "Decimal('10000') - (Decimal('2500') + Decimal('0') + Decimal('4000') + Decimal('3500'))"
+    op: eq
+    value: "0"
+    why: a ceiling that lets the total drift either way is not a ceiling; below zero over-returns and above it strands money.

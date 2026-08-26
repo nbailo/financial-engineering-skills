@@ -56,8 +56,10 @@ Every comparison produces one of these. Each has an owner, an age, and an action
 | `unmatched_clearing` | clearing record with no matching authorization | force post: **expected**, route to review, not an error |
 | `aged` | any open break older than its class SLA | escalate; blocks close |
 
-**An unexplained break is a liability, not a rounding difference.** Route it to an explicit suspense account
-with an owner and an age; never drop it and never auto-adjust it. The aged bucket is what gives the job teeth:
+**An unexplained break is a liability, not a rounding difference.** Give it a break record with an owner and
+an age, and quarantine the disputed amount so nothing spends or nets it; never drop it and never auto-adjust
+it. A posting to suspense waits for an established cause, because an unexplained difference booked there
+balances the books while making the break unattributable and the next run silent. The aged bucket is what gives the job teeth:
 an open break past its SLA **blocks period close, blocks revenue recognition for the affected rows, blocks
 payout of the affected merchant's balance, and blocks any automated clawback**. A reconciliation whose only
 output is a dashboard number has no teeth, and drifts to green by attrition.

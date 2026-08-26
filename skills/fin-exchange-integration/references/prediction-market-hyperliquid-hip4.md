@@ -2,12 +2,12 @@
 
 > **Provenance**
 > provider: Hyperliquid · surface: HIP-4 outcome markets on HyperCore, via the `info` and `exchange` endpoints · version: experimental, unversioned, staged rollout
-> verified_at: 2026-08-25
-> sources: https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-4-outcome-markets · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/asset-ids · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/hip-4-deployer-actions · https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
-> pinned: GitBook publishes no revision identifier. The HIP-4 overview page rendered the footer "Last updated 2 months ago" when fetched on 2026-08-25. Every page above is also served as raw Markdown by appending `.md` to its URL; quotations below were taken from one or both forms, and where a page did not return the section being checked that is said in place rather than filled in. Re-fetch before relying on any of it; treat this file as dated, not current.
-> verified: the name "HIP-4: Outcome markets" as a documentation page title and URL segment; the outcome asset-id encoding and its three spellings; `outcomeMeta`, `settledOutcome`, `outcomeTemplates` and `outcomeMetaUpdates` as request and subscription types; the `outcome`, `name`, `description`, `sideSpecs`, `quoteToken`, `settleFraction` and `details` fields with their example values; the merged-book rule and price-side-time priority; the deployer settlement actions, the `settleFraction` range and the question settlement constraint; the sub-deployer grant list and the 183-day deactivation rule; the description encoding and its keyword hint formats; the deployer fee scale formula and the no-maker-rebate rule; the `(block_time, coin, tid)` trade key.
-> unverified: whether HIP-4 deployer actions are live on mainnet as opposed to testnet, since the published deployer limits are given only as testnet values; the tick and lot rules for outcome assets, which the Tick and lot size page does not mention; whether `cloid` is accepted on an outcome order, which no page read here states; the complete `outcomeMeta` response schema, since the deployer page names fields the published example omits; the current base outcome trading fee rate; whether an `l2Book` or `trades` subscription on a `#<encoding>` coin returns the merged book or one leg; the action names, request shapes and success-response shape of the split, merge and negate outcome actions, because the exchange-endpoint page could not be read to its outcome sections in this pass; how protocol-deployed recurring outcomes are settled, beyond the one example sentence quoted below.
-> revalidate_when: multi-outcome markets ship to mainnet; the `outcomeMeta` example gains or loses a field; `settleQuestion2` is superseded the way `settleQuestion` was; the "Fees are currently zero for outcome markets for initial testing" sentence disappears; the asset-id encoding formula changes; or the exchange-endpoint page's `#split-outcome` and `#negate-outcome` sections become readable.
+> verified_at: 2026-08-26
+> sources: https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-4-outcome-markets · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/asset-ids · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/spot · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/hip-4-deployer-actions · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/nonces-and-api-wallets · https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications · https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
+> pinned: GitBook publishes no revision identifier. The HIP-4 overview page rendered the footer "Last updated 2 months ago" when fetched on 2026-08-25. Every page above is also served as raw Markdown by appending `.md` to its URL; quotations below were taken from one or both forms, and where a page did not return the section being checked that is said in place rather than filled in. On 2026-08-26 the HIP-4, exchange-endpoint, nonces-and-api-wallets and WebSocket-subscriptions pages were re-fetched as raw Markdown; the exchange endpoint returned its four outcome sections that time, and the quotations taken from them carry that date. Re-fetch before relying on any of it; treat this file as dated, not current.
+> verified: the name "HIP-4: Outcome markets" as a documentation page title and URL segment; the outcome asset-id encoding and its three spellings; `outcomeMeta`, `settledOutcome`, `outcomeTemplates` and `outcomeMetaUpdates` as request and subscription types; the `outcome`, `name`, `description`, `sideSpecs`, `quoteToken`, `settleFraction` and `details` fields with their example values; the merged-book rule and price-side-time priority; the deployer settlement actions, the `settleFraction` range and the question settlement constraint; the sub-deployer grant list and the 183-day deactivation rule; the description encoding and its keyword hint formats; the deployer fee scale formula and the no-maker-rebate rule; the `(block_time, coin, tid)` trade key; and, on 2026-08-26, the four `userOutcome` action shapes with their one-line descriptions and their identical acknowledgement-only success body, the nonce set rules, and the API-wallet pruning warning.
+> unverified: whether HIP-4 deployer actions are live on mainnet as opposed to testnet, since the published deployer limits are given only as testnet values; the tick and lot rules for outcome assets, which the Tick and lot size page does not mention; whether `cloid` is accepted on an outcome order, which no page read here states; the complete `outcomeMeta` response schema, since the deployer page names fields the published example omits; the current base outcome trading fee rate; whether an `l2Book` or `trades` subscription on a `#<encoding>` coin returns the merged book or one leg; whether any info or WebSocket record reports an applied split, merge, merge-question or negate keyed to the action's nonce, since the ledger-update union on the subscriptions page enumerates no outcome delta type; what the exchange endpoint returns for a nonce it has already used; how protocol-deployed recurring outcomes are settled, beyond the one example sentence quoted below.
+> revalidate_when: multi-outcome markets ship to mainnet; the `outcomeMeta` example gains or loses a field; `settleQuestion2` is superseded the way `settleQuestion` was; the "Fees are currently zero for outcome markets for initial testing" sentence disappears; the asset-id encoding formula changes; a `userOutcome` delta type appears in the ledger-update union; or the `userOutcome` success body gains a field.
 
 Outcomes are Hyperliquid's prediction-market and bounded-payoff primitive. The docs describe them as "fully
 collateralized contracts that settle within a fixed range", useful "for applications such as prediction markets and
@@ -23,7 +23,7 @@ markets will be rolled out in stages." Write the client so that a rollout stage 
 - The merged book: buying Yes at `p` is selling No at `1 - p`
 - Settlement is a fraction, not a bit, and two different parties set it
 - The description is a pipe-delimited encoding whose values may contain a colon
-- Split, merge, negate: value-moving actions whose payloads this file does not restate
+- Split, merge, negate: attribute the effect to the operation, not to a balance delta
 - Fees: a base rate times a deployer scale, and no maker rebate
 - What is unverified, stated plainly
 - Assertions to write
@@ -228,30 +228,73 @@ produce `template:<template_id>`, and "The `template:` prefix is reserved. Only 
 Parse the description into typed fields, assert the keys you require are present, and refuse to trade an outcome whose
 description you could not parse. A silently missing `expiry` is a position with no known end.
 
-## Split, merge, negate: value-moving actions whose payloads this file does not restate
+## Split, merge, negate: attribute the effect to the operation, not to a balance delta
 
-Actions exist that move value between collateral and shares without crossing the book. The HIP-4 page states it and
-names where they live, quoted: "Advanced users may also manually split and merge outcomes to convert between primary
-and dual balances", pointing at `exchange-endpoint.md#split-outcome` and `exchange-endpoint.md#negate-outcome` for the
-API examples. The operations are split, merge and negate, the last being how a holder of No shares across outcomes of
-one question converts into Yes shares of the others.
+Four actions move value between quote tokens and shares without crossing the book. The HIP-4 page introduces two of
+them, quoted: "Advanced users may also manually split and merge outcomes to convert between primary and dual
+balances", and for a question, "users with No shares on different outcomes of the same question can redeem quote
+tokens before the underlying outcomes settle". The exchange endpoint returned all four sections on 2026-08-26, and
+each is a `userOutcome` action:
 
-**UNVERIFIED, and it is the part a client would build against:** the exact action names, request field shapes and
-success-response shape. The exchange-endpoint page is long, and neither its HTML nor its `.md` form returned its
-outcome sections in this pass, so nothing here quotes them. An earlier pass recorded a four-row table of exact
-payloads and an acknowledgement-only success response carrying no identifier. That table has been removed rather than
-reproduced, because a request shape copied from an unread page is exactly the kind of claim that reaches production as
-code. Read the anchors above before you write the call.
+```json
+{"type": "userOutcome", "splitOutcome":  {"outcome": Number, "amount": String}}
+{"type": "userOutcome", "mergeOutcome":  {"outcome": Number, "amount": String | null}}
+{"type": "userOutcome", "mergeQuestion": {"question": Number, "amount": String | null}}
+{"type": "userOutcome", "negateOutcome": {"question": Number, "outcome": Number, "amount": String}}
+```
 
-What survives without the payload shapes is the design rule, and it does not depend on them. These are value-moving
-external effects reached over a network, so treat every one as ambiguous on timeout. Commit an intent row carrying the
-exact nonce and amount before the send, in a transaction that closes before the call rather than one enclosing it. On
-an unknown outcome, resolve by reading the balances the action would have changed, comparing them against a pre-send
-snapshot stored in that intent row, and never by resending with a fresh nonce. **Verify before you rely on it whether
-the success response carries any identifier at all**; if it does not, that balance comparison is your only resolution
-path and the intent row is the only handle you will hold. If any variant accepts a "max" sentinel in place of an
-explicit amount, a blind retry is unsafe in a second way, because the same request submitted twice against a changed
-balance is not the same instruction. Send an explicit amount on any path that can retry.
+Split turns "`X` quote tokens into `X` Yes and `X` No shares" and merge is its inverse; merge question turns "`X`
+Yes shares from each outcome associated to the same question into `X` quote tokens"; negate converts "`X` No shares
+from an outcome associated with a question into `X` Yes shares of every other outcome associated with the question".
+On the two merge variants the page marks `amount` as `String | null` and notes "null means max". All four document
+the same success body, quoted: `{'status': 'ok', 'response': {'type': 'default'}}`. It carries no identifier, so
+nothing in the reply names the operation you sent.
+
+**Do not decide what happened by measuring an aggregate balance.** A `-100` quote delta is produced by a split of
+`100`, and equally by a fill of `250` shares at `0.40`, and equally by a transfer out, and equally by two of those
+netting against a third. A delta is a quantity, and a quantity does not carry the identity of its cause. Attribute
+the effect from an accounting record the venue itself keys to the operation, or do not attribute it at all. Two
+properties are at stake, and they need different mechanisms.
+
+**At most once.** The nonce is the operation's identity and the venue enforces uniqueness on it: "the 100 highest
+nonces are stored per address. Every new transaction must have nonce larger than the smallest nonce in this set and
+also never have been used before", and a nonce "must be within `(T - 2 days, T + 1 day)`, where `T` is the unix
+millisecond timestamp on the block of the transaction". So resolve a timeout by re-sending the byte-identical signed
+action under its original nonce, which the venue either applies once or rejects as used. Never sign a fresh nonce
+for a value-moving action whose outcome you are unsure of: that is a second instruction, and it can apply twice. The
+replay holds only while that nonce is still above the smallest of the signer's hundred and still inside the time
+window, and only while the signing wallet lives, since "previously signed actions can be replayed once the nonce set
+is pruned". Outside those conditions the replay is not available to you.
+
+**Correctly attributed.** At most once still leaves the question of whether it happened, and your position and cost
+basis need an answer. A measured delta answers it in one case only: where attribution over the measurement window is
+provably isolated, meaning nothing but this operation could have moved those balances. Write that claim down where
+you rely on it, and write down what would break it. On this surface all of the following do.
+
+| what breaks isolation | why the same delta appears |
+| --- | --- |
+| any fill | the books are merged, so a resting buy of No moves the same balances as a sell of Yes |
+| settlement | it "automatically converts either Yes to `settleFraction` quote tokens and No to `1 - settleFraction`" on the venue's clock, and the first market settles daily at 06:00 UTC |
+| a second `userOutcome` action | any process signing for the same account; one API wallet signs for a user, a vault and a subaccount alike |
+| a transfer or a fee | quote tokens arriving or leaving for an unrelated reason inside the window |
+| `"amount": null` | max is resolved venue-side, so there is no expected magnitude to compare a delta against at all |
+
+Where isolation cannot be established, there are two honest moves and no third. Read an authoritative per-operation
+record, if one exists for these actions. Or mark the operation UNKNOWN, stop that account's outcome path, and
+resolve it by asking: the nonce-identical replay above while its window holds, otherwise a human holding the nonce
+and the signed payload. Never close an UNKNOWN by differencing balances, and never write a position or a cost basis
+from a delta whose cause you inferred.
+
+**UNVERIFIED, and it decides the shape of the recovery path:** whether such a per-operation record exists. The
+ledger-update union published on the subscriptions page enumerates deposits, withdrawals, internal and sub-account
+transfers, liquidations, vault deltas, spot transfers, class transfers, genesis and rewards claims, and no outcome
+delta type at all. No page read on 2026-08-26 names a record that reports an applied split, merge or negate against
+its nonce. Settle that question before you design the recovery path. Until it is settled, an ambiguous `userOutcome`
+is UNKNOWN rather than resolvable.
+
+Commit an intent row carrying the exact nonce, the action and an explicit amount before the send, in a transaction
+that closes before the call rather than one enclosing it. Send an explicit amount on any path that can retry: with
+`null` the venue picks the size, so you cannot state in advance what a correct application would even be.
 
 ## Fees: a base rate times a deployer scale, and no maker rebate
 
@@ -301,9 +344,10 @@ Each of these is a gap in what the official pages establish, not a thing I decid
 - **`settleQuestion`.** The original `settleQuestion` variant is discontinued in favour of `settleQuestion2`, while the
   `setSubDeployers` grant is still spelled `settleQuestion` and "authorizes the `settleQuestion2` action". Read that as
   evidence that action names in this surface change in place, and pin the variant you send.
-- **The split, merge and negate action payloads and their success response.** Named in that section above.
-  The exchange-endpoint page did not return its outcome sections in this pass, so no request shape and no response
-  shape is quoted anywhere in this file. Read them from the page before writing the call.
+- **A per-operation record for split, merge and negate.** The four action shapes and their acknowledgement-only
+  success body are quoted above from the exchange endpoint. What no page establishes is any record reporting one of
+  them as applied, keyed to its nonce: the ledger-update union names no outcome delta type. Until that is settled an
+  ambiguous `userOutcome` resolves to UNKNOWN, never to a balance comparison.
 - **Protocol-deployed recurring settlement.** How a recurring outcome's `settleFraction` is determined is not restated
   here. The only sentence this pass could verify is the daily-06:00-UTC BTC example quoted above, and the HIP-4 page
   refers to a separate specification for the rest.
@@ -343,14 +387,19 @@ def test_flat_sell_of_yes_reserves_the_complement(keeper):
     keeper.place(outcome=7, side=0, action="sell", qty=Decimal("100"), px=Decimal("0.40"))
     assert keeper.reserved_collateral == Decimal("60")
 
-def test_user_outcome_action_commits_intent_before_the_send(db, gateway):
-    # asserts our own recovery path, which holds whatever the response shape turns out to be:
-    # the committed nonce and pre-send balance snapshot resolve the timeout, not a resend
+def test_user_outcome_timeout_resolves_by_identity_never_by_a_delta(db, gateway):
     intent = gateway.split_outcome(outcome=7, amount=Decimal("100"))
     assert db.committed(intent.nonce)          # readable by another process, not a flush
     gateway.fail_next_response_with_timeout()
-    outcome = gateway.resolve(intent)
-    assert outcome in {"APPLIED", "NOT_APPLIED"} and gateway.resend_count == 0
+    gateway.simulate_fill(outcome=7, side=0, qty=Decimal("250"), px=Decimal("0.40"))
+    assert gateway.replayed == [intent.nonce] and gateway.fresh_nonces == 0
+    assert gateway.resolve(intent) == "UNKNOWN"        # at most once, still not attributable
+    assert gateway.balance_snapshots_compared == 0     # the fill reproduces the split's delta
+    assert db.position(outcome=7, side=0) == Decimal("250")   # not 350
+
+def test_merge_sends_an_explicit_amount_and_never_the_null_max(gateway):
+    with pytest.raises(ValueError):
+        gateway.merge_outcome(outcome=7, amount=None)
 
 def test_no_maker_rebate_is_modelled(fee_model):
     assert fee_model.maker_rate(outcome=7) >= 0

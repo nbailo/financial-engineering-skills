@@ -178,8 +178,15 @@ WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
 ALERT_SINK = os.environ["PAYMENTS_ALERT_SINK"]
 
 # A dispute is closed only in these three states. Anything else, including a status
-# this code has never seen, is open, and open means no refund. Fail closed.
+# this code has never seen, is open. On a Stripe card chargeback the vendor documents
+# the block, so open means no refund here; that is Stripe's answer for this claim type
+# on this rail, not a general rule. Fail closed on a status we do not recognise.
 CLOSED_DISPUTE = {"won", "lost", "warning_closed"}
+
+# Closing does not end the exposure. `lost` means the network already took the money,
+# so the claim is a subtrahend in the ceiling below; `won` and `warning_closed` take
+# nothing. A closed-means-refundable reading returns the amount a second time.
+CLAIM_TOOK_THE_MONEY = {"lost"}
 
 # Ordering is per object, on the authority's own sequence, and the guard is the write.
 # These are the enumerated legal (state, event) pairs. `succeeded → failed` is legal,
@@ -234,14 +241,21 @@ def create_refund(order_id):
     if dispute is not None and dispute.status not in CLOSED_DISPUTE:
         return jsonify(error=f"dispute {dispute.id} is open ({dispute.status})"), 409
 
-    # The ceiling is the captured amount minus everything in flight, computed here from
-    # the authority's own numbers.
+    claimed = 0
+    if dispute is not None and dispute.status in CLAIM_TOOK_THE_MONEY:
+        if dispute.currency != charge.currency:
+            # Claim FX is struck at claim time. There is no rate we may invent.
+            return jsonify(error=f"dispute {dispute.id} is in {dispute.currency}"), 409
+        claimed = dispute.amount
+
+    # The ceiling is the captured amount minus everything in flight and everything a
+    # claim has taken, computed here from the authority's own numbers.
     pending = db.session.execute(
         text("SELECT COALESCE(SUM(amount_cents),0) FROM refund_attempts"
              " WHERE charge_id = :c AND status IN ('pending','requires_action')"),
         {"c": charge.id},
     ).scalar_one()
-    refundable = charge.amount_captured - charge.amount_refunded - pending
+    refundable = charge.amount_captured - charge.amount_refunded - pending - claimed
     if amount_cents > refundable:
         return jsonify(error=f"exceeds refundable {refundable}"), 400
 
@@ -453,8 +467,9 @@ CREATE TABLE refund_watermarks (
 **Changed.** The idempotency key is a `uuid4` minted at intent formation and committed before the call,
 so it is identical on every retry and survives a rollback that a BIGSERIAL does not. The exception handler
 splits into DEFINITE-NO and UNKNOWN, and UNKNOWN returns `202` and resolves by querying instead of
-retrying. The refund ceiling is computed from `amount_captured` with in-flight refunds counted, and an
-open dispute refuses the refund outright. The webhook re-fetches the refund and reads every field from
+retrying. The refund ceiling is computed from `amount_captured` with in-flight refunds and a lost
+claim both counted, and an open dispute refuses the refund outright, which is Stripe's documented answer
+for a card chargeback rather than a rule for every claim type on every rail. The webhook re-fetches the refund and reads every field from
 that response. The version guard became a conditional `INSERT … ON CONFLICT … WHERE` whose rowcount is
 the decision, with the same-second case handled by an applied-event-id set. Unresolvable events go to a
 dead-letter table and are *not* marked processed.
@@ -547,9 +562,12 @@ WHY       The strings "dispute" and "chargeback" appear nowhere in the endpoint.
 EVIDENCE  app/refunds.py create_refund(), the path from the ceiling check straight to Refund.create
 FIX       Expand `latest_charge.dispute` on the retrieve and refuse while the dispute status is not one of
           the three closed states: app/refunds.py CLOSED_DISPUTE, applied in create_refund(). An unknown
-          status counts as open, so the check fails closed.
+          status counts as open, so the check fails closed. Closing is not the end of it: a `lost`
+          dispute already took the money, so it is subtracted from the ceiling
+          (CLAIM_TOOK_THE_MONEY), and a claim in another currency refuses rather than guessing a rate.
 TEST      An open dispute on the charge refuses the refund; a status the code has never seen refuses it
-          too.
+          too; a lost dispute leaves only the unclaimed remainder refundable and a second refund of the
+          claimed amount is refused.
 
 FINDING   An order can be over-refunded up to its whole total, repeatably.
 WHY       The ceiling is `order.amount_cents`, which is not the captured amount once a partial capture, an

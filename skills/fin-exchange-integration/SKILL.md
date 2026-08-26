@@ -82,9 +82,11 @@ local validation or serialization rejection. Everything else is resolved by aski
 
 ### An unresolved instruction is a position, and it carries a clock
 
-While the outcome is unknown, reserve the worst case: hold it at **full notional** as though it filled, close the risk gate for
-that instrument, and give the state a wall-clock budget declared as config. What that budget expires into is ordered by whether
-the action reduces risk in **every** state still possible: filled, partly filled, or never created.
+While the outcome is unknown, reserve the worst case: hold the **venue-and-product-defined worst-case exposure** for that
+instrument as though the order filled, close the risk gate for it, and give the state a wall-clock budget declared as config.
+For a spot buy that equals the notional; for a long option it is the premium paid, for a short option it is unbounded or set by
+the venue's margin model, and under leverage or a nonlinear payoff it is neither. What that budget expires into is ordered by
+whether the action reduces risk in **every** state still possible: filled, partly filled, or never created.
 
 - **Always safe:** stop sending, and cancel by the identity you sent where the venue cancels by client identity. Cancelling an
   order that never existed is a no-op; cancelling one that rests removes exposure you did not intend.
@@ -124,11 +126,12 @@ Specialises *durable dedupe*. Persist every fill before it changes anything, ded
 the state transition, reject the duplicate rather than ignoring it, and write the dedupe record in the same transaction as the
 state it protects, because an in-memory dedupe set re-applies every counted fill after a restart. Establish the canonical
 economic order from the venue's own sequencing, trade identity, execution sequence number, transaction time, in the precedence
-it documents, then fold the persisted fills in that order. The property is **convergence, not commutativity**: a stream replayed
-shuffled, duplicated and interrupted by a restart reaches the same state as that stream in arrival order, because both are
-sorted into the canonical order before folding. Realized PnL under FIFO, LIFO or average cost is a function of the economic
-sequence, so the same fills in a different economic order are a different number. Read the cumulative totals the venue publishes
-(`executedQty`, `cumQty`) rather than summing observed deltas, and reconcile the two where the venue publishes both.
+it documents, then fold the persisted fills in that order; where the venue's own data cannot establish that order, reject
+explicitly rather than guessing a sequence. The property is **convergence, not commutativity**: a stream replayed shuffled,
+duplicated and interrupted by a restart reaches the same state as that stream in arrival order, because both are sorted into the
+canonical order before folding. Realized PnL under FIFO, LIFO or average cost is a function of the economic sequence, so the same
+fills in a different economic order are a different number. Read the cumulative totals the venue publishes (`executedQty`,
+`cumQty`) rather than summing observed deltas, and reconcile the two where the venue publishes both.
 
 ### A pushed lifecycle event is a claim about a state the venue owns
 
@@ -200,7 +203,7 @@ provider-support matrix stating the level for each.
 - [prediction-market-polymarket-v2.md](references/prediction-market-polymarket-v2.md): the diff signs, posts or books a Polymarket CLOB V2 order: `py-clob-client-v2`, `@polymarket/clob-client-v2`, `builderCode`/`builder_code`, pUSD, `getClobMarketInfo`, `feeSchedule`, `orderPriceMinTickSize`, a `0.005`/`0.0025` tick, or a signed order still carrying `feeRateBps`, `nonce` or `taker`
 - [prediction-market-kalshi.md](references/prediction-market-kalshi.md): the diff trades, books or settles a Kalshi event contract: `outcome_side`/`book_side`, `orderbook_fp`, `use_yes_price`, `price_ranges`, a `*_dollars` or `*_fp` fixed-point field, `client_order_id`, an amend `count`, `open_interest_fp`, `exchange_index`, or `determined`/`amended`/`finalized`
 - [prediction-market-limitless.md](references/prediction-market-limitless.md): the diff names `limitless`, `api.limitless.exchange`, `lmts-api-key`, `venue.exchange`/`venue.adapter`, a `"Limitless CTF Exchange"` EIP-712 domain, `orderEvent`, `subscribe_order_events`, `settlementStatus`, or `clientOrderId` on Base
-- [prediction-market-hyperliquid-hip4.md](references/prediction-market-hyperliquid-hip4.md): the diff touches a Hyperliquid outcome market: `outcomeMeta`, `settledOutcome`, `outcomeMetaUpdates`, `settleFraction`, `sideSpecs`, `userOutcome`, `splitOutcome`/`mergeOutcome`/`negateOutcome`, a `#<encoding>` coin or an asset id above `100_000_000`
+- [prediction-market-hyperliquid-hip4.md](references/prediction-market-hyperliquid-hip4.md): the diff touches a Hyperliquid outcome market: `outcomeMeta`, `settledOutcome`, `outcomeMetaUpdates`, `settleFraction`, `sideSpecs`, `userOutcome`, `splitOutcome`/`mergeOutcome`/`mergeQuestion`/`negateOutcome`, a `#<encoding>` coin or an asset id above `100_000_000`
 - [test-properties.md](references/test-properties.md): you are writing or reviewing the tests for any of the five properties above
 - [seams.md](references/seams.md): the same process posts fills into a ledger, or is both a venue for its own clients and a client of another venue
 

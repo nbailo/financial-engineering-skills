@@ -83,7 +83,7 @@ DEPOSIT   (emit only when the change touches a crediting path)
 WITHDRAWAL   (emit only when the change touches a broadcast path)
   intent identity      the chain model's identity, minted and committed before the send  file:line
   broadcast handle set every handle emitted for the intent, and a confirmer reading all  file:line
-  allocator lock       key derivation, and the span the lock holds                       file:line
+  sequence ownership   owner row committed before signing, fenced at the write           file:line
   queue preconditions  ordering continuity, fee-paying reserve, absolute fee ceiling     file:line
 ```
 
@@ -145,9 +145,11 @@ or an intent row flushed but not committed before the send.
 reads the whole set and stops on the case where the sequence number is consumed by a handle that is not yours.
 Fails the slot: a single current-handle column, or a superseded-handle column that is written and never read.
 
-**allocator lock.** One lock spanning allocation, signing, broadcast and the durable record, keyed on stable
-bytes identical in every replica. Fails the slot: a lock released before the broadcast, or a key derived from
-a per-process value.
+**sequence ownership.** One signer owns the number through a record committed before any signature exists,
+and the write that produces the effect is conditional on that ownership still holding, so a stale owner's
+write fails rather than lands. Fails the slot: an allocation with no durable record of who took it, a lock
+asked to span the broadcast and its outcome, a key derived from a per-process value, or a signer that cannot
+establish ownership and continues into signing on a generic error or a retry.
 
 **queue preconditions.** Ordering continuity, a fee-paying reserve sized against the queued depth, and an
 absolute fee ceiling denominated in the asset, each checked before every broadcast, each halting and paging on

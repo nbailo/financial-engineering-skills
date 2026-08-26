@@ -9,7 +9,7 @@ liquidation distance.
 ## Contents
 
 - **The fold**: average entry as an order-independent fold, why incremental diverges, the arrival-order test,
-  and the venue's canonical order, which realized PnL does depend on
+  and the venue's canonical order, which realized PnL does depend on, and the rejection branch when it is unknowable
 - **Position keys**: `(symbol, positionSide)`, netting vs hedge, the fabricated flat −3; **adds, reduces and
   flips**: `avg_px_open` vs `avg_px_close`, realized quantity capped, the closed-cycle snapshot
 - **Contract units**: per-venue units, `ctMult × ctVal`, Deribit USD amounts, the 1/x payoff, quanto
@@ -65,10 +65,12 @@ def test_avg_px_invariant_to_arrival_order(fills):
 the fills arrived, but realized PnL under FIFO, LIFO or average cost is a function of the order in which the fills
 economically occurred, so the same set in a different economic order is a different number. One discipline serves
 both: sort the persisted fills into the venue's own canonical order, trade identity, execution sequence number and
-transaction time in the precedence that venue documents, then fold. What is being asserted is convergence rather than
-commutativity. A stream replayed shuffled, duplicated and interrupted by a restart lands on the same state as the same
-stream in arrival order, because both are sorted before they are folded. The arrival-order test above is the correct
-form of that assertion; a test asserting that realized PnL is invariant to *economic* order asserts a bug.
+transaction time in the precedence that venue documents, then fold. Where the venue's own data cannot establish that
+order, reject explicitly rather than guessing a sequence, because a guessed order yields a realized number nothing
+will disagree with. What is being asserted is convergence rather than commutativity. A stream replayed shuffled,
+duplicated and interrupted by a restart lands on the same state as the same stream in arrival order, because both are
+sorted before they are folded. The arrival-order test above is the correct form of that assertion; a test asserting
+that realized PnL is invariant to *economic* order asserts a bug.
 
 **The storage boundary is where the fold leaks**; it is only as exact as the column it reloads from. Freqtrade
 declares every money field as SQL `Float` (`ft_amount`, `price`, `average`, `filled`, `cost`, `funding_fee`,

@@ -4,6 +4,12 @@ One exact total divided among N parts, or a rate applied per line and again at t
 irrelevant here and conservation is the whole property: the largest-remainder algorithm with its arithmetic
 written out, and the two places a real difference has to land.
 
+## Contents
+
+- Largest-remainder allocation, with complete worked arithmetic
+- Where the residue goes, and when there isn't one
+- Review checklist
+
 ## Largest-remainder allocation, with complete worked arithmetic
 
 Naive per-part rounding does not conserve. Matt Foemmel's conundrum: split 5¢ 30/70 half-up and you get
@@ -42,6 +48,12 @@ total = -500, weights = [1, 1, 1]-> base [-167,-167,-167], rem 1                
 **The invariant is `sum(parts) == whole`, exactly, asserted at runtime: for every input including
 `total = 0`, `total < 0`, `len(weights) == 1`, and a weight of `0`.** A zero weight must receive 0: base 0,
 residue 0, so it sorts last and never collects a remainder unit; test that rather than trust it.
+
+**The boundary of that invariant is the split itself**, and `whole` is the amount actually available to
+distribute. A fee, a withholding, a network cost or a platform cut taken on the way out crosses that boundary:
+it is either one of the parts, or already subtracted from `whole` before the call, and the assert says which.
+`sum(parts) == gross` over a split that also pays a fee is not a conservation check; it is a check that fails
+on a correct implementation, and it fails until someone widens it into a tolerance.
 
 **The tie-break is load-bearing.** `order` must be a total order over a stable key: declared sort position,
 then entity id; never `dict` insertion order, `set` iteration order, or a hash-map walk. An unstable

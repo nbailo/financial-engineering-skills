@@ -37,7 +37,7 @@ authority: EXTERNAL (Binance) · exposure: own
   against it is available, and reconciliation is therefore the primary proof.
 - `SELF`: nothing outside holds the truth for that quantity. A system-of-record ledger, a matching engine, an
   ID assigner, a custody signer's own view of its funds and nonces. Replay, determinism and conservation
-  assertions are the proof, because there is nothing to reconcile against.
+  assertions over a stated boundary are the proof, because there is nothing to reconcile against.
 
 **Authority is a property of a quantity, not of a codebase, and not of a process.** One process routinely
 holds external authority for settlement state, self authority for the liabilities it books against that

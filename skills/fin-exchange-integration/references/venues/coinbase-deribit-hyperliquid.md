@@ -103,7 +103,7 @@ def submit_coinbase(http, intent, budget_s: float) -> Resolution:
             return resolve_by_scan(http, intent)     # still PROOF the order exists; never re-mint the ID
         return Resolution.REJECTED(reason)           # INSUFFICIENT_FUND / PRODUCT_TRADING_HALTED /
                                                      # UNSUPPORTED_ORDER_CONFIGURATION = definitely not created
-    return Resolution.INFLIGHT_UNKNOWN               # full notional in risk; gate the product; escalate
+    return Resolution.INFLIGHT_UNKNOWN               # worst-case exposure in risk; gate; escalate
 ```
 
 Two things that code encodes and prose loses. **The body is frozen with the ID**: the replay returns whatever

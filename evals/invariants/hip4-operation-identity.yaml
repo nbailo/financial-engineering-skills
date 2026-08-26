@@ -1,0 +1,29 @@
+id: hip4-operation-identity
+invariant: the effect of a HIP-4 split, merge or negate is taken from the venue's per-operation record keyed to that operation's nonce, never from a measured aggregate balance delta
+source: skills/fin-exchange-integration/references/prediction-market-hyperliquid-hip4.md:253
+cases:
+  - name: a fill reproduces the exact quote delta of a split of 100
+    expr: "abs((Decimal('0') - Decimal('100')) - (Decimal('0') - Decimal('250') * Decimal('0.40')))"
+    op: eq
+    value: "0"
+    why: splitting 100 quote and buying 250 shares at 0.40 move the aggregate quote balance by the same -100, so the delta cannot name its cause
+  - name: attribution from the per-operation record leaves the position at the filled quantity
+    expr: "Decimal('250') + Decimal('0')"
+    op: eq
+    value: "250"
+    why: the delta rule reads -100 as a completed split and books 250 + 100 = 350 Yes, overstating the position by the whole split amount
+  - name: a merge sent with amount null applies the venue-side minimum, not the pre-send balance
+    expr: "min(Decimal('40'), Decimal('100'))"
+    op: eq
+    value: "40"
+    why: null means max, so a client that books its pre-send expectation of 100 records 60 shares of merge that never happened
+  - name: a timeout replayed under the original nonce cannot debit the quote balance twice
+    expr: "Decimal('100') * Decimal('1')"
+    op: eq
+    value: "100"
+    why: resolving the timeout with a freshly signed nonce applies the split a second time and debits 200
+  - name: the split amount stays exact through the round trip that a float would round
+    expr: "Decimal('0.10') + Decimal('0.20') - Decimal('0.30')"
+    op: eq
+    value: "0"
+    why: an amount derived from a float-valued balance delta drifts from the string amount the action carried

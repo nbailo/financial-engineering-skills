@@ -1,0 +1,29 @@
+id: onchain-nonce-ownership
+invariant: A sequence number is durably owned before it is signed, the next free number comes from the durable ceiling rather than a chain count, and only the current ownership epoch can land the write.
+source: skills/fin-onchain/SKILL.md:135
+cases:
+  - name: next free sequence is the durable ceiling, not the chain count
+    expr: "max(Decimal('100'), Decimal('103') + Decimal('1'))"
+    op: eq
+    value: "104"
+    why: re-deriving the next nonce from eth_getTransactionCount at latest returns 100 while 100 through 103 are already signed and in flight, so recovery hands back a number that is already spent
+  - name: the count-derived guess collides with every in-flight number
+    expr: "max(Decimal('100'), Decimal('103') + Decimal('1')) - Decimal('100')"
+    op: gt
+    value: "0"
+    why: a zero difference would mean the chain count already covers the in-flight window, and a positive one counts the signed transactions a balance-or-count guess would re-sign over
+  - name: ownership is durable before the first externally visible effect
+    expr: "min(Decimal('1') - Decimal('0'), Decimal('1') - Decimal('1'))"
+    op: ge
+    value: "0"
+    why: with the record written only after the broadcast the two instants are 0 minus 0 and 0 minus 1, so the minimum is minus one and a crash leaves a signed transaction that no durable row owns
+  - name: a stale owner's conditional write affects no rows
+    expr: "max(Decimal('0'), min(Decimal('1'), Decimal('1') + Decimal('4') - Decimal('7')))"
+    op: eq
+    value: "0"
+    why: a signer holding epoch 4 while epoch 7 owns the number must fail its write, and any positive rowcount is a second transaction landing at an owned nonce
+  - name: the current owner's conditional write still lands
+    expr: "max(Decimal('0'), min(Decimal('1'), Decimal('1') + Decimal('7') - Decimal('7')))"
+    op: eq
+    value: "1"
+    why: a fence that rejects the legitimate owner halts the outbound queue, so the epoch comparison must admit equality

@@ -7,6 +7,7 @@
 > https://docs.polymarket.com/trading/fees ·
 > https://docs.polymarket.com/market-data/market-details ·
 > https://docs.polymarket.com/api-reference/markets/get-clob-market-info ·
+> https://docs.polymarket.com/api-reference/trade/get-single-order-by-id ·
 > https://docs.polymarket.com/concepts/order-lifecycle ·
 > https://docs.polymarket.com/trading/place-orders ·
 > https://docs.polymarket.com/concepts/pusd · https://docs.polymarket.com/programs/builders/fees ·
@@ -18,10 +19,17 @@
 > order; the salt and timestamp construction; the six accepted tick sizes, the price bound and the documented
 > multiples rule; the fee curve as the pinned client computes it; the `fd`, `mbf`, `tbf` and `feeSchedule` field
 > names and their documented meanings; the builder-fee rate model, its basis-point formula and its caps; the
-> order and trade status vocabularies; the GTD offset rule; the POST response members.
+> order and trade status vocabularies; the GTD offset rule; the POST response members. Read on 2026-08-26 at the
+> same pinned commit and against the order-lookup page listed above, and verified: that the order lookup is
+> `GET /data/order/{orderID}` with its path parameter documented as "Order ID (order hash)"; that
+> `ExchangeOrderBuilderV2.build_order_hash` derives that hash locally as the EIP-712 digest over the typed data
+> being signed, whose domain carries the `verifyingContract`.
 > unverified: everything in the closing section, which lists each gap and why it is open. The largest is the
-> relationship between the three fee-parameter surfaces.
-> revalidate_when: a V3 migration notice appears; the `fd` or `feeSchedule` members change; a new tick size is
+> relationship between the three fee-parameter surfaces. Two more sit on the recovery path: whether a repeated
+> POST of the identical signed payload is idempotent, and what the order lookup returns for a hash the venue has
+> never seen.
+> revalidate_when: a V3 migration notice appears; the order lookup moves off `/data/order/` or stops keying on
+> the order hash; the `fd` or `feeSchedule` members change; a new tick size is
 > accepted; `py-clob-client-v2` publishes a tag past `v1.1.0`; the builder-fee caps move off 100 and 50 bps; or
 > work starts on `Polymarket/py-sdk`, which the pinned repository's own README recommends over this client for
 > new projects.
@@ -31,7 +39,7 @@
 - What V2 changed, and why a V1 mental model produces a wrong number rather than an error
 - Packages, the two exchanges, and the domain that did not change
 - Collateral is pUSD
-- The signed struct, and the fact that V2 gives you no order identity
+- The signed struct, the order identity you can compute, and how a lost response is resolved
 - Fees: one curve, an exponent the documented formula omits, and three surfaces nobody reconciles
 - Ticks: six sizes, a bound that is not a grid, and a cache that no longer expires
 - Order types, the GTD offset, and what the POST response proves
@@ -86,7 +94,7 @@ reports a number that can no longer be traded with, and reports it as a healthy 
 And a wrap is a value-moving external call in its own right: it needs the same durable intent row, the same
 committed identity and the same query-on-timeout treatment as an order, not a bare retry loop.
 
-## The signed struct, and the identity V2 does not give you
+## The signed struct, the identity you can compute, and the one V2 does not give you
 
 The V2 EIP-712 `Order` type has eleven members, in this order, read from
 `order_utils/model/ctf_exchange_v2_typed_data.py` at the pinned commit:
@@ -104,39 +112,70 @@ documented as "order creation time in milliseconds", and the order-lifecycle pag
 milliseconds, used for order uniqueness)". It replaces `nonce`.
 
 **Neither the salt nor the timestamp is derived from your intent.** `generate_order_salt()` is
-`str(int(random.random() * (time.time_ns() // 1_000_000)))`, and `OrderBuilder.build_order` sets the timestamp
-from `time.time_ns() // 1_000_000` at build time and ignores any value the caller put on the order args. So the
-order hash, which is what the venue and the chain know your order by, is a fresh random value on every build.
-Build the same intent twice and you have signed two economically distinct orders. There is no
+`str(int(random.random() * (time.time_ns() // 1_000_000)))`, and the high-level `OrderBuilder` stamps the
+timestamp from `time.time_ns() // 1_000_000` at build time. `OrderArgsV2` carries no timestamp member, so the
+supported path gives you nothing to pin it with. Sign the same intent twice and at least two members differ, so
+the digest differs, so you have signed two economically distinct orders. There is no
 `clientOrderId` anywhere in the V2 payload: `order_to_json_v2` emits the eleven signed members plus the unsigned
 `expiration`, plus `signature`, `owner`, `orderType`, `deferExec` and `postOnly`. No member of that payload is
 supplied by you as an idempotency key, and the place-orders page states no idempotency guarantee at all. Treat
-the absence as the fact it is: **the venue offers you no deduplication, so a resend is a second order.**
+the absence as the fact it is: **the venue deduplicates nothing for you, so a second signature is a second
+order.**
 
-Two practical consequences.
+**`metadata` is the field you control.** It is a caller-supplied bytes32 inside the signed struct, so a hash of
+your intent id fits there and comes back attached to the order. It is a correlation key, which is what you fall
+back on to sweep up an order whose hash you failed to keep. Nothing in the docs says the venue rejects a
+repeated `metadata`, so it is not a dedupe key, and treating it as one is exactly the V1 `nonce` mistake in new
+clothing. Note also that `MarketOrderArgsV2` has no `metadata` member at the pinned commit, so a market order
+built through the high-level builder carries `bytes32(0)` and no correlation tag.
 
-- **Mint and commit your own intent identity before the build.** The row survives `ROLLBACK` and is readable by
-  another process after a crash. Recovery after a timeout is a query against open orders and trades for that
-  intent, never a rebuild and repost, because a rebuild mints a new salt and a new order hash and the venue has
-  no way to recognise it as the same instruction.
-- **`metadata` is the field you control.** It is a caller-supplied bytes32 inside the signed struct, so a hash of
-  your intent id fits there and comes back attached to the order. It is a correlation key. Nothing in the docs
-  says the venue rejects a repeated `metadata`, so it is not a dedupe key, and treating it as one is exactly the
-  V1 `nonce` mistake in new clothing. Note also that `MarketOrderArgsV2` has no `metadata` member at the pinned
-  commit, so a market order built through the high-level builder carries `bytes32(0)` and no correlation tag.
+### Recovering a lost response
+
+The venue does have an order identity, and you can compute it yourself. `GET /data/order/{orderID}` documents
+its path parameter as "Order ID (order hash)", and `cancel_orders` takes order hashes, so the hash is what the
+venue knows your order by. `ExchangeOrderBuilderV2.build_order_hash` derives it as the EIP-712 digest,
+`keccak(0x19 0x01 || domainSeparator || hashStruct(order))`, over the same typed data you sign. That is local
+arithmetic over bytes you already hold, with no network call in it. The client never calls it on the posting
+path, so computing it is your job. That this digest is the same string the venue returns as `orderID` follows
+from the two facts above and is not stated as an equality on any page fetched, so assert it once against a live
+order you did receive a response for, and keep the assertion.
+
+**Persist two things durably before the POST, never after it.**
+
+- The exact signed payload, byte for byte, as it will go on the wire.
+- The order hash you computed locally from that signed struct.
+
+Both belong in the same committed row as your intent id, flushed before the request leaves the process. The row
+survives `ROLLBACK` and is readable by another process after a crash. A row written once the response comes
+back is a row that does not exist in the one case it was written for.
+
+**After a lost response, resolve the ambiguity by asking the venue about that stored hash. Never by signing
+again.** A re-signature over a struct with any differing member, and the timestamp on its own is enough,
+produces a different digest, so the venue treats it as a new instruction and you can hold two positions where
+you intended one. Query the stored hash first, and let the answer decide. If the venue knows the hash, you are
+done, and its state is the state. If the venue does not know it, resending the identical stored bytes is at
+worst the same order, where a fresh signature is certainly a different one.
+
+**The hash is meaningful only together with the contract it was signed for.** `verifyingContract` sits in the
+EIP-712 domain, and the standard and negative-risk exchanges carry different addresses, so one struct signed
+against each yields two different hashes. Store the exchange address beside the hash and resolve the pair. A
+hash checked against the wrong exchange comes back unknown, and a client that reads unknown as "never placed"
+resends and doubles the position by a second route.
 
 `random.random()` draws from the process-global Mersenne Twister. A forked worker inherits that state, so two
 children forked from one parent can generate the same salt sequence. Seed per process, or inject a salt
-generator: `ExchangeOrderBuilderV2.__init__` takes `generate_salt` as a parameter, which is the seam for making
-the order hash a deterministic function of your committed intent id.
+generator: `ExchangeOrderBuilderV2.__init__` takes `generate_salt` as a parameter. That makes the salt a
+function of your intent id, and it does nothing for the timestamp, so a rebuild is still a different order. The
+persisted hash stays the thing you query.
 
 One retry path lives inside the client. `create_and_post_order` wraps the build and the post in
 `_retry_on_version_update`, which calls the whole closure a second time if the resolved API version changed
-across the first call. The second call builds a **new** order with a new salt and posts it. The trigger is an
-explicit `order_version_mismatch` error in the response body, so it is guarded, but the version it compares
-against comes from `get_version()`, which swallows every exception and returns `2`. A transport failure on
-`/version` is therefore indistinguishable from an answer. If you need certainty about how many orders exist,
-post through `post_order` yourself and resolve ambiguity by query.
+across the first call. The second call builds a **new** order, with a new salt and a new timestamp, and posts
+it. The trigger is an explicit `order_version_mismatch` error in the response body, so it is guarded, but the
+version it compares against comes from `get_version()`, which swallows every exception and returns `2`. A
+transport failure on `/version` is therefore indistinguishable from an answer. If you need certainty about how
+many orders exist, build and hash the order yourself, persist both, post through `post_order`, and resolve every
+ambiguity against the stored hash.
 
 `signatureType` is an enum, not a boolean: `EOA` 0, `POLY_PROXY` 1, `POLY_GNOSIS_SAFE` 2, `POLY_1271` 3. Under
 `POLY_1271` the signer is the funder rather than the key address, and the signature is a nested Solady
@@ -325,11 +364,24 @@ def test_the_order_hash_is_not_the_intent_identity(client, intent):
     assert a.salt != b.salt and a.order_hash != b.order_hash
     assert intent.id == a.intent_id == b.intent_id  # our identity is stable across builds
 
-def test_a_timeout_resolves_by_query_and_never_by_rebuild(client, venue, intent):
+def test_the_signed_bytes_and_the_hash_are_persisted_before_the_post(store, venue, client, intent):
     venue.post_times_out_after_transmitting()
     client.submit(intent)
-    assert venue.orders_created == 1               # the intent row was committed before the post
-    assert venue.query_calls_for(intent.id) >= 1   # resolved by asking, not by resending
+    saved = store.load(intent.id)                  # flushed before the request left the process
+    assert saved.signed_bytes == venue.last_request_body
+    assert saved.order_hash == client.hash_locally(saved.signed_bytes, saved.exchange_address)
+
+def test_a_lost_response_resolves_against_that_hash_and_never_by_signing_again(store, venue, client, intent):
+    venue.post_times_out_after_transmitting()
+    client.submit(intent)
+    saved = store.load(intent.id)
+    assert venue.lookups == [(saved.order_hash, saved.exchange_address)]
+    assert client.signatures_produced == 1         # recovery signed nothing new
+    assert venue.orders_created == 1               # so the position was not doubled
+
+def test_the_hash_is_bound_to_the_exchange_it_was_signed_for(standard_builder, neg_risk_builder, order):
+    # verifyingContract is a domain member, so the same struct hashes differently per exchange
+    assert standard_builder.hash(order) != neg_risk_builder.hash(order)
 
 def test_the_fee_estimate_uses_the_market_exponent(estimator):
     # the documented formula is the e == 1 case; the client generalises it
@@ -375,6 +427,11 @@ statement, the pUSD description and the onramp address and function signature, t
 vocabularies, the GTD offset and the three-minute floor, and the POST response members. The pinned commit was
 confirmed through the GitHub API on the same date to be both tag `v1.1.0` and the tip of `main`.
 
+Verified on 2026-08-26 by the same means: that the order lookup is `GET /data/order/{orderID}` and its path
+parameter is documented as "Order ID (order hash)"; that `ExchangeOrderBuilderV2.build_order_hash` computes that
+hash locally as the EIP-712 digest over the typed data being signed; and that the typed data's domain carries
+`verifyingContract`, which is the exchange address the builder was constructed with.
+
 Explicitly unverified. Do not build on any of these without checking first.
 
 - Whether Gamma `feeSchedule.rate`, `.exponent` and `.takerOnly` carry the same values as CLOB `fd.r`, `.e` and
@@ -387,6 +444,15 @@ Explicitly unverified. Do not build on any of these without checking first.
 - What token the pinned client's `collateral` constant `0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB` is, and why
   chain 137 and Amoy chain 80002 carry the same value. The pUSD page gives no token address.
 - Whether the venue constrains or deduplicates a repeated `metadata` value.
+- Whether a repeated POST of the identical signed payload is idempotent. The place-orders page states no
+  idempotency guarantee, and no page fetched says what a second identical POST does. Query the stored hash
+  before you resend, and treat the resend as the fallback rather than the recovery.
+- What `GET /data/order/{orderID}` returns for a hash the venue has never seen. Whether that is a 404, an empty
+  body or an error decides how your recovery path is allowed to read "never placed", so establish it against
+  the venue before a recovery path depends on it.
+- That the digest `build_order_hash` produces equals the `orderID` the POST response returns. The lookup page
+  calls its parameter the order hash and the client computes an EIP-712 digest, but no page states the two are
+  one value. Assert it on a live order rather than assuming it.
 - Whether a flat account can sell an outcome it does not hold on the V2 exchange, and what it returns if it
   cannot. No page fetched documents a borrow, a short facility or a rejection. The reserve arithmetic for a
   flat sell, `q * (1 - p)` rather than `q * p`, holds wherever those semantics hold; that they hold on V2 was

@@ -111,10 +111,12 @@ done.
 
 This specialises *reconciliation*. The balance is written in the same transaction as the entries that justify
 it, and recomputed from those entries by a scheduled job reading through a path the writer does not share; a
-comparison that reads through the writer's own code finds arithmetic bugs and never a missing write. The
-recompute raises an aged break and posts the difference to a real suspense account in the chart of accounts. It
-does not repair the number in place, which would destroy the evidence of how the drift arose and absorb the
-next one silently.
+comparison that reads through the writer's own code finds arithmetic bugs and never a missing write. On a
+difference the recompute raises an aged break and quarantines the affected item so nothing spends, nets or
+sweeps the disputed amount, and every path depending on it fails closed. It does not repair the number in
+place, and it does not post the difference away: a corrective posting waits for an authoritative cause and its
+approval, because an unexplained difference booked to suspense balances the books while making the break
+unattributable and the next comparison silent.
 
 ### Currency is a dimension of the entry, not a shape of the schema
 
