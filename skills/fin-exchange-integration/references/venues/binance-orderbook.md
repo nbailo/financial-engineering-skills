@@ -3,16 +3,13 @@
 > **Provenance**
 > provider: Binance · surface: the two local order book join procedures, spot `@depth` with `GET /api/v3/depth` and USDⓈ-M with the `pu` continuity field
 > version: as stated in this file's own header, the spot documentation repository at "Last Updated: 2026-07-27" and the derivatives documentation read 2026-08-24. Neither dating was re-checked here.
-> verified_at: not established
+> verified_at: 2026-08-26, for the two join procedures only
 > sources: https://github.com/binance/binance-spot-api-docs · https://developers.binance.com/docs/binance-spot-api-docs · https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
-> verified: none in this pass. No sentence below was re-read against a source for the 2026-08-25 review pass.
-> unverified: all of it, including the dating in the header above. This file predates the provenance requirement and was not re-checked in the 2026-08-25 review pass, so its claims carry the confidence of their original sourcing and no more, with no date you can check. The step numbering below is a restatement of the venue's own procedure and a restatement can drift from its source silently, which is exactly the risk a missing date leaves open. The URLs above are where a recheck starts; each of them resolved on 2026-08-25, and nothing in any of them was read against a claim in this file.
+> verified: the spot join procedure, read verbatim from binance/binance-spot-api-docs at commit `976cc580553890e92031b77306147c0ed1de5a46`, section "How to manage a local order book correctly". The step-5 acceptance condition is *"discard any event where `u` is <= `lastUpdateId` of the snapshot. The first buffered event should now have `lastUpdateId` within its `[U;u]` range"*. The string `lastUpdateId+1` does not appear anywhere in that repository, so the `+1` form this file previously carried came from a superseded revision and was corrected. The USDⓈ-M procedure and its `pu` continuity rule were read from the derivatives documentation on 2026-08-26 and match what is written here.
+> unverified: everything outside the two join procedures, including the snapshot depth limits, the rate-limit weights and the dating in the header above. Those were not re-read. The drift corrected here is the reason to distrust the rest: a restatement of a venue procedure can go stale silently while still reading as though someone checked it.
 > revalidate_when: either venue edits its "How to manage a local order book correctly" procedure; the futures diff stream stops carrying `pu`, or spot starts carrying it; the documented depth snapshot limit changes.
 
-The two different order-book join algorithms, written out as steps. Spot and Futures are not the same, and
-using the spot procedure on futures is the single most-copied incorrect snippet in this ecosystem.
-Facts are dated to the docs revision read (spot repo HEAD "Last Updated: 2026-07-27", derivatives 2026-08-24),
-so re-verify before keying production behaviour on one.
+The two different order-book join algorithms, written out as steps. Spot and Futures are not the same.
 
 ## Contents
 
@@ -28,8 +25,12 @@ so re-verify before keying production behaviour on one.
 3. `GET /api/v3/depth?symbol=<SYMBOL>&limit=5000`.
 4. If the snapshot's `lastUpdateId` is **strictly less than** the `U` from step 2, the snapshot is too old:
    **go back to step 3**.
-5. Discard every buffered event with `u <= lastUpdateId`. The first remaining event must satisfy
-   `U <= lastUpdateId+1` and `u >= lastUpdateId+1`, i.e. `lastUpdateId` falls inside `[U-1, u]`.
+5. Discard every buffered event with `u <= lastUpdateId`. The first remaining event must then have
+   `lastUpdateId` **within its `[U;u]` range**. Binance's wording, read at the pinned commit below:
+   *"In the buffered events, discard any event where `u` is <= `lastUpdateId` of the snapshot. The
+   first buffered event should now have `lastUpdateId` within its `[U;u]` range."* An older revision
+   of this page stated the condition as `U <= lastUpdateId+1 AND u >= lastUpdateId+1`; that form is
+   no longer in the documentation, and it is not the same predicate.
 6. Set your local book to the snapshot. Set `localId = lastUpdateId`.
 7. Apply the update procedure to the buffered events, then to live events:
    - if `u < localId` → **ignore** the event (it predates the snapshot);
@@ -53,9 +54,9 @@ ecosystem.
 2. Buffer the events you receive.
 3. `GET /fapi/v1/depth?symbol=<SYMBOL>&limit=<venue max>`.
 4. Drop any buffered event with `u < lastUpdateId`.
-5. The **first event you process** must satisfy `U <= lastUpdateId` **AND** `u >= lastUpdateId`. (Spot's rule
-   is `lastUpdateId` inside `[U-1, u]` after discarding `u <= lastUpdateId`, not the same predicate.) If no
-   buffered event satisfies it, go back to step 3.
+5. The **first event you process** must satisfy `U <= lastUpdateId` **AND** `u >= lastUpdateId`. Futures
+   drops `u < lastUpdateId` where spot drops `u <= lastUpdateId`, so the surviving first event differs by
+   one event at the boundary. If no buffered event satisfies it, go back to step 3.
 6. Set the book to the snapshot.
 7. For **every subsequent event**: `pu` must equal the **previous event's `u`**. On mismatch, the stream has a
    hole: **discard the book and re-initialise from step 3.**
