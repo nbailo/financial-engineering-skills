@@ -10,17 +10,17 @@
 > · https://www.fixtrading.org/standards/
 > verified: the two Sequence Reset sentences quoted below were read on the OnixS page listed above on
 > 2026-08-25.
-> unverified: the OnixS dictionary is a widely used secondary rendering of FIX 4.4, not the FIX Trading
-> Community's own document, so what is established is that the dictionary carries these words, not that they
-> are word-for-word the committee's; fixtrading.org was not opened for these sentences. The publisher
-> obligations listed under each quotation are this repository's advice about seams the protocol leaves open.
+> unverified: the OnixS dictionary is a secondary rendering of FIX 4.4, not the FIX Trading Community's
+> own document, so what is established is that the dictionary carries these words, not that they are the
+> committee's; fixtrading.org was not opened for these sentences. The publisher obligations under each
+> quotation are this repository's advice about seams the protocol leaves open.
 > revalidate_when: your counterparty moves above FIX 4.4; a venue you publish to disables Resend Request; the
 > specification changes what a Sequence Reset in reset mode may do, or what a gap fill must carry.
 
-Sequencing for a feed that rides a FIX session rather than a multicast transport. The session layer, not the
-application message, owns identity, ordering and gap recovery here, so what you publish is largely a set of
-decisions about how you use the session protocol. Read this when the repository names any construct below,
-including on the order-entry side, because the session semantics are shared.
+Sequencing for a feed that rides a FIX session rather than a multicast transport. The session layer, not
+the application message, owns identity, ordering and gap recovery here, so what you publish is largely a
+set of decisions about how you use the session protocol. Read this when the repository names a construct
+below on a feed you publish. Order entry is the venue-client skill's, not this one's.
 
 ## The session counter
 
@@ -28,9 +28,9 @@ including on the order-entry side, because the session semantics are shared.
 increment per message, and a gap triggers a ResendRequest rather than a silent re-subscribe. Two properties
 distinguish it from a packet-oriented transport, and both change what a publisher has to do.
 
-First, the counter is bidirectional and per session: each side numbers its own outbound stream, and neither
-side's numbering tells the other anything about the other's. Second, the session, not the channel, is the unit
-of recovery, so everything recoverable is recoverable only within the identity the session currently holds.
+First, the counter is bidirectional and per session: each side numbers its own outbound stream, and
+neither side's numbering says anything about the other's. Second, the session, not the channel, is the
+unit of recovery, so everything recoverable is recoverable only within the identity the session holds.
 That makes the identity, rather than the counter, the thing to reason about when anything goes wrong.
 
 | Scope | Where it lives | Receiver arithmetic | Reset event |
@@ -50,6 +50,6 @@ Fill mode)."
 
 Treat that as a rule about your own publisher, not as advice to consumers. Answering a resend with a plain
 reset is the FIX-session equivalent of minting a new session identity on a multicast feed: it closes the gap
-by declaring the content unrecoverable, and every consumer that had a position derived from the skipped range
-now has one derived from nothing. It belongs in a runbook for an unrecoverable store, with an alert, never in
+by declaring the content unrecoverable, and every consumer with a position from the skipped range now
+has one derived from nothing. It belongs in a runbook for an unrecoverable store, with an alert, never in
 the normal resend path.

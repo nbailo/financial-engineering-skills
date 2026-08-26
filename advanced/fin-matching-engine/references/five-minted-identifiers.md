@@ -1,14 +1,16 @@
-# Five identifiers, five counters, and what collapsing any two costs
+# Five identifiers, five counters, five named owners
 
-Every identifier other systems consume because you assigned it is an input-derived output: generated inside
-the deterministic region, from journaled state only, so replay reproduces it. There are five, they are
-distinct, and each has its own counter. The collapse is only ever visible in numbers you have already
-published, which is what makes it unrecoverable.
+There are five identifiers, they are distinct, each has its own counter, and **each has exactly one owner
+named in the design**. The owners are not all the matcher: the matcher owns the identity of what it decided,
+and a sequencer, a session layer or a publisher legitimately owns the rest. What binds is that the owner is
+named, that no identifier is derived from another, and that any identifier a replay must reproduce is
+generated from journaled state inside the deterministic region. The collapse is only ever visible in numbers
+you have already published, which is what makes it unrecoverable.
 
-## You mint five distinct identifiers
+## Five counters, and one owner each
 
-**You mint five distinct identifiers: five counters, five definitions, five names in the code**, and none is
-derived from another by reuse or by cast, because collapsing two is unrecoverable once consumers have booked
+**Five counters, five definitions, five names in the code, and one named owner each**, and none is derived
+from another by reuse or by cast, because collapsing two is unrecoverable once consumers have booked
 them. The **command sequence** is one inbound command's place in the durable input log, internal to replay.
 The **match id** is one crossing event, carried identically by both sides and by any later correction of it.
 The **execution id** is one side's leg of one match, the record a participant books. The **private session
@@ -18,12 +20,15 @@ below gives the five with the counter each comes from.
 
 ## The five identifiers, and where each is assigned
 
-Every identifier other systems consume because you assigned it is an **input-derived output**: generated
-inside the deterministic region, from journaled state only, so replay reproduces it. There are **five**, they
-are **distinct**, and each has its own counter. Collapsing any two is unrecoverable once consumers have
-booked them, because the collapse is only visible in the numbers you already published.
+Every identifier a replay has to reproduce is an **input-derived output**: generated inside the deterministic
+region, from journaled state only. That covers the match id, the execution id and anything else the emitted
+sequence carries. An identifier assigned outside that region, a session counter on an outbound path being the
+usual one, is not exempt from having an owner; it is exempt only from being reproduced by the core's replay,
+and its own owner says how it is recovered. There are **five**, they are **distinct**, and each has its own
+counter. Collapsing any two is unrecoverable once consumers have booked them, because the collapse is only
+visible in the numbers you already published.
 
-| Identifier | Scope | Assigned | What breaks if it doubles as another |
+| Identifier | Scope | Owner, and where it assigns | What breaks if it doubles as another |
 |---|---|---|---|
 | **command sequence** | the engine's input log | by the sequencer, before the book is touched | replay loses the total order over commands, which is the thing replay is |
 | **match id** | one crossing event | in the core, once per match | the two sides of a trade cannot be paired, and a correction cannot name what it corrects |
@@ -33,7 +38,10 @@ booked them, because the collapse is only visible in the numbers you already pub
 
 The last two are the pair most often collapsed, because both read as "the sequence number". They advance at
 different rates by construction: a session numbers what that participant was told, the feed numbers what
-every consumer was told, and neither is a function of the other.
+every consumer was told, and neither is a function of the other. Note what the Owner column does and does not
+say. Nothing here requires one component to assign all five; it requires each of the five to have exactly one
+component that does, written down, so that two components never advance the same counter and no counter is
+left without an owner when a deployment is split.
 
 ```rust
 // inside the core, after the command is journaled and dequeued
@@ -68,10 +76,14 @@ fn on_command(ids: &mut Ids, book: &mut Book, cmd: &Command, now: Nanos) -> Vec<
   with a replay test named for the choice. Gap-freedom is also easy to assert in a design note and easy to
   lose on the wire: a single `let _ = tx.send(ev)` that can drop an event makes the claim true of the
   generator and false of the transport.
-- **Recover all five counters by replay, never from a counter table.** After a snapshot at journal position
-  P, `Ids` comes from the snapshot and is advanced by replaying P+1..end under the reducer in force for that
-  range. Reading a `MAX(exec_id)` from a table you also write gives an ID space that diverges the
-  moment a transaction rolls back. Where the design persists decisions immutably as immutable records, the
-  identifiers come back with those records and the replay checks them rather than mints them.
-- **The generator lives beside the matcher, not in the gateway.** A gateway-assigned sequence orders arrivals;
-  it does not order *executions*, and executions are what the replay must reproduce.
+- **Recover a counter from its owner's durable record, never from a table that owner also writes.** For the
+  counters inside the core, that is replay: after a snapshot at journal position P, `Ids` comes from the
+  snapshot and is advanced by replaying P+1..end under the reducer in force for that range. Reading a
+  `MAX(exec_id)` from a table you also write gives an ID space that diverges the moment a transaction rolls
+  back. Where the design persists decisions immutably as immutable records, the identifiers come back with
+  those records and the replay checks them rather than mints them. A counter owned outside the core follows the
+  same rule against its owner's own durable record, and that owner states how it recovers.
+- **Execution identity is assigned where the matching decision is made, not in the gateway.** A
+  gateway-assigned sequence orders arrivals; it does not order *executions*, and executions are what the
+  replay must reproduce. A session or feed counter may live in the component that owns that wire, since it
+  numbers what that wire carried, and the design names that component rather than assuming the matcher.

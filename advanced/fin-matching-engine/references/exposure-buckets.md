@@ -6,7 +6,8 @@ than incrementing both. A gate keeping one counter is wrong in one direction or 
 ## Working-order and filled-position exposure are separate named buckets, and a fill transfers between them
 
 Specialises *hard limits*. Two buckets, named separately at their definitions, and no counter serves both:
-**working-order exposure** is `Σ leaves` over live orders at the price each would execute at, and
+**working-order exposure** is `Σ leaves` over live orders, each valued at the worst price its own terms
+allow, which for a resting limit order is its own limit price and never a guess at where it would execute;
 **filled-position exposure** is the net position and its notional. A fill is a **transfer**, reducing working
 by exactly the quantity it adds to filled. Increment the position without decrementing `leaves` and the gate
 double-counts; decrement `leaves` without booking the position and it under-counts. **Settlement exposure** is
@@ -30,9 +31,18 @@ against; a counter that serves two buckets is the defect, not the optimisation.
 
 | Exposure | What it counts | What a fill does to it | What else moves it |
 |---|---|---|---|
-| **Working order** | `Σ leaves` over live orders, at the price each would execute at | **decrements** it by the filled quantity | increments at accept; decrements on an acknowledged cancel, a reject, an expiry, and on a self-match-prevention decrement |
+| **Working order** | `Σ leaves` over live orders, each at its own limit price; a market order under the market-order rule below | **decrements** it by the filled quantity | increments at accept; decrements on an acknowledged cancel, a reject, an expiry, and on a self-match-prevention decrement |
 | **Filled position** | the net position and its notional | **increments** it by the same filled quantity, signed | a bust or a correction, retroactively; nothing else |
 | **Settlement** | delivery and payment obligations already created, until clearing or settlement finality | creates one on each side | settlement, novation to a clearing house, or an explicit void |
+
+**A resting limit order bounds its own exposure. A market order does not, so it gets a rule of its own.**
+`leaves × limit` is the most a limit order can cost whoever carries it, whatever the book does next, so it is
+the number the gate uses. A market order carries no such bound: valuing it at the touch, at the last trade or
+at the mid values it at a book that is about to change, and it reads smallest exactly when the book is
+thinnest. Decide the treatment before a market order is accepted, and write which one the code implements:
+value it at the far edge of the band that would still let it execute, value it at a notional the sender
+supplied and reject it when none is supplied, or do not accept market orders on that instrument. Whichever
+you pick, it is a stated rule with a test, not a default inherited from whatever price the code had to hand.
 
 Four consequences, and they are the whole of it.
 

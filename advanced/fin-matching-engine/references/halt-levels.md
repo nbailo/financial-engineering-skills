@@ -28,8 +28,9 @@ another is the recurring mistake:
   independent of the component that tripped it;
 - a **venue or session halt**: a published market state for an instrument or session that participants read
   off a feed, whose effect on resting orders, cancels and the reopening is a rulebook entry;
-- **engine quiescence**: the process stops accepting **and** producing, drains what is in flight, and delivers
-  or explicitly voids everything already produced.
+- **engine quiescence**: the process stops accepting **and** producing, drains what is in flight, and
+  resolves everything already produced, redelivering what is committed but undelivered and explicitly voiding
+  the rest under the rulebook.
 
 Severing the transport is none of the three: it abandons in-flight executions participants cannot see. The
 table below decomposes these into six levels, each mapped to the fate it leaves obligations in; **that
@@ -70,7 +71,7 @@ quiescence and only level 6 stops the process; levels 1 to 4 leave the engine ru
 | 2 | Freeze one aggregate (symbol, account) | untouched | scoped to that aggregate |
 | 3 | Fail-closed: no new or increasing exposure. `cancel` and reduce-only replace stay hot in the matcher; position-closing and settlement paths stay hot in whichever component owns them | actively managed | successful reconciliation, never a timer |
 | 4 | Cancel-all and disconnect order entry; risk, position and drop-copy stay up | actively managed | independent of the tripping component |
-| 5 | Quiesce: stop accepting **and** producing, drain in-flight, deliver or explicitly void everything produced | drained, then frozen | independent of the tripping component |
+| 5 | Quiesce: stop accepting **and** producing, drain in-flight, redeliver what is committed but undelivered, explicitly void the rest | drained, then frozen | independent of the tripping component |
 | 6 | Process abort | **abandoned** | none; only where nothing is in flight |
 
 **Severing the transport is not a halt.** Cutting the participant network while the engine keeps matching

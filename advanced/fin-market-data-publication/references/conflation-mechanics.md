@@ -23,31 +23,38 @@ Whether the stream may be conflated at all is decided in this skill's conflation
 
 ## Contents
 
-- Raw and conflated are two sequence spaces
+- What a conflated message must say about the raw stream
 - The covered-range identifier, and why a contiguous sequence is not a gap check on a conflated feed
 - What conflation destroys even when it is legal: trades, message counts, ordering signals
 - Load-dependent conflation, and why it makes the feed's semantics a function of load
 - The four responses to a slow consumer, and what each one leaves reconstructable
-- Neither response to a slow consumer is unconditional
 - Publisher-side mechanics: the global memory bound, drop policy, disconnect and re-entry
 - What to publish, and the tests that hold the policy in place
 
 ---
 
-## Raw and conflated are two sequence spaces
+## What a conflated message must say about the raw stream
 
-A conflated stream is a second feed, not a cheaper rendering of the first, and the counter is where that
-becomes concrete. Give the conflated stream its own counter in its own space. Never reuse a raw sequence
-number on a conflated event, never renumber the raw space to close the hole conflation made, and never widen
-a raw number so that one value stands for a range. Each of those turns the raw feed's gap detector into an
-instrument that reports contiguity across a hole, and it reports it to every consumer at once, including the
-ones that never subscribed to the conflated stream.
+A conflated stream is a second feed, not a cheaper rendering of the first, and the property that makes it
+usable is that a consumer can tell exactly which raw updates a conflated message accounts for. Two
+mechanisms carry that property, and this skill's conflation legality reference is where the choice between
+them is made: a covered raw sequence range on the message, or a counter of the conflated stream's own
+published beside the raw one. Where the protocol has room for the range, the range alone is enough and a
+second counter is not owed.
 
-Publishing both counters is the whole obligation, plus one sentence saying which one gap detection runs on
-and what the other is not valid for. CME does the negative half of this explicitly on its conflated TCP
-group, which sends the per-instrument report sequence as a literal zero rather than as a number that looks
-usable; the detail is in the CME reference, and the shape is what to copy. A consumer that can see the
-counter is absent stops; a consumer handed a plausible wrong number does not.
+Neither mechanism permits a conflated message published under one raw sequence number with the rest of the
+range unaccounted for. Never reuse a raw sequence number for different content, never renumber the raw
+space to close the hole conflation made, and never let one raw number stand for a range it does not name.
+Each of those turns the raw feed's gap detector into an instrument that reports contiguity across a hole,
+and it reports it to every consumer at once, including the ones that never subscribed to the conflated
+stream.
+
+Where you do publish a second counter, publishing both is the whole obligation, plus one sentence saying
+which one gap detection runs on and what the other is not valid for. CME does the negative half of this
+explicitly on its conflated TCP group, which sends the per-instrument report sequence as a literal zero
+rather than as a number that looks usable; the detail is in the CME reference, and the shape is what to
+copy. A consumer that can see the counter is absent stops; a consumer handed a plausible wrong number does
+not.
 
 ## The covered-range identifier
 
@@ -90,12 +97,6 @@ Three consequences for your own feed:
   ever cross" or "how long did that level rest" is asking a question the conflated feed cannot answer. If the
   answer matters to anyone, publish an unconflated stream alongside and let them choose.
 
-Trades are never conflatable: each print is an economic fact with its own identity, and
-collapsing two destroys volume, VWAP and every trade-based signal. A conflated feed has last-value-cache
-semantics, so anything derived from the count or order of updates is invalid on it, and consumers build those
-things unless you say so. It must not vary silently with load, or a backtest built on quiet-period captures
-does not describe the open.
-
 ## Load-dependent conflation
 
 If depth is conflated under load and not otherwise, the feed's semantics are a function of load. A consumer's
@@ -133,13 +134,6 @@ path that cannot absorb that storm converts a slow-consumer incident into a reco
 moment of highest load. And where a consumer is entitled to the feed by rule or contract, the entitlement does
 not lapse because they were slow, so the answer there is a documented degraded mode rather than silence.
 
-## Neither response to a slow consumer is unconditional
-
-Neither answer to a slow consumer is unconditional: blocking is disqualified
-wherever the backpressure can reach the matcher, and available where a bounded buffer terminates that chain
-first; disconnecting is the honest default, and it still has a cost to size, because the recovery path must
-absorb every reconnect the policy causes, including the correlated ones.
-
 ## Publisher-side mechanics
 
 The queue in front of each consumer socket is bounded, and the bound is a published number. On overflow the
@@ -164,11 +158,11 @@ a conflation policy is behaving as documented.
 
 ## What to publish, and the tests
 
-Publish the conflation policy per stream: whether the stream is conflated at all, whether it is state or delta
-encoded, the interval or trigger, the queue bound, the covered-range fields, the chain link, and the fact that
-intermediate states are unobservable. Publish the disconnect reason codes, the recovery entry point for each,
-and, where blocking is the chosen policy on a stream, the buffer that terminates the backpressure and what
-happens when it fills.
+Publish the conflation policy per stream: whether the stream is conflated at all, whether it is state or
+delta encoded, the interval or trigger, the queue bound, whether a conflated message carries a covered raw
+range or its own counter, the chain link, and the fact that intermediate states are unobservable. Publish
+the disconnect reason codes, the recovery entry point for each, and, where blocking is the chosen policy on
+a stream, the buffer that terminates the backpressure and what happens when it fills.
 
 Three tests hold this in place:
 

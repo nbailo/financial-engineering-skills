@@ -21,10 +21,11 @@
 > revalidate_when: Nasdaq revises TotalView-ITCH or its Clearly Erroneous Policy; or before the FIX
 > enumeration is relied on for any venue other than Nasdaq.
 
-Resumption is a state-reconstruction problem, not a switch: the fate of every in-flight and undelivered
-execution is decided before resuming, and book state comes from the durable record rather than from memory
-that happened to survive. What a halt does to resting orders is a published rule, and three answers are
-defensible; acknowledging a cancel and then filling the order is not among them.
+Resumption is a state-reconstruction problem, not a switch: the fate of every execution already produced is
+decided before resuming, and book state comes from the durable record rather than from memory that happened
+to survive. An execution that is committed and retrievable but undelivered is its own state, not a rounding
+error between delivered and void. What a halt does to resting orders is a published rule, and three answers
+are defensible; acknowledging a cancel and then filling the order is not among them.
 
 ## Resumption, busts and corrections
 
@@ -32,8 +33,15 @@ Resumption is a state-reconstruction problem, not a switch. Decide the fate of i
 executions **before** resuming, not during, and reconstruct from the durable record rather than from memory
 that happened to survive.
 
-1. Every execution produced before the halt is either delivered to both counterparties or explicitly voided
-   with a cancellation referencing its original match identity. There is no third state.
+1. Every execution produced before the halt is in exactly one of **three** states, and the resume says which
+   one each is in: **delivered** to both counterparties; **committed, durable and retrievable** in the record
+   but not yet delivered; or **explicitly voided** by a cancellation referencing its original match identity.
+   The middle state is the one a two-state model destroys. Counting it as delivered means nobody ever sends
+   it, so the venue's books carry a trade the participants do not; counting it as void cancels a real
+   execution that the durable record, and possibly a counterparty, already holds. The resume **redelivers**
+   it from the record under its original match and execution identifiers, at least once, and consumers dedupe
+   on those identifiers. Voiding it is a separate decision taken under the rulebook, with a cancellation of
+   its own, never the default for anything that failed to reach a socket.
 2. The published sequence has no gap and no committed-but-unemitted event, and replaying the persisted
    command stream **through the reducer version that produced it** reproduces the emitted sequence byte for
    byte. A replay through the build you are about to resume with answers a different question and must not
@@ -45,10 +53,12 @@ that happened to survive.
 5. Every check bypassed during the incident is back on, and every output produced while one was off is
    quarantined and reconciled before it is treated as authoritative again.
 
-Step 1 is the one that escalates when it is missing. TSE escalated to a whole-day halt precisely because
-participants held undelivered fills and no rule existed for post-halt resumption. Escalation to venue scope
-is correct only when you cannot establish what counterparties hold, which is the failure mode of not having
-written step 1 down in advance.
+Step 1 is the one that escalates when it is missing, and it is missing whenever the design admits only two
+states. TSE escalated to a whole-day halt precisely because participants held undelivered fills and no rule
+existed for post-halt resumption. Escalation to venue scope is correct only when you cannot establish what
+counterparties hold, which is the failure mode of not having written step 1 down in advance. Being able to
+list, from the durable record alone, every execution in the middle state is what keeps the decision at
+instrument scope.
 
 **What a halt does to resting orders is a published rule, and three answers are defensible**: they persist
 into the reopening auction; they are cancelled at the halt with an explicit per-order cancellation; or they

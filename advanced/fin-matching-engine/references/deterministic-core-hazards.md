@@ -8,8 +8,8 @@ journal where replay can reproduce it.
 ## Determinism is demonstrated by replay, never asserted in a comment
 
 Same inputs, same outputs, same emitted sequence, including the identities you mint. Keep the core free of
-wall-clock reads, randomness, I/O and map-iteration-order dependence, and assign every identifier **inside**
-the core so replay reproduces it. A correction is a **new** event referencing the original identity, never a
+wall-clock reads, randomness, I/O and map-iteration-order dependence, and assign every identifier the emitted
+sequence carries **inside** the core, so replay reproduces it. A correction is a **new** event referencing the original identity, never a
 renumber and never an un-emit. Either a replay test names its seed and byte-compares the emitted sequence, or
 the claim of replayability goes.
 

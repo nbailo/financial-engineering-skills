@@ -2,17 +2,19 @@
 
 Two systems in the same problem domain ship opposite answers, and both are defensible, so the decision is per
 path and it is written down. What is not optional is the published aggregate: a quantity that leaves the
-process as depth or volume is checked in the binary you deploy, and where it saturates instead, the saturation
-is itself an event.
+process as depth or volume is checked in the binary you deploy, and one that has overflowed, saturated or
+failed its checksum is withheld rather than published, with the saturation emitted as its own event.
 
 ## An aggregate you publish is checked in the build you ship
 
 Specialises *rounding and conservation*. Any quantity leaving the process as depth, volume or an aggregate is
 checked where it is computed, in the binary you deploy, not by an assertion the release build strips. An
 underflow or overflow is a conservation breach: halt that transformation at the smallest scope, do not
-publish, do not clamp silently, and where you saturate rather than check, **emit the saturation**, because a
-saturated aggregate with no exception attached is a lie. `level.total_qty -= qty` on a `u64` guarded only by a
-debug assertion wraps to roughly 1.8e19 in a **release** build and is published as depth. Both shipping
+publish, do not clamp silently, and where you saturate rather than check, **emit the saturation and withhold
+the number**. A counter that wrapped, that stopped at a bound, or that failed its checksum is not a value to
+publish with a caveat or a lower confidence; it is a value to withhold, or to publish explicitly marked
+unavailable, until it is recomputed from state that checks. `level.total_qty -= qty` on a `u64` guarded only
+by a debug assertion wraps to roughly 1.8e19 in a **release** build and is published as depth. Both shipping
 answers, with their build settings, are below.
 
 ## Assertion policy
@@ -35,10 +37,13 @@ you do expect AND to assert the negative space that you do not expect."*
 
 **The rule this yields.** Validation of inputs you can decline is always-on and returns a typed rejection.
 Assertion of derived internal state may be compiled out **only in a process that would still be holding
-unmanaged obligations if it crashed**, and in that process the arithmetic saturates and **emits the
-saturation as an event**, because a saturated aggregate with no exception attached is a lie. A `debug_assert`
-on a published aggregate is neither of the two: `level.total_qty -= qty` on a `u64` wraps to ~1.8e19 in a
-release build where the assertion no longer exists, and that number is published as depth.
+unmanaged obligations if it crashed**, and in that process the arithmetic saturates, **emits the saturation as
+an event, and withholds the aggregate it corrupted**: a consumer told the value is unavailable can wait,
+fall back or escalate, while a consumer handed a saturated value cannot tell it from a real one and will
+quote against it. Say unavailable on the feed if the protocol has a way to say it, and publish the value
+again only after a recomputation that checks. A `debug_assert` on a published aggregate is neither of the two: `level.total_qty -= qty` on a
+`u64` wraps to ~1.8e19 in a release build where the assertion no longer exists, and that number is published
+as depth.
 
 Note the counter-pressure, from Jepsen's TigerBeetle report: an assertion placed on state the *recovery path is
 designed to tolerate* converts a repairable fault into an outage; the padding-byte crash is exactly that.

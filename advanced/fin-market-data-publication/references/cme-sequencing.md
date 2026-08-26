@@ -65,11 +65,13 @@ The snapshot's field table documents `83-RptSeq` as the "Sequence number of the 
 processed for the instrument", then adds a sentence that matters more than its length suggests: "The MDP
 Conflated TCP market data group sends a RptSeq value of zero."
 
-A conflated distribution of the same market therefore does not carry the counter the unconflated one uses for
-per-instrument continuity, and a consumer moving between the two cannot carry a gap check across. That is the
-concrete form of the rule in the skill body: raw and conflated are two sequence spaces, and a counter meaning
-something on one is published as an explicit non-value on the other rather than quietly reused. Decide the
-same question for your own feed in the specification, not in the encoder.
+A conflated distribution of the same market therefore does not carry the counter the unconflated one uses
+for per-instrument continuity, and a consumer moving between the two cannot carry a gap check across. That
+is one concrete form of the obligation: a consumer has to be able to tell exactly which raw updates a
+conflated message accounts for, and a counter that means something on the unconflated stream is published
+as an explicit non-value on the conflated one rather than quietly reused. A protocol whose conflated
+message can carry the covered raw sequence range answers the same obligation with that field instead.
+Decide it for your own feed in the specification, not in the encoder.
 
 ## Channel reset
 

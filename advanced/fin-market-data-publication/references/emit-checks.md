@@ -15,10 +15,9 @@
 > revalidate_when: the Cargo reference changes a profile default quoted here, or your language's release
 > profile stops disabling overflow checking.
 
-The check that must survive into the shipped binary, because it runs on the last hop before a number leaves
-your process and becomes somebody else's book. Drift that reaches the wire is not recoverable: the consumer
-applied it, traded on it, and has no independent source to check it against. What to do when the check fires
-is in this skill's breach policy reference.
+The check that must survive into the shipped binary, because it runs on the last hop before a number
+leaves your process and becomes somebody else's book. Drift that reaches the wire is not recoverable: the
+consumer applied it and has no independent source to check it against.
 
 ## The default shape, and why it is wrong here
 
@@ -35,9 +34,9 @@ impl PriceLevel {
 
 This is the shape a competent engineer writes by default, and it is wrong specifically because the aggregate
 leaves the process. The comment is the tell. Naming the failure correctly and then answering it with a
-debug-only check is the standard mistake, and the rationalisation is always the same sentence: the quantity
-cannot exceed the aggregate by construction. It was by construction. Drift is the bug you are hunting, and a
-check that only runs when the bug is absent is not a check.
+debug-only check is the standard mistake, and the rationalisation is always the same: the quantity cannot
+exceed the aggregate by construction. It was. Drift is the bug you are hunting, and a check that only
+runs when the bug is absent is not a check.
 
 ## Two independent reasons the guard is not in the shipped binary
 
@@ -51,9 +50,11 @@ check that only runs when the bug is absent is not a check.
    published as depth. The two reasons are independent: fixing the profile does not fix the assertion, and
    enabling assertions does not fix the arithmetic.
 
-The consequence to check in review is narrow and mechanical. Any arithmetic on an aggregate that leaves the
-process must be explicit about what happens on underflow, in the profile that ships, and the answer must not
-depend on a build flag.
+The consequence to check in review is narrow and mechanical. Any arithmetic on an aggregate that leaves
+the process must be explicit about what happens on underflow, in the profile that ships, and the answer
+must not depend on a build flag. A value that failed the check, was clamped, or came out of a saturating
+operator is never published as authoritative: withhold it, or publish it marked not firm. The freeze
+scope and the marking are in this skill's breach policy reference.
 
 ## The checked form
 
@@ -72,6 +73,6 @@ impl PriceLevel {
 }
 ```
 
-The error carries the three numbers an operator needs to decide what happened: which key, what the aggregate
-held, and what was taken from it. An error type that carries only a message forces the investigation to start
-from a log line, and the log line is written after the state has already moved on.
+The error carries the three numbers an operator needs to decide what happened: which key, what the
+aggregate held, and what was taken from it. An error carrying only a message forces the investigation to
+start from a log line, written after the state has moved on.

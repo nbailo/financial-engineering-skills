@@ -1,8 +1,8 @@
 # The feed specification, and the contract block that reports it
 
-The document a consumer reads before writing a line of code against your feed. A slot you leave unfilled is
-one they fill by guessing, and their guess becomes a position. Below is the checklist, then the block this
-skill emits by default, which is the same checklist answered at `file:line`.
+The document a consumer reads before writing a line of code against your feed. A slot you leave unfilled
+is one they fill by guessing, and the guess becomes a position. Load this file only for an explicit
+design, review or ship-readiness task. Below is the checklist, then it answered at `file:line`.
 
 ## The checklist
 
@@ -31,7 +31,8 @@ CONTENT
   [ ] Which message types are book-eligible; which are volume-eligible; the whole volume-bearing set
   [ ] Which rulebook decides eligibility, and which figures are computed from which set
   [ ] Every deliberately-constant field, its value, and its effective date
-  [ ] Conflation policy: which streams, state- or delta-encoded, the interval, the bound, the chain link
+  [ ] Conflation policy: which streams, state or delta encoded, the interval, the bound, the chain link
+  [ ] Which raw updates a conflated message covers: a raw range, or the stream's own counter
   [ ] The slow-consumer policy per stream, and the recovery load it implies
 TIME
   [ ] Each timestamp's meaning, epoch, timezone, DST rule, and clock discipline
@@ -46,8 +47,8 @@ PUBLISHER
 
 ## The FEED CONTRACT block
 
-This is the default output block. Fill only the slots the change touches; a slot it touches and cannot fill
-is the finding, reported as `UNRESOLVED:`. A slot it does not touch is omitted, never left blank.
+Emitted on a design, review or ship decision. Fill only the slots the change touches; one it touches and
+cannot fill is the finding, reported as `UNRESOLVED:`. A slot it does not touch is omitted.
 
 ```
 FEED CONTRACT
@@ -58,12 +59,12 @@ FEED CONTRACT
 - Snapshot:    as-of names <stream>.<counter>, stamped with the copy at <file:line> · cycle <n> · omits <f>
 - Recovery:    <mechanism> ends on <condition> · retained depth <n> · truncation and rate limit in <doc>
 - Arbitration: <A/B or none> · byte identity at <file:line> · gap declared after arbitration
-- Conflation:  <none | state-encoded on <streams>> · own counter · interval <n> · queue bound <n> GLOBAL
-               · covered range <field> · chain link <field> · trades excluded
+- Conflation:  <none | state-encoded on <streams>> · interval <n> · bound <n> GLOBAL · raw range <field>
+               OR own counter <field> · chain link <field> · trades excluded
 - Filters:     book-eligible <set> · volume-eligible <set> by <rulebook> · fee tier by <schedule> · index by
                <methodology, not yours> · constant <field>=<value> since <date>, test <name>
 - Time:        event time <field, epoch, timezone, DST>, authoritative for staleness · clock <source>
 - Emit checks: <assertion> valid in <session states> at <file:line> · on breach <freeze scope> and
-               <invalidation event> · saturation emitted at <file:line>
+               <invalidation event> · withheld or marked <field> · saturation at <f:l>
 - Fan-out:     single point at <file:line> · sinks <list> · hand-off records retained at <location>
 ```
