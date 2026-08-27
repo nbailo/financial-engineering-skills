@@ -1,0 +1,92 @@
+diff --git a/repo/credit_book.py b/repo/credit_book.py
+index ba35214..d08a3db 100644
+--- a/repo/credit_book.py
++++ b/repo/credit_book.py
+@@ -14,5 +14,17 @@ class CreditBook:
+             raise ValueError("a credit must be positive")
+         return self.service.apply_credit(customer_id, amount_minor, memo)
+
++    def credit_once(self, effect_key, customer_id, amount_minor, memo):
++        """Apply one credit for one refund transition, whichever delivery reported it.
++
++        A book belongs to one delivery worker and holds no state the other workers can see, so it
++        decides nothing here. It forwards effect_key to the store-credit service, which is the
++        state every worker shares, and the service claims the effect and writes the credit as a
++        single step.
++        """
++        if amount_minor <= 0:
++            raise ValueError("a credit must be positive")
++        return self.service.apply_credit_once(effect_key, customer_id, amount_minor, memo)
++
+     def balance(self, customer_id):
+         return self.service.balance(customer_id)
+diff --git a/repo/credit_service.py b/repo/credit_service.py
+index bd45602..1641dae 100644
+--- a/repo/credit_service.py
++++ b/repo/credit_service.py
+@@ -5,16 +5,25 @@ refund event. The webhook endpoint runs several delivery workers, so two deliver
+ same refund are routinely inside that round trip at the same moment; whatever guards the credit
+ has to still hold while one worker is parked in here.
+
++This service is the one thing every delivery worker shares, so it is also the only place a claim
++on a refund transition means anything. apply_credit_once takes the claim and the write together
++under this service's own lock: a worker that arrives while another is still in the round trip
++waits for it, and then finds the effect already applied instead of writing a second credit.
++
+ before_write is where the round trip is spent. Integration tests hang a stand-in on it so that
+ overlap is reproducible without a network.
+ """
+
++import threading
++
+
+ class StoreCreditService:
+     def __init__(self):
+         self._balances = {}
+         self.writes = []
+         self.before_write = None
++        self._lock = threading.Lock()
++        self._applied_effects = set()
+
+     def apply_credit(self, customer_id, amount_minor, memo):
+         """Move amount_minor of store credit onto the customer. One call, one write."""
+@@ -26,5 +35,22 @@ class StoreCreditService:
+         )
+         return self._balances[customer_id]
+
++    def apply_credit_once(self, effect_key, customer_id, amount_minor, memo):
++        """Apply the credit for one refund transition, whichever delivery reported it.
++
++        effect_key names the refund and the transition it made, not the provider event object
++        that carried the news, so a second event describing the same refund settling finds the
++        effect already applied and moves no money. The check, the write and the record of the
++        write happen as one step under the lock, and the lock is still held while the round trip
++        in apply_credit is in flight, so a worker that gets there during the round trip cannot
++        conclude the credit is still owed.
++        """
++        with self._lock:
++            if effect_key in self._applied_effects:
++                return self._balances.get(customer_id, 0)
++            balance = self.apply_credit(customer_id, amount_minor, memo)
++            self._applied_effects.add(effect_key)
++            return balance
++
+     def balance(self, customer_id):
+         return self._balances.get(customer_id, 0)
+diff --git a/repo/handler.py b/repo/handler.py
+index 943b711..b3fa3f0 100644
+--- a/repo/handler.py
++++ b/repo/handler.py
+@@ -20,7 +20,10 @@ class RefundCreditHandler:
+         refund = refund_from_event(event)
+         if refund["status"] != "succeeded":
+             return "not_settled"
+-        self.credit_book.credit(
+-            refund["customer"], refund["amount"], "refund " + refund["id"]
++        self.credit_book.credit_once(
++            ("refund.succeeded", refund["id"]),
++            refund["customer"],
++            refund["amount"],
++            "refund " + refund["id"],
+         )
+         return "credited"

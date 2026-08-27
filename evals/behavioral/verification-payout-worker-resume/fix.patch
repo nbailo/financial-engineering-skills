@@ -1,0 +1,46 @@
+diff --git a/repo/recovery.py b/repo/recovery.py
+index 6e7af7a..d2ece75 100644
+--- a/repo/recovery.py
++++ b/repo/recovery.py
+@@ -1,16 +1,38 @@
+ """Finishes payouts that were in flight when the worker stopped."""
+
++from provider import PayoutDeclined
++
++
++class MissingIdempotencyRef(Exception):
++    """The open row carries no reference, so re-sending it could pay twice."""
++
+
+ def resume_pending(journal, provider):
+     """Re-send every payout still open in the journal, then close the row.
+
+     The provider deduplicates on the idempotency reference, so a payout that
+-    already reached it before the stop is not paid a second time here.
++    already reached it before the stop is not paid a second time here. That only
++    holds while the reference is the one the first attempt committed: a freshly
++    minted reference is a brand new payment as far as the provider is concerned,
++    not a repeat of the old one. So the committed reference is read back off the
++    row, and a row that somehow carries none is left open for a human rather
++    than sent under a guess.
++
++    A refusal is the provider's answer to this request, so it closes the row
++    here exactly as it would have on the first attempt: nothing moved, nothing
++    is owed on it any more, it is not sent again on the next boot, and the
++    payouts queued behind it still get their turn on this pass.
+     """
+     closed = []
+     for row in list(journal.pending()):
+-        ref = row.get("idempotency_key") or journal.mint_ref(row["payout_id"])
+-        receipt = provider.send_payout(ref, row["account"], row["amount"])
++        ref = row.get("idempotency_ref")
++        if ref is None:
++            raise MissingIdempotencyRef(row["payout_id"])
++        try:
++            receipt = provider.send_payout(ref, row["account"], row["amount"])
++        except PayoutDeclined as declined:
++            journal.decline(row["payout_id"], declined.code)
++            continue
+         journal.complete(row["payout_id"], receipt)
+         closed.append(row["payout_id"])
+     return closed

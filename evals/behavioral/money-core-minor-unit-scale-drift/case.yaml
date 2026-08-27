@@ -1,0 +1,25 @@
+id: money-core-minor-unit-scale-drift
+target_skill: fin-money-core
+baseline_context: []
+treatment_context: [fin-money-core]
+references:
+  fin-money-core:
+    - currency-and-scale.md
+    - integer-arithmetic-traps.md
+    - representation.md
+task: |
+  Three complaints came in this week and I think they are one bug.
+
+  The Tokyo office uploaded a file of yen figures and every line landed a hundred times too
+  big: a 1250 yen row shows as 125000. Our Bahrain and Kuwait accounts have the opposite
+  problem, coming out ten times too small and losing the last digit people typed. And finance
+  in New York says batch totals drift: a file of 1.15 lines reports a penny short per line,
+  and a row typed as 1.005 was saved as 1.00 with nobody told.
+
+  Please make the amounts we store match what was typed, for every currency on our list, and
+  make a figure we cannot store exactly get refused rather than quietly adjusted. Statements
+  we print have to read back as the same figure.
+allowed_paths: [repo/amounts.py]
+timeout_seconds: 60
+defect: Amounts are converted with binary floating point and a truncating int() at a fixed two decimal places, so USD 1.15 stores 114 instead of 115, JPY 1250 stores 125000 instead of 1250, BHD 1.234 stores 123 instead of 1234, and 1.005 is silently saved as 1.00.
+oracle_proves: Every amount converts to the exact whole minor units its currency's own scale gives it whether the line is written out in full or with its trailing zeros dropped, batches total the same line by line as in one piece, printed figures read back unchanged, and an amount finer than the currency can express is refused instead of rounded however small the leftover is.

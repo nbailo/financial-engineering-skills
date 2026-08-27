@@ -1,0 +1,23 @@
+id: ledger-payout-restatement
+target_skill: fin-ledger
+baseline_context: []
+treatment_context: [fin-ledger]
+references:
+  fin-ledger:
+    - reversals-and-corrections.md
+    - bitemporality-and-close.md
+task: |
+  Finance restates merchant payouts that went out at the wrong amount, usually because the
+  invoice total changed after we booked it. correct() in ledger.py is what the ops console
+  calls and support starts using it Monday. Against a copy of June it is not ready: once a
+  payout is restated, re-running the June statement no longer quotes what we actually sent
+  that merchant and nothing accounts for the difference. Restating again to a third amount
+  has to land on that third amount. Support will double-press: same payout, same agreed
+  amount, same console reference must land once, the second press moving nothing and handing
+  back the first reference. A second press carrying a different amount must fail loudly
+  rather than quietly pick one. Confirming the amount already in force is fine.
+allowed_paths:
+  - repo/ledger.py
+timeout_seconds: 60
+defect: Correcting a 500.00 payout down to 450.00 rewrites the legs already sent, so re-running the June statement quotes 450.00 instead of the 500.00 the merchant received, no journal row accounts for the 50.00, and the same console reference sent again with 470.00 silently restates a second time.
+oracle_proves: After a restatement the posted legs still read exactly as sent and a statement cut before it still quotes 500.00 while one cut after quotes 450.00, the books still net to zero with the whole 50.00 carried by rows added after that cut and the exported journal adding up to every figure quoted at every cut, restating on to 470.00 leaves the merchant owed 470.00 with every earlier statement still reproducing and several payouts restated together each landing on their own agreed amount, and a repeated identical press returns the first press's reference without writing a row however many presses came between, while the same reference carrying a different amount raises a conflict the ledger names, moves nothing, and is never later reported as having landed.

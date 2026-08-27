@@ -1,0 +1,22 @@
+id: payments-refund-ceiling-in-flight
+target_skill: fin-payments
+baseline_context: []
+treatment_context: [fin-payments]
+references:
+  fin-payments:
+    - refunds.md
+    - idempotency-keys.md
+task: |
+  Finance closed the month and found six orders where the total we returned to the shopper is
+  larger than what we captured on the payment. Each was refunded twice within seconds, usually
+  by two people on the same ticket; orders refunded a day or more apart look correct. One agent
+  also says that pressing refund again after the page hung told her the amount was too large,
+  though her refund had gone out. Refunds go out through refund_service.py, behind the admin
+  panel's refund button. Please find the cause and implement the fix, so that what we hand back
+  can never exceed what we took, a shopper still owed part of an order can still be refunded
+  that part, and one click pays out once however many times it is pressed.
+allowed_paths:
+  - repo/refund_service.py
+timeout_seconds: 60
+defect: Two agents refunding 7000 on the same 12000 capture in the same moment both go through, so 14000 is paid back on a payment that took 12000.
+oracle_proves: Reading the remainder and reserving against it happen as one step per payment, and the remainder is that payment's own capture less every refund the processor already holds, settled or not, so no order ever pays back more than it took whatever it captured, whatever it has already given back, whichever worker asks and however many ask at once, while a genuine remainder still refunds and a re-pressed click resolves to its own refund instead of a second one.

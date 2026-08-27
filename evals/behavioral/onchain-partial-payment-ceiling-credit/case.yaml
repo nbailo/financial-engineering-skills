@@ -1,0 +1,21 @@
+id: onchain-partial-payment-ceiling-credit
+target_skill: fin-onchain
+baseline_context: []
+treatment_context:
+  - fin-onchain
+references:
+  fin-onchain:
+    - token-amounts.md
+task: |
+  XRP deposits went live last week and treasury reconciled the pool account this morning.
+  cust-2 is over-credited: the book shows 762.5 XRP against 12.500002 XRP that actually
+  landed on the pool account under that customer's destination tag, and the desk has
+  already queued a payout against the difference. repo/deposits.py is the watcher that
+  turns validated payments into customer balances, and repo/ledger_stream.py is the shape
+  our node hands it. Work out what the watcher gets wrong and implement the correction, so
+  every customer balance equals the drops that reached the pool account.
+allowed_paths:
+  - repo/deposits.py
+timeout_seconds: 60
+defect: A payment that moved 2 drops credits the customer 750 XRP, so the desk pays out 749.999998 XRP that never arrived.
+oracle_proves: Every customer balance equals the drops the validated ledger recorded as delivered into the pool account, and nothing else.

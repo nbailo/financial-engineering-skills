@@ -1,0 +1,16 @@
+diff --git a/repo/hedger.py b/repo/hedger.py
+index 20cdbd2..3375eb4 100644
+--- a/repo/hedger.py
++++ b/repo/hedger.py
+@@ -37,7 +37,10 @@ def send_hedge_order(client, symbol, residual_delta, mark_price, mark_age_ms,
+     side = "SELL" if residual_delta > 0 else "BUY"
+     qty = floor_to(abs(residual_delta), venue["stepSize"])
+     if qty < venue["minQty"]:
+-        qty = venue["minQty"]
++        # Quantised below the venue's minimum, so this cycle has nothing to send.
++        # Padding up to minQty sends a hedge the book never asked for and leaves the
++        # opposite residual behind for the next cycle to chase.
++        return None
+
+     if qty * mark_price < venue["notional"]:
+         return None
