@@ -9,22 +9,27 @@ as the fixtures are: a case whose oracle already passes measures nothing, becaus
 by changing nothing, and a case whose oracle cannot pass after the reference fix is unwinnable. This
 script proves neither is true, for every case, with nothing nondeterministic in the loop.
 
-TRUST BOUNDARY, stated plainly. Fixtures checked into this repository are TRUSTED EXECUTABLE TEST
-CODE. They are reviewed like any other file here, and running them is running code from this repo.
+TRUST BOUNDARY, and the difference from the runner. Fixtures checked into this repository are
+TRUSTED EXECUTABLE TEST CODE: they are reviewed like any other file here, and running them is
+running code from this repo. So this script runs them on the host, in a temporary copy, with a child
+environment built without inheritance and a hard timeout. That is deliberately weaker than the runner's
+container, and it is allowed to be, because nothing model-generated is ever executed here.
+scripts/run_patch_eval.py executes model-written code, so it refuses to run without Docker.
+
 There is deliberately no --dataset option and no way to point this at a directory from anywhere
 else, because that would turn a repository check into an arbitrary-code runner.
 
 The import scan below is a LINT, not a sandbox. It reads the oracle's syntax tree and refuses a few
-shapes that have no business in a hermetic fixture. It does not confine anything at run time and it
-is not a security boundary; the review of the fixture is the boundary. What the run-time controls
-below do provide is narrower and real: no inherited credential, no inherited proxy, no inherited
-Python path, no bytecode written, and a hard timeout.
+shapes that have no business in a hermetic fixture. It does not confine anything at run time; the
+review of the fixture is the boundary.
+
+The schema, the layered-context rule and the path confinement all come from run_patch_eval, so this
+check and the runner cannot drift apart on what a valid case is.
 """
 from __future__ import annotations
 
 import argparse
 import ast
-import os
 import re
 import shutil
 import subprocess
@@ -32,24 +37,21 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     import yaml
 except ImportError:
     sys.exit("check_eval_dataset: PyYAML is required. "
              "pip install --require-hashes -r requirements.txt")
 
-ROOT = Path(__file__).resolve().parent.parent
-DATASET = ROOT / "evals" / "behavioral"
-
-INSTALLED_SKILLS = (
-    "fin-money-core", "fin-exchange-integration", "fin-payments",
-    "fin-ledger", "fin-onchain", "fin-verification",
+from run_patch_eval import (  # noqa: E402
+    DATASET, INSTALLED_SKILLS, ROOT, ContextError, _confine, confined_reference,
+    dataset_cases, load_spec, read_case_tree, validate_patch,
 )
 
-REQUIRED_KEYS = ("id", "skill", "references", "task", "allowed_paths",
-                 "timeout_seconds", "defect", "oracle_proves")
-
 ORACLE_ENTRYPOINT = "oracle/test_oracle.py"
+MIN_CASES_PER_SKILL = 2
 
 # Modules a hermetic fixture has no reason to import. The point is not that these are dangerous in
 # themselves; it is that a fixture reaching for any of them is no longer offline and deterministic,
@@ -86,11 +88,11 @@ def err(msg: str) -> None:
 
 
 def minimal_env(workdir: Path) -> dict[str, str]:
-    """A child environment built from nothing, not filtered from ours.
+    """A child environment built without inheritance, not filtered from ours.
 
-    An allowlist that starts empty cannot leak a variable nobody thought to deny, which is the way
-    an API key, a proxy, or a user site-packages path reaches a child that should not have it.
-    HOME points inside the temporary copy so nothing reads or writes a real dotfile.
+    Starting from an empty dict and naming what goes in cannot leak a variable nobody thought to
+    deny, which is how an API key, a proxy, or a user site-packages path reaches a child that should
+    not have it. HOME points inside the temporary copy so nothing reads or writes a real dotfile.
     """
     return {
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -98,10 +100,12 @@ def minimal_env(workdir: Path) -> dict[str, str]:
         "TMPDIR": str(workdir),
         "LC_ALL": "C",
         "LANG": "C",
-        "PYTHONPATH": "repo",           # the case's own repo/, and nothing else
+        "PYTHONPATH": "repo",            # the case's own repo/, and nothing else
         "PYTHONDONTWRITEBYTECODE": "1",  # no .pyc into the fixture or the copy
-        "PYTHONNOUSERSITE": "1",        # ignore ~/.local site-packages
+        "PYTHONNOUSERSITE": "1",         # ignore ~/.local site-packages
         "PYTHONHASHSEED": "0",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
     }
 
 
@@ -130,13 +134,11 @@ def scan_oracle(path: Path, case_id: str) -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root in BANNED_IMPORTS or alias.name in BANNED_IMPORTS:
+                if alias.name.split(".")[0] in BANNED_IMPORTS or alias.name in BANNED_IMPORTS:
                     err(f"{case_id}: oracle imports '{alias.name}'; a fixture is offline and "
                         f"standard library only")
         elif isinstance(node, ast.ImportFrom):
-            mod = (node.module or "").split(".")[0]
-            if mod in BANNED_IMPORTS:
+            if (node.module or "").split(".")[0] in BANNED_IMPORTS:
                 err(f"{case_id}: oracle imports from '{node.module}'; a fixture is offline and "
                     f"standard library only")
         elif isinstance(node, ast.Call):
@@ -168,107 +170,102 @@ def scan_tree(case: Path, case_id: str) -> None:
             err(f"{case_id}: {rel} is a generated or editor file and must not ship in a case")
 
 
-def patch_paths(patch_text: str) -> set[str]:
-    """The repo-relative paths a unified diff touches, read from its own headers."""
-    touched: set[str] = set()
-    for line in patch_text.splitlines():
-        for prefix in ("--- a/", "+++ b/", "--- ", "+++ "):
-            if line.startswith(prefix):
-                candidate = line[len(prefix):].split("\t")[0].strip()
-                if candidate in ("/dev/null", ""):
-                    break
-                for lead in ("a/", "b/"):
-                    if candidate.startswith(lead):
-                        candidate = candidate[len(lead):]
-                touched.add(candidate)
-                break
-    return touched
+def check_patch_hygiene(patch_text: str, case_id: str) -> None:
+    """A reference patch is a repository file too, and it has to read like one.
+
+    A line carrying trailing whitespace is what `git diff --check` complains about, and in a diff it
+    is almost always a blank context line written as a single space. Normalising those to genuinely
+    empty lines keeps `git diff --check` silent without changing what the patch does.
+    """
+    lines = patch_text.split("\n")
+    dirty = [i + 1 for i, line in enumerate(lines) if line != line.rstrip() and not line.strip()]
+    if dirty:
+        err(f"{case_id}: fix.patch has trailing whitespace on line(s) {dirty[:8]}; blank context "
+            f"lines must be genuinely empty so `git diff --check` stays silent")
+    if patch_text.endswith("\n\n"):
+        err(f"{case_id}: fix.patch ends with a blank line")
+    if patch_text and not patch_text.endswith("\n"):
+        err(f"{case_id}: fix.patch does not end with a newline")
 
 
-def check_case(case: Path, run_oracles: bool) -> None:
+def check_case(case: Path, run_oracles: bool) -> str | None:
+    """Returns the case's target_skill when the case is structurally sound, else None."""
     case_id = case.name
     print(f"\n{case_id}")
 
-    manifest = case / "case.yaml"
-    if not manifest.is_file():
+    if not (case / "case.yaml").is_file():
         err(f"{case_id}: no case.yaml")
-        return
+        return None
     try:
-        spec = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        err(f"{case_id}: case.yaml does not parse: {exc}")
-        return
-    if not isinstance(spec, dict):
-        err(f"{case_id}: case.yaml is not a mapping")
-        return
+        spec = load_spec(case)
+    except (yaml.YAMLError, ContextError) as exc:
+        err(f"{case_id}: {exc}")
+        return None
 
-    missing = [k for k in REQUIRED_KEYS if k not in spec]
-    if missing:
-        err(f"{case_id}: case.yaml is missing {missing}")
-        return
-    extra = sorted(set(spec) - set(REQUIRED_KEYS))
-    if extra:
-        err(f"{case_id}: case.yaml carries unknown keys {extra}; the schema is closed so a "
-            f"fixture cannot smuggle in a command or a mode")
-
-    if spec["id"] != case_id:
-        err(f"{case_id}: id is '{spec['id']}' and does not match the directory")
-    if spec["skill"] not in INSTALLED_SKILLS:
-        err(f"{case_id}: skill '{spec['skill']}' is not one of the six installed skills")
     if not isinstance(spec["timeout_seconds"], int) or not 1 <= spec["timeout_seconds"] <= 300:
         err(f"{case_id}: timeout_seconds must be an integer between 1 and 300")
-
-    task = str(spec.get("task", ""))
-    if len(task.split()) < 15:
+    if len(str(spec["task"]).split()) < 15:
         err(f"{case_id}: the task is too short to be a real request")
 
-    # The references the skills-on arm will carry must exist in the checkout it loads from.
-    refs = spec.get("references") or []
-    if not isinstance(refs, list) or not refs:
-        err(f"{case_id}: references must be a non-empty list naming the skills-on material")
-    else:
+    # Every reference the treatment arm will carry must exist, and must resolve inside that skill's
+    # own references/ directory. An absolute path, a '..' or a symlink cannot enter a prompt.
+    for skill, refs in spec["references"].items():
         for ref in refs:
             if ref == "SKILL.md":
-                err(f"{case_id}: SKILL.md is implied by 'skill' and must not be listed")
-            elif not (ROOT / "skills" / spec["skill"] / "references" / ref).is_file():
-                err(f"{case_id}: reference '{ref}' does not exist under skills/{spec['skill']}/")
+                err(f"{case_id}: SKILL.md is implied by the context lists and must not be listed")
+                continue
+            try:
+                confined_reference(skill, ref)
+            except ContextError as exc:
+                err(f"{case_id}: {exc}")
 
-    allowed = spec.get("allowed_paths") or []
+    allowed = spec["allowed_paths"]
     if not isinstance(allowed, list) or not allowed:
         err(f"{case_id}: allowed_paths must list the files a patch may touch")
+        allowed = []
     for declared in allowed:
         if not str(declared).startswith("repo/"):
             err(f"{case_id}: allowed path '{declared}' is outside repo/")
-        elif not (case / declared).is_file():
-            err(f"{case_id}: allowed path '{declared}' does not exist")
+            continue
+        try:
+            _confine(case, str(declared), f"{case_id} allowed path")
+        except ContextError as exc:
+            err(f"{case_id}: {exc}")
+        name = Path(str(declared)).name
+        if name.startswith("test_") or name.endswith(("_test.py", "_tests.py")) \
+                or {"test", "tests"} & set(Path(str(declared)).parts):
+            err(f"{case_id}: allowed path '{declared}' is a test file; a candidate patch must not "
+                f"be able to edit anything that grades it")
 
     if not (case / "repo").is_dir():
         err(f"{case_id}: no repo/")
-        return
-    oracle = case / ORACLE_ENTRYPOINT
-    if not oracle.is_file():
+        return None
+    if not (case / ORACLE_ENTRYPOINT).is_file():
         err(f"{case_id}: no {ORACLE_ENTRYPOINT}")
-        return
-    patch_file = case / "fix.patch"
-    if not patch_file.is_file():
+        return None
+    if not (case / "fix.patch").is_file():
         err(f"{case_id}: no fix.patch")
-        return
+        return None
 
     scan_tree(case, case_id)
-    scan_oracle(oracle, case_id)
+    scan_oracle(case / ORACLE_ENTRYPOINT, case_id)
+    try:
+        known = {rel for rel, _ in read_case_tree(case)}
+    except ContextError as exc:
+        err(f"{case_id}: {exc}")
+        return None
 
-    patch_text = patch_file.read_text(encoding="utf-8", errors="replace")
-    if "GIT binary patch" in patch_text or "literal 0" in patch_text:
-        err(f"{case_id}: fix.patch is a binary patch")
-    if "120000" in patch_text:
-        err(f"{case_id}: fix.patch changes a symlink mode")
-    stray = sorted(p for p in patch_paths(patch_text) if p not in set(map(str, allowed)))
-    if stray:
-        err(f"{case_id}: fix.patch touches {stray}, which allowed_paths does not declare")
+    patch_text = (case / "fix.patch").read_text(encoding="utf-8", errors="replace")
+    check_patch_hygiene(patch_text, case_id)
+    # The reference patch is held to exactly the rule a candidate patch is held to.
+    _, reason = validate_patch(patch_text, tuple(str(p) for p in allowed), known)
+    if reason is not None:
+        err(f"{case_id}: fix.patch would be refused by the grader: {reason}")
 
     if not run_oracles:
-        print(f"  ok   structure, {len(refs)} reference(s), skill {spec['skill']}")
-        return
+        print(f"  ok   structure, target {spec['target_skill']}, "
+              f"baseline {list(spec['baseline_context'] or []) or 'none'}")
+        return spec["target_skill"]
 
     timeout = int(spec["timeout_seconds"])
     work = Path(tempfile.mkdtemp(prefix=f"evalcheck-{case_id}-"))
@@ -287,16 +284,15 @@ def check_case(case: Path, run_oracles: bool) -> None:
         else:
             print(f"  ok   oracle fails on the planted defect (exit {code})")
 
-        # 2. the reference fix must apply, touching only what it declared
-        applied = subprocess.run(
-            ["git", "apply", "--check", "--unsafe-paths", "fix.patch"],
-            cwd=copy, env=minimal_env(work), capture_output=True, text=True,
-        )
+        # 2. the reference fix must apply. No --unsafe-paths: git itself refuses a path outside the
+        #    working area, which is one more thing that has to go wrong before a patch escapes.
+        applied = subprocess.run(["git", "apply", "--check", "fix.patch"],
+                                 cwd=copy, env=minimal_env(work), capture_output=True, text=True)
         if applied.returncode != 0:
             err(f"{case_id}: fix.patch does not apply: {applied.stderr.strip()[:200]}")
-            return
-        subprocess.run(["git", "apply", "--unsafe-paths", "fix.patch"],
-                       cwd=copy, env=minimal_env(work), check=True, capture_output=True)
+            return spec["target_skill"]
+        subprocess.run(["git", "apply", "fix.patch"], cwd=copy, env=minimal_env(work),
+                       check=True, capture_output=True)
         print("  ok   fix.patch applies")
 
         # 3. and the oracle must PASS once it has
@@ -308,6 +304,7 @@ def check_case(case: Path, run_oracles: bool) -> None:
             print("  ok   oracle passes after the reference fix")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    return spec["target_skill"]
 
 
 def main() -> int:
@@ -319,28 +316,28 @@ def main() -> int:
     if not DATASET.is_dir():
         print(f"check_eval_dataset: no dataset at {DATASET.relative_to(ROOT)}")
         return 1
-
-    cases = sorted(d for d in DATASET.iterdir() if d.is_dir())
+    cases = dataset_cases()
     if not cases:
         err("evals/behavioral/ has no cases")
         return 1
+    # Dot-entries are editor or tooling state, never fixtures. Naming them keeps the skip visible
+    # rather than silent, so a directory that should have been a case cannot vanish from the suite.
+    strays = sorted(p.name for p in DATASET.iterdir() if p.name.startswith("."))
+    if strays:
+        print(f"skipping non-case entries in evals/behavioral/: {strays}")
 
-    for case in cases:
-        check_case(case, run_oracles=not args.list)
-
-    print("\ncoverage")
     seen: dict[str, int] = {name: 0 for name in INSTALLED_SKILLS}
     for case in cases:
-        try:
-            spec = yaml.safe_load((case / "case.yaml").read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError):
-            continue
-        if spec.get("skill") in seen:
-            seen[spec["skill"]] += 1
+        target = check_case(case, run_oracles=not args.list)
+        if target in seen:
+            seen[target] += 1
+
+    print("\ncoverage, counted by the skill the treatment arm introduces")
     for name, count in seen.items():
         print(f"  {name:<26} {count}")
-        if count < 2:
-            err(f"{name} has {count} case(s); every installed skill needs at least two")
+        if count < MIN_CASES_PER_SKILL:
+            err(f"{name} is the target of {count} case(s); every installed skill needs at least "
+                f"{MIN_CASES_PER_SKILL}")
 
     print(f"\nsuite\n  {len(cases)} case(s), oracle entrypoint fixed at {ORACLE_ENTRYPOINT}")
     if errors:
