@@ -1,45 +1,65 @@
 diff --git a/repo/refund_service.py b/repo/refund_service.py
-index 622242c..267f072 100644
+index 622242c..e02322e 100644
 --- a/repo/refund_service.py
 +++ b/repo/refund_service.py
-@@ -4,6 +4,8 @@ The agent picks an order, types an amount and hits refund. request_id comes from
+@@ -4,34 +4,93 @@ The agent picks an order, types an amount and hits refund. request_id comes from
  is the identity of that click, so a retry of the same click reuses it.
  """
 
 +import threading
++import weakref
 +
 
  class RefundCeilingError(Exception):
      """The refund would return more than this payment can give back."""
-@@ -13,25 +15,62 @@ class RefundService:
+
+
++# Per-payment locks live here, keyed by the processor client they guard, and not on any one
++# RefundService. The panel and the webhook endpoint each build their own RefundService over the
++# same client, so a lock held on the instance is a lock two callers on one order never share:
++# both would read the same remainder, both would size their refund against it, and both would
++# send. What has to be serialised is the read-then-reserve against the SHARED state, so the lock
++# has to be keyed to that shared state. The registry is weak in the client so a client that goes
++# out of scope takes its locks with it; the inner dict holds one lock per payment, so two agents
++# on one order queue up while two different orders still refund in parallel.
++_PAYMENT_LOCKS = weakref.WeakKeyDictionary()
++_REGISTRY_GUARD = threading.Lock()
++
++
++def _payment_lock(psp, psp_reference):
++    """The one lock every RefundService over `psp` uses for `psp_reference`."""
++    with _REGISTRY_GUARD:
++        locks = _PAYMENT_LOCKS.get(psp)
++        if locks is None:
++            locks = {}
++            _PAYMENT_LOCKS[psp] = locks
++        lock = locks.get(psp_reference)
++        if lock is None:
++            lock = threading.Lock()
++            locks[psp_reference] = lock
++        return lock
++
++
+ class RefundService:
      def __init__(self, psp):
          self.psp = psp
          self.issued = []
-+        self._locks_guard = threading.Lock()
-+        self._payment_locks = {}
-+
-+    def _payment_lock(self, psp_reference):
-+        """One lock per payment, so two agents on one order queue and two orders do not."""
-+        with self._locks_guard:
-+            lock = self._payment_locks.get(psp_reference)
-+            if lock is None:
-+                lock = threading.Lock()
-+                self._payment_locks[psp_reference] = lock
-+            return lock
-+
+
 +    def _refund_for(self, psp_reference, reference):
 +        """The refund this click already has at the processor, if it got that far."""
 +        for m in self.psp.list_modifications(psp_reference):
 +            if m["type"] == "refund" and m["reference"] == reference:
 +                return m
 +        return None
-
++
      def refundable_amount(self, psp_reference):
 +        """What is left to give back, net of every refund the processor has committed to.
 +
 +        A refund the processor has accepted is money it will pay out on the next settlement
 +        run whether or not anyone asks again, so it reserves against this payment from the
-+        moment it is received, not from the moment it settles.
++        moment it is received, not from the moment it settles. The reservation lives in the
++        processor's own modification list, which every worker reads, rather than in any
++        service object's memory.
 +        """
          captured = self.psp.captured_amount(psp_reference)
 -        returned = sum(
@@ -58,7 +78,9 @@ index 622242c..267f072 100644
 +        Reading the remainder and reserving against it have to be one step: the processor
 +        takes a few hundred milliseconds to answer, and two agents refunding the same order
 +        inside that window would otherwise both be sized against a remainder neither of them
-+        has spent yet. The lock is per payment, so unrelated orders still refund in parallel.
++        has spent yet. The lock comes from the module-level registry keyed by the processor
++        client, not from this instance, because the order can be refunded by any worker
++        holding that client.
 +        """
          if amount <= 0:
              raise ValueError("refund amount must be positive")
@@ -71,7 +93,7 @@ index 622242c..267f072 100644
 -        modification = self.psp.refund(psp_reference, amount, reference)
 -        self.issued.append({"reference": reference, "amount": amount})
 -        return modification
-+        with self._payment_lock(psp_reference):
++        with _payment_lock(self.psp, psp_reference):
 +            already = self._refund_for(psp_reference, reference)
 +            if already is not None:
 +                # This click is the one holding that reservation. Resolving it is not a second

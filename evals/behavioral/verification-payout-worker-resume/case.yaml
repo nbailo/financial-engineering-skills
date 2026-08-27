@@ -1,11 +1,11 @@
 id: verification-payout-worker-resume
 target_skill: fin-verification
-baseline_context: [fin-money-core]
-treatment_context: [fin-money-core, fin-verification]
+baseline_context: [fin-payments]
+treatment_context: [fin-payments, fin-verification]
 references:
-  fin-money-core:
-    - crash-boundaries-and-outbox.md
-    - ambiguous-outcomes.md
+  fin-payments:
+    - idempotency-keys.md
+    - lifecycle-states.md
   fin-verification:
     - crash-boundary-tests.md
     - proof-mechanisms.md

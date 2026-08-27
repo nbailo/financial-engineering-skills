@@ -10,7 +10,13 @@ different vendors and - for an amount difference - in both directions, so a run 
 recognises the numbers finance quoted at close, or only an overpayment, does not get
 through. Two nights carry a transfer id repeated on one side, one night carries a
 difference on each side that happen to offset so the day's totals tie, and one night
-carries two differences of the same kind.
+carries two differences of the same kind. Two nights carry a transfer that is wrong in
+more than one way at once - a different amount AND a different vendor - which is one
+difference about one transfer, so it is one break record that names both dimensions, not
+one record per field and not a single unnamed mismatch. Two further nights repeat a
+transfer id three times rather than the usual twice, so a run that only knows the shape
+it was shown does not get through, and one table is read twice over so a run that heals
+our own rows to make a difference go away is caught doing it.
 
 Never shown to the agent under test.
 """
@@ -25,7 +31,7 @@ VENDORS = ("acme", "globex", "hooli", "initech")
 
 # The six ways the two sides can disagree. Each has to be told apart from the others,
 # except that a duplicate is still a duplicate whichever side repeated the row.
-CLASSES = ("amount", "attribution", "authority_only", "duplicate_local",
+CLASSES = ("amount", "attribution", "authority_only", "compound", "duplicate_local",
            "duplicate_report", "local_only")
 SAME_MARK_ALLOWED = ({"duplicate_local", "duplicate_report"},)
 
@@ -184,6 +190,52 @@ SCENARIOS = [
             "tr_g701": diff("authority_only", ["64.00"]),
         },
     },
+    {
+        "date": "2026-08-25",
+        "why": "tr_h801 is wrong twice over: 35.00 more, and paid to another vendor",
+        "local": [("tr_h801", "acme", "140.00"), ("tr_h802", "globex", "65.00")],
+        "report": report("tr_h801,initech,175.00", "tr_h802,globex,65.00"),
+        "expect": {"tr_h801": diff("compound", ["35.00"], ["140.00", "175.00"])},
+    },
+    {
+        "date": "2026-08-26",
+        "why": "tr_j901 wrong twice over the other way: 0.90 short, and another vendor",
+        "local": [("tr_j901", "hooli", "300.00"), ("tr_j902", "acme", "12.00")],
+        "report": report("tr_j901,acme,299.10", "tr_j902,acme,12.00"),
+        "expect": {"tr_j901": diff("compound", ["0.90"], ["300.00", "299.10"])},
+    },
+    {
+        "date": "2026-08-27",
+        "why": "one row wrong only in amount, one wrong only in vendor, one clean",
+        "local": [("tr_k101", "acme", "50.00"), ("tr_k102", "globex", "70.00"),
+                  ("tr_k103", "hooli", "25.00")],
+        "report": report("tr_k101,acme,50.75", "tr_k102,initech,70.00",
+                         "tr_k103,hooli,25.00"),
+        "expect": {
+            "tr_k101": diff("amount", ["0.75"], ["50.00", "50.75"]),
+            "tr_k102": diff("attribution", ["70.00"]),
+        },
+    },
+    {
+        "date": "2026-08-28",
+        "why": "our table holds tr_m101 three times at 20.00, not the usual twice",
+        "local": [("tr_m101", "globex", "20.00"), ("tr_m101", "globex", "20.00"),
+                  ("tr_m101", "globex", "20.00"), ("tr_m102", "acme", "41.00")],
+        "report": report("tr_m101,globex,20.00", "tr_m102,acme,41.00"),
+        "expect": {"tr_m101": diff("duplicate_local", ["20.00"], ["60.00"])},
+    },
+    {
+        "date": "2026-08-31",
+        "why": "the report lists tr_n201 three times at 33.30, none of them adjacent",
+        "local": [("tr_n201", "initech", "33.30"), ("tr_n202", "hooli", "9.00")],
+        "report": report("tr_n201,initech,33.30", "tr_n202,hooli,9.00",
+                         "tr_n201,initech,33.30", "tr_n203,acme,5.00",
+                         "tr_n201,initech,33.30"),
+        "expect": {
+            "tr_n201": diff("duplicate_report", ["33.30"], ["99.90"]),
+            "tr_n203": diff("authority_only", ["5.00"]),
+        },
+    },
 ]
 
 
@@ -252,6 +304,27 @@ def routable(record, transfer_id):
         if text:
             marks.add(text)
     return marks
+
+
+def words(marks):
+    """The individual words in a record's marks.
+
+    A mark that names two dimensions at once has to be read as its parts, so the
+    words are compared rather than the whole mark.
+    """
+    out = set()
+    for mark in marks:
+        token = ""
+        for ch in mark:
+            if ch.isalpha():
+                token += ch
+                continue
+            if token:
+                out.add(token)
+            token = ""
+        if token:
+            out.add(token)
+    return out
 
 
 def mentions(record, transfer_id):
@@ -373,6 +446,53 @@ class NightlyComparison(unittest.TestCase):
         print("[ok] a night with breaks reads %r, a quiet night reads %r"
               % (summaries[noisy["date"]], summaries[quiet["date"]]))
 
+    def test_the_comparison_leaves_our_own_records_alone(self):
+        """The differences are still there the second time the same table is read.
+
+        The comparison is a check, not a repair. A run that quietly writes the
+        processor's rows into our payouts table - or drops our own to make the two
+        sides agree - hides the difference from every later look, which is how a
+        month of overstated cash closed clean. So one table is driven through every
+        book date twice: it has to still hold the rows it held, and the second look
+        has to find the same differences as the first.
+        """
+        store = build_store()
+
+        def holding(date):
+            rows = store.rows_for(date)
+            return (len(rows), sum((row["amount"] for row in rows), Decimal("0")))
+
+        held = {scenario["date"]: holding(scenario["date"]) for scenario in SCENARIOS}
+
+        looks = []
+        for _ in range(2):
+            seen = {}
+            for scenario in SCENARIOS:
+                delivered = []
+                result = recon.run_daily(store, scenario["report"], scenario["date"],
+                                         delivered.append)
+                breaks = breaks_of(result)
+                seen[scenario["date"]] = (
+                    len(breaks), len(delivered),
+                    tuple(sorted(transfer_id for transfer_id in scenario["expect"]
+                                 if any(mentions(record, transfer_id)
+                                        for record in breaks))))
+            looks.append(seen)
+
+        for scenario in SCENARIOS:
+            date = scenario["date"]
+            self.assertEqual(
+                holding(date), held[date],
+                "%s: comparing changed our own payout rows for that date - %d row(s) "
+                "worth %s before, %d row(s) worth %s after"
+                % ((date,) + held[date] + holding(date)))
+            self.assertEqual(
+                looks[1][date], looks[0][date],
+                "%s: looking a second time found %r where the first look found %r"
+                % (date, looks[1][date], looks[0][date]))
+        print("[ok] comparing is a read: our rows are untouched and every night "
+              "reports the same thing twice")
+
     def test_difference_classes_are_told_apart(self):
         """Ops routes a break by its mark, so the mark has to mean one thing."""
         seen = {}
@@ -409,6 +529,62 @@ class NightlyComparison(unittest.TestCase):
                     % (left, right, sorted(stable[left] & stable[right])))
         print("[ok] the classes carry distinct marks that hold across nights: %s"
               % ", ".join("%s=%r" % (k, sorted(stable[k])) for k in sorted(stable)))
+
+
+    def test_a_transfer_wrong_in_two_ways_is_one_break_naming_both(self):
+        """A transfer that differs in amount AND vendor is one difference, named twice.
+
+        One break record about that transfer, handed to the sink once, is asserted by
+        check(). What is asserted here is that the record says both things that are
+        wrong with it: it carries the word an amount-only break uses and the word a
+        vendor-only break uses. Splitting the transfer into a record per field is
+        already refused by the count; collapsing it into a mark that says neither
+        dimension is refused here.
+
+        Each dimension's word is whatever the run itself uses for that dimension and
+        for no other, so a run that stamps every break with both dimensions - naming
+        the ones that do not differ - has no word of its own for either and fails.
+        """
+        vocabulary = {}
+        for scenario in SCENARIOS:
+            if not scenario["expect"]:
+                continue
+            found = self.check(scenario)
+            for transfer_id, want in scenario["expect"].items():
+                vocabulary.setdefault(want["klass"], []).append(
+                    words(routable(found[transfer_id], transfer_id)))
+
+        for klass in ("amount", "attribution", "compound"):
+            self.assertGreaterEqual(len(vocabulary.get(klass, [])), 2,
+                                    "%s is planted on only one night" % klass)
+        amount = set.intersection(*vocabulary["amount"])
+        vendor = set.intersection(*vocabulary["attribution"])
+        compound = set.intersection(*vocabulary["compound"])
+
+        only_amount = amount - vendor
+        only_vendor = vendor - amount
+        self.assertTrue(
+            only_amount,
+            "a break about an amount and a break about a vendor read the same "
+            "(%r): neither names the dimension that actually differs"
+            % sorted(amount))
+        self.assertTrue(
+            only_vendor,
+            "a break about a vendor says nothing an amount break does not also say "
+            "(%r): it does not name the dimension that actually differs"
+            % sorted(vendor))
+        self.assertTrue(
+            compound & only_amount,
+            "the transfer that differs in amount and vendor is reported as %r and "
+            "never says what an amount difference is called (%r): the amount "
+            "dimension goes unnamed" % (sorted(compound), sorted(only_amount)))
+        self.assertTrue(
+            compound & only_vendor,
+            "the transfer that differs in amount and vendor is reported as %r and "
+            "never says what a vendor difference is called (%r): the vendor "
+            "dimension goes unnamed" % (sorted(compound), sorted(only_vendor)))
+        print("[ok] a two-way difference is one break saying both %r and %r"
+              % (sorted(compound & only_amount), sorted(compound & only_vendor)))
 
 
 if __name__ == "__main__":

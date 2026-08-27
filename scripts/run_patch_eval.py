@@ -121,49 +121,92 @@ class ContextError(RuntimeError):
 # --------------------------------------------------------------------------- path confinement
 
 
-def _confine(base: Path, relative: str, what: str) -> Path:
-    """Resolve `relative` under `base`, refusing anything that could leave it.
-
-    Absolute paths, traversal and symlinks are refused before resolution, and the resolved result
-    is required to stay under the resolved base. Every path that reaches a prompt, a container
-    mount or the grader goes through here, so '../../etc/hosts' and a symlinked reference are
-    rejected in one place rather than in six.
-    """
+def _reject_bad_relative(relative: str, what: str) -> PurePosixPath:
+    """The lexical half: no absolute path, no traversal, no drive letter, no empty component."""
     if not isinstance(relative, str) or not relative.strip():
         raise ContextError(f"{what}: empty path")
+    if "\\" in relative:
+        raise ContextError(f"{what}: backslash in {relative!r}")
     posix = PurePosixPath(relative)
-    if posix.is_absolute() or relative.startswith("/") or relative.startswith("\\"):
+    if posix.is_absolute() or relative.startswith("/"):
         raise ContextError(f"{what}: absolute path {relative!r}")
     if re.match(r"^[A-Za-z]:", relative):
         raise ContextError(f"{what}: drive-qualified path {relative!r}")
-    if any(part in ("..", "") for part in posix.parts):
+    # Split the raw string, not the normalised parts: PurePosixPath drops a leading "./" and a
+    # doubled slash, so checking .parts alone would let "./a.md" and "a//b" through as canonical.
+    segments = relative.split("/")
+    if ".." in segments or ".." in posix.parts:
         raise ContextError(f"{what}: path traversal in {relative!r}")
+    if any(segment in (".", "") for segment in segments):
+        raise ContextError(f"{what}: non-canonical path {relative!r}; name it exactly once")
+    return posix
 
-    base_resolved = base.resolve(strict=True)
-    walk = base_resolved
-    for part in posix.parts:
+
+def _descend(start: Path, parts, relative: str, what: str) -> Path:
+    """Walk one component at a time, refusing a symlink at ANY of them.
+
+    Checking only the leaf is not enough and neither is resolve(): a symlinked directory halfway
+    down is followed silently by both, which is exactly how a 'reference' inside one skill ends up
+    reading a file somewhere else entirely.
+    """
+    walk = start
+    for part in parts:
         walk = walk / part
         if walk.is_symlink():
-            raise ContextError(f"{what}: {relative!r} passes through a symlink")
-    resolved = walk.resolve()
-    if not resolved.is_relative_to(base_resolved):
-        raise ContextError(f"{what}: {relative!r} resolves outside {base_resolved}")
-    if not resolved.is_file():
+            raise ContextError(f"{what}: {relative!r} passes through a symlink at {part!r}")
+    return walk
+
+
+def _confine(base: Path, relative: str, what: str, root: Path | None = None) -> Path:
+    """Resolve `relative` under `base`, inside trusted `root`, refusing anything that could leave.
+
+    Three separate things have to hold, and each of them has been the whole hole on its own:
+
+    1. the trusted root is a real directory, not a symlink standing in for one;
+    2. every component from the root down to `base` is real, so a symlinked BASE directory cannot
+       quietly redirect an otherwise well-formed relative path;
+    3. every component of `relative` is real, and the result stays under both base and root.
+
+    Every path that reaches a prompt, a container mount or the grader goes through here.
+    """
+    root = base if root is None else root
+    posix = _reject_bad_relative(relative, what)
+
+    if root.is_symlink():
+        raise ContextError(f"{what}: the trusted root {root} is a symlink")
+    if not root.is_dir():
+        raise ContextError(f"{what}: the trusted root {root} is not a directory")
+    try:
+        base_parts = base.relative_to(root).parts
+    except ValueError:
+        raise ContextError(f"{what}: {base} is not under the trusted root {root}") from None
+
+    root_resolved = root.resolve(strict=True)
+    base_checked = _descend(root_resolved, base_parts, str(base), f"{what} base")
+    if not base_checked.is_dir():
+        raise ContextError(f"{what}: {base} is not an existing directory")
+
+    target = _descend(base_checked, posix.parts, relative, what)
+    if target.resolve() != target:
+        raise ContextError(f"{what}: {relative!r} does not resolve to itself")
+    if not target.is_relative_to(base_checked) or not target.is_relative_to(root_resolved):
+        raise ContextError(f"{what}: {relative!r} resolves outside {root_resolved}")
+    if not target.is_file():
         raise ContextError(f"{what}: {relative!r} is not an existing regular file")
-    return resolved
+    return target
 
 
 def confined_reference(skill: str, ref: str) -> Path:
-    """A declared reference, confined to that skill's own references/ directory."""
+    """A declared reference, confined to that skill's own references/ directory under SKILLS."""
     if skill not in INSTALLED_SKILLS:
         raise ContextError(f"skill {skill!r} is not one of the installed skills")
-    return _confine(SKILLS / skill / "references", ref, f"{skill} reference")
+    return _confine(SKILLS / skill / "references", ref, f"{skill} reference", root=SKILLS)
 
 
 def confined_skill_md(skill: str) -> Path:
     if skill not in INSTALLED_SKILLS:
         raise ContextError(f"skill {skill!r} is not one of the installed skills")
-    return _confine(SKILLS / skill, "SKILL.md", f"{skill} SKILL.md")
+    return _confine(SKILLS / skill, "SKILL.md", f"{skill} SKILL.md", root=SKILLS)
 
 
 # --------------------------------------------------------------------------- freezing
@@ -190,6 +233,11 @@ class FrozenCase:
     treatment_prompt: str
     prompt_digest: str = ""
     references: tuple[tuple[str, tuple[str, ...]], ...] = field(default_factory=tuple)
+    # Digests over the skill_context block each arm was handed. The baseline block is a byte-exact
+    # prefix of the treatment block, so shared_context_digest is the same number in both arms and
+    # any drift between them shows up as a changed digest rather than as an apparent skill effect.
+    shared_context_digest: str = ""
+    treatment_context_digest: str = ""
 
     def prompt(self, arm: str) -> str:
         return self.baseline_prompt if arm == "baseline" else self.treatment_prompt
@@ -248,6 +296,10 @@ def load_spec(case: Path) -> dict:
     if target in baseline:
         raise ContextError(f"{case.name}: target_skill {target!r} is already in baseline_context, "
                            f"so the arms would not differ")
+    timeout = spec["timeout_seconds"]
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 300:
+        raise ContextError(f"{case.name}: timeout_seconds must be an integer in 1..300, "
+                           f"got {timeout!r}")
     refs = spec["references"]
     if not isinstance(refs, dict):
         raise ContextError(f"{case.name}: references must be a mapping of skill to file list")
@@ -262,13 +314,41 @@ def load_spec(case: Path) -> dict:
     return spec
 
 
-def skill_block(skill: str, refs: list[str]) -> str:
-    """One skill's SKILL.md plus its declared references, every path confined before it is read."""
-    parts = [f"# {skill}\n\n" + confined_skill_md(skill).read_text(encoding="utf-8")]
-    for ref in refs:
-        body = confined_reference(skill, ref).read_text(encoding="utf-8")
-        parts.append(f"\n\n# {skill} / references / {ref}\n\n{body}")
-    return "".join(parts)
+class ContextFreezer:
+    """Reads every shared skill and reference file exactly once per run, and hands back bytes.
+
+    Twelve cases naming the same six skills used to mean the same SKILL.md was read a dozen times.
+    Reading once is not an optimisation: it is what makes the claim true that two cases which name
+    the same skill were handed the same bytes, and it removes a dozen windows in which a file could
+    change between two reads inside one run.
+    """
+
+    def __init__(self) -> None:
+        self._files: dict[Path, str] = {}
+        self._blocks: dict[tuple[str, tuple[str, ...]], str] = {}
+        self.file_digests: dict[str, str] = {}
+
+    def _read(self, path: Path, label: str) -> str:
+        if path not in self._files:
+            body = path.read_text(encoding="utf-8")
+            self._files[path] = body
+            self.file_digests[label] = _digest(body.encode())[:32]
+        return self._files[path]
+
+    def block(self, skill: str, refs: tuple[str, ...]) -> str:
+        """One skill's SKILL.md plus its declared references. Composed once per (skill, refs)."""
+        key = (skill, refs)
+        if key not in self._blocks:
+            parts = [f"# {skill}\n\n"
+                     + self._read(confined_skill_md(skill), f"{skill}/SKILL.md")]
+            for ref in refs:
+                body = self._read(confined_reference(skill, ref), f"{skill}/references/{ref}")
+                parts.append(f"\n\n# {skill} / references / {ref}\n\n{body}")
+            self._blocks[key] = "".join(parts)
+        return self._blocks[key]
+
+    def context(self, skills, refs: dict[str, list[str]]) -> str:
+        return "\n\n".join(self.block(s, tuple(refs[s])) for s in skills)
 
 
 def build_prompt(task: str, files: tuple[tuple[str, bytes], ...], context_text: str) -> str:
@@ -284,11 +364,24 @@ def build_prompt(task: str, files: tuple[tuple[str, bytes], ...], context_text: 
 
 
 def dataset_cases() -> list[Path]:
-    """The case directories, in stable order. A dot-entry is tooling state, never a case."""
-    return sorted(d for d in DATASET.iterdir() if d.is_dir() and not d.name.startswith("."))
+    """The case directories, in stable order. A dot-entry is tooling state, never a case.
+
+    A symlinked entry is refused rather than skipped: a case directory that points somewhere else
+    would put a tree nobody reviewed into a prompt and into the container.
+    """
+    out = []
+    for entry in sorted(DATASET.iterdir()):
+        if entry.name.startswith("."):
+            continue
+        if entry.is_symlink():
+            raise ContextError(f"{entry.name}: a case directory must not be a symlink")
+        if entry.is_dir():
+            out.append(entry)
+    return out
 
 
-def freeze_cases(selector: str, model: str, effort: str, commit: str) -> list[FrozenCase]:
+def freeze_cases(selector: str, model: str, effort: str, commit: str,
+                 freezer: "ContextFreezer | None" = None) -> list[FrozenCase]:
     """Read every fixture and every skill file exactly once, and build both prompts up front.
 
     After this returns, nothing on disk is consulted again for prompt content. A fixture or skill
@@ -298,6 +391,7 @@ def freeze_cases(selector: str, model: str, effort: str, commit: str) -> list[Fr
     if not DATASET.is_dir():
         raise ContextError(f"no dataset at {DATASET}")
     wanted = None if selector == "all" else {s.strip() for s in selector.split(",") if s.strip()}
+    freezer = ContextFreezer() if freezer is None else freezer
     frozen: list[FrozenCase] = []
     for case in dataset_cases():
         if wanted is not None and case.name not in wanted:
@@ -307,8 +401,14 @@ def freeze_cases(selector: str, model: str, effort: str, commit: str) -> list[Fr
         fixture_digest = _digest(*(rel.encode() + b"\0" + blob for rel, blob in files))[:32]
 
         refs = {str(k): [str(v) for v in vs] for k, vs in spec["references"].items()}
-        baseline_text = "\n\n".join(skill_block(s, refs[s]) for s in spec["baseline_context"])
-        treatment_text = "\n\n".join(skill_block(s, refs[s]) for s in spec["treatment_context"])
+        baseline_text = freezer.context(spec["baseline_context"] or [], refs)
+        target_block = freezer.block(spec["target_skill"], tuple(refs[spec["target_skill"]]))
+        # Composed by extension, not rebuilt: the treatment block IS the baseline block plus one
+        # more, byte for byte, so the shared half of the two prompts cannot differ by construction.
+        treatment_text = f"{baseline_text}\n\n{target_block}" if baseline_text else target_block
+        if baseline_text and not treatment_text.startswith(baseline_text + "\n\n"):
+            raise ContextError(f"{case.name}: the treatment context is not an extension of the "
+                               f"baseline context")
 
         task = str(spec["task"])
         baseline_prompt = build_prompt(task, files, baseline_text)
@@ -321,7 +421,7 @@ def freeze_cases(selector: str, model: str, effort: str, commit: str) -> list[Fr
         for declared in spec["allowed_paths"]:
             if not isinstance(declared, str) or not declared.startswith("repo/"):
                 raise ContextError(f"{case.name}: allowed path {declared!r} is outside repo/")
-            _confine(case, declared, f"{case.name} allowed path")
+            _confine(case, declared, f"{case.name} allowed path", root=DATASET)
 
         frozen.append(FrozenCase(
             id=spec["id"], target_skill=spec["target_skill"],
@@ -333,6 +433,8 @@ def freeze_cases(selector: str, model: str, effort: str, commit: str) -> list[Fr
             baseline_prompt=baseline_prompt, treatment_prompt=treatment_prompt,
             prompt_digest=digest,
             references=tuple((k, tuple(v)) for k, v in sorted(refs.items())),
+            shared_context_digest=_digest(baseline_text.encode())[:32],
+            treatment_context_digest=_digest(treatment_text.encode())[:32],
         ))
 
     if wanted is not None:
@@ -719,7 +821,8 @@ def sandbox_command(binary: str, name: str, case_root: Path, argv: list[str]) ->
         "--tmpfs", f"{SANDBOX_TMPFS}:rw,noexec,nosuid,nodev,size={SANDBOX_TMPFS_SIZE}",
         "--mount", f"type=bind,source={case_root},target={SANDBOX_CASE},readonly",
         "--workdir", SANDBOX_CASE,
-        # The container's whole environment, stated here and nowhere else.
+        # The eight variables this evaluator passes in, stated here and nowhere else. Nothing is
+        # forwarded from the host; anything else the process sees comes from the pinned image.
         "-e", "PYTHONPATH=repo", "-e", "PYTHONDONTWRITEBYTECODE=1",
         "-e", "PYTHONNOUSERSITE=1", "-e", "PYTHONHASHSEED=0",
         "-e", f"HOME={SANDBOX_TMPFS}", "-e", f"TMPDIR={SANDBOX_TMPFS}",
@@ -729,15 +832,34 @@ def sandbox_command(binary: str, name: str, case_root: Path, argv: list[str]) ->
     ]
 
 
+# Exit codes that mean the sandbox broke, not that the repair was wrong. 125 is docker itself
+# failing to run the container (daemon gone, image missing, bad flag); 126 and 127 are the command
+# not being executable or not being found inside it; 137 and 143 are the container being killed or
+# terminated from outside. None of these is evidence about a patch, so none of them may be scored as
+# a model failure. 137 can also be the memory cap, and this treats that as infrastructure too:
+# these fixtures are tiny, so a container hitting 512m is far more likely the host than the repair,
+# and mis-scoring an infrastructure event as a failed repair is the bias worth avoiding.
+SANDBOX_INFRA_EXITS = {
+    125: "docker could not run the container (daemon unreachable, image missing, or bad invocation)",
+    126: "the container command was not executable",
+    127: "the container command was not found",
+    137: "the container was killed (SIGKILL, or the memory cap)",
+    143: "the container was terminated (SIGTERM)",
+}
+SANDBOX_TIMEOUT_EXIT = 124
+
+
 def run_in_sandbox(case_root: Path, argv: list[str], timeout: int, label: str) -> tuple[int, str]:
     """Run python3 inside the pinned container. Returns (exit code, tail of output).
 
-    Exit 124 means the wall clock ran out. The container is then killed explicitly, because `docker
-    run` in the foreground does not stop the container when the CLI it fronted is killed.
+    Exit 124 means the wall clock ran out; the container is then killed explicitly, because `docker
+    run` in the foreground does not stop the container when the CLI it fronted is killed. Anything
+    in SANDBOX_INFRA_EXITS is the sandbox breaking rather than the patch failing, and the caller
+    turns it into an invalid call.
     """
     binary = docker_binary()
     if binary is None:
-        raise ContextError("docker disappeared between preflight and this call")
+        return 127, "docker is no longer on PATH"
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", label)[:40]
     name = f"patcheval-{safe}-{secrets.token_hex(4)}"
     try:
@@ -747,7 +869,11 @@ def run_in_sandbox(case_root: Path, argv: list[str], timeout: int, label: str) -
     except subprocess.TimeoutExpired:
         subprocess.run([binary, "rm", "-f", name], env=docker_cli_env(),
                        capture_output=True, text=True)
-        return 124, f"the oracle exceeded its {timeout}s wall clock"
+        return SANDBOX_TIMEOUT_EXIT, f"the oracle exceeded its {timeout}s wall clock"
+    except FileNotFoundError:
+        return 127, "the docker binary vanished between preflight and this call"
+    except OSError as exc:
+        return 125, f"the docker CLI could not be started: {type(exc).__name__}"
     return done.returncode, ((done.stderr or "") + (done.stdout or ""))[-800:]
 
 
@@ -828,7 +954,12 @@ def grade(case: FrozenCase, patch: str) -> dict:
 
         code, tail = run_in_sandbox(copy, ["-S", "oracle/test_oracle.py"],
                                     case.timeout_seconds, case.id)
-        if code == 124:
+        if code in SANDBOX_INFRA_EXITS:
+            # The sandbox broke. That is a call that did not happen, not a repair that failed.
+            result.update(outcome="invalid",
+                          reason=f"sandbox unavailable: {SANDBOX_INFRA_EXITS[code]}")
+            return result
+        if code == SANDBOX_TIMEOUT_EXIT:
             result["reason"] = tail
             return result
         result["oracle_completed"] = True
@@ -840,6 +971,10 @@ def grade(case: FrozenCase, patch: str) -> dict:
         return result
     except ContextError as exc:
         result["reason"] = str(exc)
+        return result
+    except OSError as exc:
+        result.update(outcome="invalid",
+                      reason=f"sandbox unavailable: grading could not run ({type(exc).__name__})")
         return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -1028,19 +1163,39 @@ def _tally(values) -> dict[str, int]:
 
 
 def summarise(records: list[dict], repeats: int, run_id: str, complete_run: bool = True) -> None:
-    complete, excluded = pair_records(records, run_id)
-    invalid = [r for r in records if r["outcome"] == "invalid"]
-    completed = [r for r in records if r["outcome"] != "invalid"]
+    # Foreign records are dropped here, before anything is counted. A record from another run has
+    # nothing to say about this one, and letting it into even the call count would put a number in
+    # the report that no arm of this run produced.
+    mine = [r for r in records if r.get("run_id") == run_id]
+    foreign = len(records) - len(mine)
+    complete, excluded = pair_records(mine, run_id)
+    invalid = [r for r in mine if r["outcome"] == "invalid"]
+    completed = [r for r in mine if r["outcome"] != "invalid"]
     in_pairs = [r for pair in complete.values() for r in pair.values()]
 
     print("\n" + "=" * 78)
     print(f"run {run_id}   {'complete' if complete_run else 'INCOMPLETE'}")
-    print(f"calls made {len(records)}   completed {len(completed)}   invalid {len(invalid)}")
+    print(f"calls made {len(mine)}   completed {len(completed)}   invalid {len(invalid)}")
     print(f"complete pairs {len(complete)}   excluded pairs {len(excluded)}   repeats {repeats}")
+    if foreign:
+        print(f"records from another run, dropped before every number above and below: {foreign}")
     if excluded:
         print("\nexcluded pairs, which are counted nowhere below")
         for item in sorted(excluded, key=lambda r: r["pair_key"])[:24]:
             print(f"  {item['pair_key'][:52]:<52} {item['why']}")
+
+    print("\nper arm, over every record this run produced")
+    print(f"  {'':<11}{'calls':>7}{'invalid':>9}{'attempts':>10}{'input tok':>12}{'output tok':>12}")
+    for arm in ARMS:
+        rows = [r for r in mine if r["arm"] == arm]
+        bad = sum(1 for r in rows if r["outcome"] == "invalid")
+        attempts = sum(int(r.get("attempts") or 1) for r in rows)
+        inp = sum(int(r["input_tokens"]) for r in rows if isinstance(r.get("input_tokens"), int))
+        out = sum(int(r["output_tokens"]) for r in rows if isinstance(r.get("output_tokens"), int))
+        print(f"  {arm:<11}{len(rows):>7}{bad:>9}{attempts:>10}{inp:>12}{out:>12}")
+    total_attempts = sum(int(r.get("attempts") or 1) for r in mine)
+    print(f"  {'total':<11}{len(mine):>7}{len(invalid):>9}{total_attempts:>10}"
+          f"   (attempts include retries; token counts are API reported, summed)")
 
     print("\nmarginal arm rates, oracle-accepted / calls")
     print(f"  {'':<11}{'all completed calls':>21}{'calls in complete pairs':>27}")
@@ -1146,8 +1301,9 @@ def main() -> int:
     if paid:
         require_clean_tree()
     commit = repo_commit()
+    freezer = ContextFreezer()
     try:
-        cases = freeze_cases(args.cases, args.model, args.effort, commit)
+        cases = freeze_cases(args.cases, args.model, args.effort, commit, freezer=freezer)
     except ContextError as exc:
         sys.exit(f"run_patch_eval: {exc}")
 
@@ -1164,6 +1320,11 @@ def main() -> int:
     print(f"sandbox image: {SANDBOX_IMAGE}")
     starts = _tally(ordered[0] for _, _, ordered in plan if ordered)
     print("arm order: " + ", ".join(f"{v} {k}-first" for k, v in sorted(starts.items())))
+    print(f"shared context: {len(freezer.file_digests)} skill file(s), each read once for this run")
+    if args.max_calls is not None:
+        print(f"ceilings: {args.max_calls} call(s), at most {MAX_RETRIES} retr(ies) each, so at "
+              f"most {args.max_calls * (1 + MAX_RETRIES)} request attempt(s); "
+              f"stop after {args.max_invalid} invalid")
 
     if not paid:
         for case, repeat, ordered in plan:
@@ -1200,12 +1361,17 @@ def main() -> int:
         "effort": args.effort, "repeats": args.repeats, "arms": list(arms), "commit": commit,
         "sandbox_image": SANDBOX_IMAGE, "max_calls": args.max_calls,
         "max_invalid": args.max_invalid, "planned_calls": calls,
+        "max_retries_per_call": MAX_RETRIES,
+        "attempt_ceiling": args.max_calls * (1 + MAX_RETRIES),
+        "shared_context_files": dict(sorted(freezer.file_digests.items())),
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "complete": False, "stopped_because": None,
         "cases": [{"id": c.id, "target_skill": c.target_skill,
                    "baseline_context": list(c.baseline_context),
                    "treatment_context": list(c.treatment_context),
-                   "fixture_digest": c.fixture_digest, "prompt_digest": c.prompt_digest}
+                   "fixture_digest": c.fixture_digest, "prompt_digest": c.prompt_digest,
+                   "shared_context_digest": c.shared_context_digest,
+                   "treatment_context_digest": c.treatment_context_digest}
                   for c in cases],
     }
     write_private(run_dir / "manifest.json", json.dumps(manifest, indent=2))
@@ -1214,6 +1380,10 @@ def main() -> int:
 
     records: list[dict] = []
     invalid_seen = 0
+    attempts_used = 0
+    # --max-calls bounds the calls; a call may retry, so this bounds what those retries can add up
+    # to. It is the number the run is actually held to, and it is printed before anything is sent.
+    attempt_ceiling = args.max_calls * (1 + MAX_RETRIES)
     stopped = None
     for case, repeat, ordered in plan:
         if stopped:
@@ -1230,7 +1400,9 @@ def main() -> int:
                 "model": args.model, "effort": args.effort, "runner_version": RUNNER_VERSION,
                 "commit": commit, "fixture_digest": case.fixture_digest,
                 "prompt_digest": case.prompt_digest,
-                "latency_s": frag.get("latency_s"), "attempts": frag.get("attempts"),
+                "shared_context_digest": case.shared_context_digest,
+                "treatment_context_digest": case.treatment_context_digest,
+                "latency_s": frag.get("latency_s"), "attempts": frag.get("attempts", 1),
                 "api_status": frag.get("api_status"),
                 "input_tokens": frag.get("input_tokens"),
                 "output_tokens": frag.get("output_tokens"),
@@ -1241,15 +1413,25 @@ def main() -> int:
                          "refusing to write a run whose pairing cannot be trusted")
             if status != "ok":
                 rec.update(outcome="invalid", reason=frag.get("reason", "unknown"))
-                invalid_seen += 1
             else:
                 rec.update(grade(case, frag["patch"]))
                 rec["summary"] = frag.get("summary", "")   # recorded, never graded
                 write_private(run_dir / f"{case.id}.{arm}.{repeat}.patch", frag["patch"])
+            # Counted after grading, not after the call: a sandbox that has stopped working produces
+            # an invalid outcome inside grade(), and that has to trip the breaker just as an HTTP
+            # failure does. Otherwise a broken Docker would quietly grade the whole suite as fails.
+            attempts_used += int(rec.get("attempts") or 1)
+            if rec["outcome"] == "invalid":
+                invalid_seen += 1
             records.append(rec)
             write_private(run_dir / f"{case.id}.{arm}.{repeat}.json", json.dumps(rec, indent=2))
             print(f"  {case.id:<44} {arm:<9} r{repeat} -> {rec['outcome']:<7} "
                   f"{rec['reason'][:40]}")
+            if attempts_used > attempt_ceiling:
+                stopped = (f"{attempts_used} request attempt(s) passed the ceiling of "
+                           f"{attempt_ceiling}")
+                print(f"\nSTOPPING: {stopped}. Records already written are kept.")
+                break
             if invalid_seen >= args.max_invalid:
                 stopped = (f"{invalid_seen} invalid call(s) reached the --max-invalid ceiling of "
                            f"{args.max_invalid}")

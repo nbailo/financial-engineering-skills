@@ -19,4 +19,4 @@ allowed_paths:
   - repo/refund_service.py
 timeout_seconds: 60
 defect: Two agents refunding 7000 on the same 12000 capture in the same moment both go through, so 14000 is paid back on a payment that took 12000.
-oracle_proves: Reading the remainder and reserving against it happen as one step per payment, and the remainder is that payment's own capture less every refund the processor already holds, settled or not, so no order ever pays back more than it took whatever it captured and whichever worker asks, while a genuine remainder still refunds and a re-pressed click resolves to its own refund instead of a second one.
+oracle_proves: Reading the remainder and reserving against it happen as one step per payment, and the remainder is that payment's own capture less every refund the processor already holds, settled or not, so no order ever pays back more than it took whatever it captured, whatever it has already given back, whichever worker asks and however many ask at once, while a genuine remainder still refunds and a re-pressed click resolves to its own refund instead of a second one.

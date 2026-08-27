@@ -202,8 +202,7 @@ def check_case(case: Path, run_oracles: bool) -> str | None:
         err(f"{case_id}: {exc}")
         return None
 
-    if not isinstance(spec["timeout_seconds"], int) or not 1 <= spec["timeout_seconds"] <= 300:
-        err(f"{case_id}: timeout_seconds must be an integer between 1 and 300")
+    # timeout_seconds is range-checked inside load_spec, which raised above if it were wrong.
     if len(str(spec["task"]).split()) < 15:
         err(f"{case_id}: the task is too short to be a real request")
 
@@ -228,7 +227,7 @@ def check_case(case: Path, run_oracles: bool) -> str | None:
             err(f"{case_id}: allowed path '{declared}' is outside repo/")
             continue
         try:
-            _confine(case, str(declared), f"{case_id} allowed path")
+            _confine(case, str(declared), f"{case_id} allowed path", root=DATASET)
         except ContextError as exc:
             err(f"{case_id}: {exc}")
         name = Path(str(declared)).name

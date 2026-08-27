@@ -15,11 +15,18 @@ task: |
   nobody looked until close. Going through the month by hand we also found a 64.25 transfer
   booked against the wrong vendor, a payout our own table holds twice, and a night where the
   report itself lists one transfer on two lines - all of them on nights the job called clean.
+  One of those nights is worse than the rest: a transfer went out for a different amount AND
+  to a different vendor than our row says, both wrong at once.
   Make every difference between the two sides produce one break record that names what kind
-  of difference it is and the amount at stake, and hand each one to the alert sink. A night
-  where the two sides agree must still report nothing.
+  of difference it is and the amount at stake, and hand each one to the alert sink. A transfer
+  that is wrong in more than one way at once is still one item, not one per thing that is
+  wrong: it has to name every way it is wrong and the amount at stake, and reach the alert
+  sink once. A transfer wrong in only one way names only that one thing. A night where the
+  two sides agree must still report nothing. The job is a check and not a repair - it
+  must leave our own payout table exactly as it found it, so a difference it reports
+  tonight is still there to be found until a person fixes it.
 allowed_paths:
   - repo/reconcile.py
 timeout_seconds: 60
-defect: The nightly run walks only our own payout rows and matches on transfer id alone, so a 250.00 payout only the report holds, a 64.25 transfer paid to a different vendor, and a transfer repeated on either side all read as clean and cash on hand stays overstated by 250.00.
-oracle_proves: Over a table of book dates that plants each difference - wrong vendor, duplicated locally, duplicated in the report, ours only, the report's only, and an amount mismatch either way round - on at least two nights at different amounts and under different vendors, including a night whose differences offset so the day's totals tie and a night we wrote no rows at all, every difference yields exactly one break record carrying its amount and a mark that holds across nights and is not shared with another class, each delivered to the alert sink exactly once, while the agreeing book dates yield no break and no alert.
+defect: The nightly run walks only our own payout rows and matches on transfer id alone, so a 250.00 payout only the report holds, a 64.25 transfer paid to a different vendor, a transfer repeated on either side, and a transfer wrong in amount and vendor at once all read as clean and cash on hand stays overstated by 250.00.
+oracle_proves: Over a table of book dates that plants each difference - wrong vendor, duplicated locally, duplicated in the report, ours only, the report's only, an amount mismatch either way round, and a transfer wrong in amount and vendor at the same time - on at least two nights at different amounts and under different vendors, including a night whose differences offset so the day's totals tie and a night we wrote no rows at all, every difference yields exactly one break record carrying its amount and a mark that holds across nights and is not shared with another class, each delivered to the alert sink exactly once, while the agreeing book dates yield no break and no alert. A transfer that differs in both amount and vendor yields exactly one break rather than one per differing field, and that break names both dimensions - it carries the word the run uses for an amount difference and for no other class, and the word it uses for a vendor difference and for no other class - so collapsing the two into one unnamed mismatch fails, and so does stamping every break with both dimensions when only one of them differs. A night carrying one such transfer beside a clean one yields exactly one break and one alert. A transfer repeated three times on either side yields the same single duplicate break as a transfer repeated twice, so a run that only recognises the shape it was shown fails. Reading one payout table through the whole month twice leaves it holding the same rows worth the same money and finds the same differences the second time, so a run that writes the report's rows into our own table to make a difference go away fails.

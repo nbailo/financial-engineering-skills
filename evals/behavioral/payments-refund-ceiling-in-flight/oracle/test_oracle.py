@@ -44,6 +44,10 @@ class SlowConnection(object):
         self._client = PspClient()
         self._barrier = barrier
 
+    def arm(self, barrier):
+        """Slow the wire down from here on, once the order's earlier refunds are in."""
+        self._barrier = barrier
+
     def seed_capture(self, psp_reference, captured, currency="EUR"):
         return self._client.seed_capture(psp_reference, captured, currency)
 
@@ -85,6 +89,9 @@ class Shop(object):
     def seed(self, psp_reference, captured):
         self.psp.seed_capture(psp_reference, captured)
 
+    def arm(self, barrier):
+        self.psp.arm(barrier)
+
     def second_panel(self):
         """A second admin worker talking to the same processor about the same payments."""
         return RefundService(self.psp)
@@ -102,26 +109,56 @@ class Shop(object):
         return self.psp.merchant_paid_out
 
 
-def two_agents_at_once(amount_a, amount_b, captured=CAPTURED):
-    """Two support agents press refund on the same order inside one round trip.
+REQUEST_IDS = ("req-a", "req-b", "req-c")
+
+
+def agents_at_once(amounts, captured=CAPTURED, separate_panels=False, already_out=()):
+    """Support agents press refund on the same order inside one round trip.
+
+    amounts is one figure per agent, two or three of them; they all meet inside the wire, so
+    none of them can see what the others are about to send.
+
+    With separate_panels each agent after the first is served by her own worker object over
+    the one processor, the way the admin panel and the webhook endpoint actually run.
+
+    already_out is what the order gave back before they arrived, as (amount, request_id,
+    settled) triples sent over the quiet connection; the wire only slows down once those are
+    in, so an order that is already part refunded races on the remainder it has left rather
+    than on its whole capture.
 
     Returns (paid_out, accepted_total, refused_ids, unexpected). accepted_total is what the
-    callers that came back without a refusal asked for; a correct service pays out exactly
-    that and never more than the capture.
+    callers that came back without a refusal asked for, plus whatever already went out; a
+    correct service pays out exactly that and never more than the capture.
     """
-    shop = Shop(captured, barrier=threading.Barrier(2, timeout=0.25))
+    shop = Shop(captured)
+    already_paid = 0
+    for amount, request_id, is_settled in already_out:
+        shop.refund(amount, request_id)
+        already_paid += amount
+        if is_settled:
+            shop.settle()
 
-    asked = {"req-a": amount_a, "req-b": amount_b}
+    ids = REQUEST_IDS[: len(amounts)]
+    shop.arm(threading.Barrier(len(ids), timeout=0.25))
+
+    asked = dict(zip(ids, amounts))
+    panel = {}
+    for position, request_id in enumerate(ids):
+        panel[request_id] = (
+            shop.second_panel() if (separate_panels and position) else shop.service
+        )
     accepted = {}
     refused = {}
 
     def agent(request_id):
         try:
-            accepted[request_id] = shop.refund(asked[request_id], request_id)
+            accepted[request_id] = shop.refund(
+                asked[request_id], request_id, service=panel[request_id]
+            )
         except RefundCeilingError as exc:
             refused[request_id] = str(exc)
 
-    threads = [threading.Thread(target=agent, args=(rid,)) for rid in ("req-a", "req-b")]
+    threads = [threading.Thread(target=agent, args=(rid,)) for rid in ids]
     for t in threads:
         t.start()
     for t in threads:
@@ -129,7 +166,7 @@ def two_agents_at_once(amount_a, amount_b, captured=CAPTURED):
 
     unexpected = sorted(set(asked) - set(accepted) - set(refused))
     shop.settle()
-    accepted_total = sum(asked[rid] for rid in accepted)
+    accepted_total = already_paid + sum(asked[rid] for rid in accepted)
     return shop.paid_out, accepted_total, sorted(refused), unexpected
 
 
@@ -137,11 +174,22 @@ class RefundCeilingTest(unittest.TestCase):
     def setUp(self):
         self.shop = Shop()
 
-    def check_concurrent(self, amount_a, amount_b, captured, expected_paid, expected_refusals):
+    def check_concurrent(
+        self,
+        amount_a,
+        amount_b,
+        captured,
+        expected_paid,
+        expected_refusals,
+        separate_panels=False,
+        already_out=(),
+        amount_c=None,
+    ):
+        amounts = (amount_a, amount_b) if amount_c is None else (amount_a, amount_b, amount_c)
         totals = []
         for run in range(RUNS):
-            paid, accepted_total, refused, unexpected = two_agents_at_once(
-                amount_a, amount_b, captured
+            paid, accepted_total, refused, unexpected = agents_at_once(
+                amounts, captured, separate_panels, already_out
             )
             self.assertEqual(
                 unexpected,
@@ -183,6 +231,89 @@ class RefundCeilingTest(unittest.TestCase):
     def test_two_agents_at_once_on_a_capture_larger_than_the_reported_one(self):
         """20000 captured: a 15000 refund is well funded, a second one is not."""
         self.check_concurrent(15000, 15000, 20000, 15000, 1)
+
+    # ---- concurrent callers on two separate workers -------------------------
+
+    def test_two_workers_refunding_7000_each_at_once_return_7000_in_total(self):
+        """Two worker objects over one processor, 7000 each at once: only one can be paid."""
+        self.check_concurrent(7000, 7000, CAPTURED, 7000, 1, separate_panels=True)
+
+    def test_two_workers_refunding_5000_each_at_once_are_both_paid(self):
+        """12000 funds both 5000 refunds, so two workers may not turn either agent away."""
+        self.check_concurrent(5000, 5000, CAPTURED, 10000, 0, separate_panels=True)
+
+    def test_two_workers_at_once_on_a_smaller_capture(self):
+        """9000 captured, two workers each asked for 6000: 6000 goes back, not 12000."""
+        self.check_concurrent(6000, 6000, 9000, 6000, 1, separate_panels=True)
+
+    def test_two_workers_at_once_on_a_larger_capture(self):
+        """20000 captured across two workers: one 15000 is funded, the other is not."""
+        self.check_concurrent(15000, 15000, 20000, 15000, 1, separate_panels=True)
+
+    # ---- more than two callers at once --------------------------------------
+
+    def test_three_agents_refunding_5000_each_at_once_return_10000(self):
+        """12000 captured, three 5000 refunds in the same moment: only two of them fit."""
+        self.check_concurrent(5000, 5000, CAPTURED, 10000, 1, amount_c=5000)
+
+    def test_three_workers_refunding_5000_each_at_once_return_10000(self):
+        """The same three clicks spread over three worker objects on one processor."""
+        self.check_concurrent(5000, 5000, CAPTURED, 10000, 1, separate_panels=True, amount_c=5000)
+
+    def test_three_agents_within_the_capture_are_all_three_paid(self):
+        """12000 funds 4000 three times over, so none of the three may be turned away."""
+        self.check_concurrent(4000, 4000, CAPTURED, 12000, 0, amount_c=4000)
+
+    def test_three_workers_on_what_a_settled_refund_left(self):
+        """6000 of 12000 is already back; three 4000 clicks at once add only 4000 more."""
+        self.check_concurrent(
+            4000,
+            4000,
+            CAPTURED,
+            10000,
+            2,
+            separate_panels=True,
+            already_out=((6000, "req-0", True),),
+            amount_c=4000,
+        )
+
+    # ---- concurrent callers on an order that is already part refunded -------
+
+    def test_two_agents_at_once_on_what_a_settled_refund_left(self):
+        """7000 of 12000 already went back; two 3000 refunds at once, only 3000 more fits.
+
+        Neither request is large next to the capture. What they are large next to is the
+        1000 of headroom this order has left, which is the only figure that decides.
+        """
+        self.check_concurrent(3000, 3000, CAPTURED, 10000, 1, already_out=((7000, "req-0", True),))
+
+    def test_two_workers_at_once_on_what_an_unsettled_refund_left(self):
+        """11000 of 12000 is out but not yet settled; two 600 refunds at once, one fits."""
+        self.check_concurrent(
+            600,
+            600,
+            CAPTURED,
+            11600,
+            1,
+            separate_panels=True,
+            already_out=((11000, "req-0", False),),
+        )
+
+    def test_two_agents_at_once_inside_what_a_settled_refund_left(self):
+        """4000 of 12000 is back and the remaining 8000 funds both 4000 refunds."""
+        self.check_concurrent(4000, 4000, CAPTURED, 12000, 0, already_out=((4000, "req-0", True),))
+
+    def test_two_workers_at_once_inside_what_an_unsettled_refund_left(self):
+        """5000 of 20000 is in flight; 5000 each on two workers still fits twice over."""
+        self.check_concurrent(
+            5000,
+            5000,
+            20000,
+            15000,
+            0,
+            separate_panels=True,
+            already_out=((5000, "req-0", False),),
+        )
 
     # ---- the ceiling --------------------------------------------------------
 
@@ -240,6 +371,31 @@ class RefundCeilingTest(unittest.TestCase):
             self.shop.refund(1, "req-3", "PSP002")
         self.shop.refund(5000, "req-4", "PSP001")
         self.assertEqual(self.shop.settle(), 21000, "paid out %d against 12000 + 9000" % self.shop.paid_out)
+
+    def test_the_other_worker_sees_the_remainder_the_first_one_left(self):
+        """7000 out on one worker leaves exactly 5000 for the other: 5001 no, 5000 yes."""
+        other = self.shop.second_panel()
+        self.shop.refund(7000, "req-1")
+        with self.assertRaises(RefundCeilingError):
+            self.shop.refund(5001, "req-2", service=other)
+        self.assertEqual(self.shop.settle(), 7000, "5001 leaked: paid out %d" % self.shop.paid_out)
+        self.shop.refund(5000, "req-3", service=other)
+        self.assertEqual(self.shop.settle(), CAPTURED, "paid out %d" % self.shop.paid_out)
+        with self.assertRaises(RefundCeilingError):
+            self.shop.refund(1, "req-4", service=other)
+        self.assertEqual(self.shop.settle(), CAPTURED, "paid out %d" % self.shop.paid_out)
+
+    def test_two_workers_each_refunding_part_of_a_funded_capture_both_pay(self):
+        """Distinct clicks on distinct workers both go out when the capture funds both."""
+        other = self.shop.second_panel()
+        first = self.shop.refund(5000, "req-1")
+        second = self.shop.refund(4000, "req-2", service=other)
+        self.assertNotEqual(
+            reference_of(first), reference_of(second), "both clicks named %s" % reference_of(first)
+        )
+        held = refund_modifications(self.shop.psp, "PSP001")
+        self.assertEqual(len(held), 2, "processor holds %d refunds for two clicks" % len(held))
+        self.assertEqual(self.shop.settle(), 9000, "paid out %d" % self.shop.paid_out)
 
     def test_a_second_admin_worker_sees_the_same_remainder(self):
         """The panel runs two workers; the one that did not send the first refund still knows."""

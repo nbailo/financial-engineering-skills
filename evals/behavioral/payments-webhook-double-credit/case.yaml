@@ -18,7 +18,8 @@ task: |
 allowed_paths:
   - repo/handler.py
   - repo/credit_book.py
+  - repo/credit_service.py
   - repo/event_log.py
 timeout_seconds: 60
-defect: One settled refund of 4500 puts 9000 of store credit on the customer, because the two separately generated provider events reporting that refund each write their own credit, including when both are in flight at once.
-oracle_proves: One settled refund reaches the store-credit service as exactly one credit however many events report it and however the deliveries overlap, while a redelivery adds nothing and every other genuine refund is still credited in full, including a second refund, two partial refunds of one payment for the same amount, deliveries for several refunds arriving interleaved, and two different refunds in flight at once.
+defect: One settled refund of 4500 puts 9000 of store credit on the customer, because the two separately generated provider events reporting that refund each write their own credit, including when they land on different delivery workers of the endpoint and when both are in flight at once.
+oracle_proves: One settled refund reaches the store-credit service as exactly one credit however many events report it, whichever delivery workers of the endpoint they land on, and however the deliveries overlap, including two workers that share only the store-credit service colliding on one refund; while a redelivery adds nothing and every other genuine refund is still credited in full, including a second refund, two partial refunds of one payment for the same amount, refunds whose deliveries are split across workers, deliveries for several refunds arriving interleaved, and two different refunds in flight at once; every credit the customer ends up with cost the store-credit service exactly one hand-over, and a refund the service refused to take is still credited in full when the provider reports it again.

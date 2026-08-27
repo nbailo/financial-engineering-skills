@@ -1,8 +1,8 @@
 diff --git a/repo/reconcile.py b/repo/reconcile.py
-index 6e6ab68..6ed79ee 100644
+index 6e6ab68..c8df4f0 100644
 --- a/repo/reconcile.py
 +++ b/repo/reconcile.py
-@@ -23,20 +23,65 @@ def _break(kind, transfer_id, ours, theirs, amount, note=""):
+@@ -23,20 +23,87 @@ def _break(kind, transfer_id, ours, theirs, amount, note=""):
      }
 
 
@@ -25,6 +25,33 @@ index 6e6ab68..6ed79ee 100644
 +    for row in rows:
 +        total += row["amount"]
 +    return total
++
++
++def _matched(transfer_id, mine, reported):
++    """The break for a transfer both sides hold once, or None when they agree.
++
++    A transfer can be wrong in more than one way at the same time: settled for a
++    different amount AND paid to a different vendor. That is still one difference
++    about one transfer, so it produces one record naming every dimension that
++    differs rather than one record per field - ops chases the transfer once, and
++    reads off everything wrong with it - and the amount at stake is the money the
++    two sides disagree about, or the whole transfer when only the vendor moved.
++    """
++    ours = _total(mine)
++    theirs = _total(reported)
++    dimensions = []
++    if ours != theirs:
++        dimensions.append("amount")
++    if mine[0]["vendor"] != reported[0]["vendor"]:
++        dimensions.append("vendor")
++    if not dimensions:
++        return None
++    stake = abs(theirs - ours)
++    if stake == ZERO:
++        stake = ours
++    return _break("_".join(dimensions) + "_differs", transfer_id, ours, theirs,
++                  stake, "booked %s to %s, the report paid %s to %s"
++                  % (ours, mine[0]["vendor"], theirs, reported[0]["vendor"]))
 +
 +
  def reconcile(local_rows, report_rows):
@@ -68,19 +95,14 @@ index 6e6ab68..6ed79ee 100644
 +        elif not mine:
 +            breaks.append(_break("not_in_store", transfer_id,
 +                                 ZERO, their_total, their_total))
-+        elif our_total != their_total:
-+            breaks.append(_break("amount_differs", transfer_id,
-+                                 our_total, their_total,
-+                                 abs(their_total - our_total)))
-+        elif mine[0]["vendor"] != reported[0]["vendor"]:
-+            breaks.append(_break("vendor_differs", transfer_id,
-+                                 our_total, their_total, our_total,
-+                                 "booked to %s, the report paid %s"
-+                                 % (mine[0]["vendor"], reported[0]["vendor"])))
++        else:
++            record = _matched(transfer_id, mine, reported)
++            if record is not None:
++                breaks.append(record)
      return breaks
 
 
-@@ -44,7 +89,8 @@ def run_daily(store, report_text, book_date, alert):
+@@ -44,7 +111,8 @@ def run_daily(store, report_text, book_date, alert):
      """Compare one book date and deliver every break to `alert`.
 
      `alert` has no default. A run with nowhere to send a break is a run that

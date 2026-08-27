@@ -679,7 +679,8 @@ class InvalidPairsAreExcluded(unittest.TestCase):
                    self._rec("treatment", "pass", key="k2")]
         text = self._summary(records)
         self.assertIn("complete pairs 1", text)
-        line = [ln for ln in text.splitlines() if ln.strip().startswith("treatment")][0]
+        rates = text.split("marginal arm rates")[1]
+        line = [ln for ln in rates.splitlines() if ln.strip().startswith("treatment")][0]
         self.assertIn("2/2", line, "both completed treatment calls count in the marginal rate")
         self.assertIn("1/1", line, "only one of them is inside a complete pair")
 
@@ -991,3 +992,524 @@ class RunDirectory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- §1 symlinked bases
+
+
+class SymlinkedBases(unittest.TestCase):
+    """A symlink standing in for a directory is followed silently by resolve(). It must not be."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        _, self.skills = write_world(self.tmp)
+        self.elsewhere = self.tmp / "elsewhere"
+        (self.elsewhere / "references").mkdir(parents=True)
+        (self.elsewhere / "SKILL.md").write_text("# not reviewed\n", encoding="utf-8")
+        (self.elsewhere / "references" / "a.md").write_text("# not reviewed\n", encoding="utf-8")
+        self._patch = mock.patch.object(ev, "SKILLS", self.skills)
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def test_a_symlinked_references_directory_is_refused(self):
+        refs = self.skills / "fin-money-core" / "references"
+        shutil_rmtree(refs)
+        refs.symlink_to(self.elsewhere / "references")
+        with self.assertRaises(ev.ContextError) as caught:
+            ev.confined_reference("fin-money-core", "a.md")
+        self.assertIn("symlink", str(caught.exception))
+
+    def test_a_symlinked_skill_directory_is_refused(self):
+        skill = self.skills / "fin-money-core"
+        shutil_rmtree(skill)
+        skill.symlink_to(self.elsewhere)
+        for call in (lambda: ev.confined_reference("fin-money-core", "a.md"),
+                     lambda: ev.confined_skill_md("fin-money-core")):
+            with self.assertRaises(ev.ContextError) as caught:
+                call()
+            self.assertIn("symlink", str(caught.exception))
+
+    def test_a_symlinked_trusted_root_is_refused(self):
+        link = self.tmp / "skills-link"
+        link.symlink_to(self.skills)
+        with mock.patch.object(ev, "SKILLS", link):
+            with self.assertRaises(ev.ContextError) as caught:
+                ev.confined_reference("fin-money-core", "a.md")
+        self.assertIn("trusted root", str(caught.exception))
+
+    def test_a_base_outside_the_trusted_root_is_refused(self):
+        with self.assertRaises(ev.ContextError) as caught:
+            ev._confine(self.elsewhere, "a.md", "probe", root=self.skills)
+        self.assertIn("not under the trusted root", str(caught.exception))
+
+    def test_a_symlinked_case_directory_is_refused(self):
+        dataset = self.tmp / "evals" / "behavioral"
+        (dataset / "linked-case").symlink_to(dataset / "ledger-a")
+        with mock.patch.object(ev, "DATASET", dataset):
+            with self.assertRaises(ev.ContextError) as caught:
+                ev.dataset_cases()
+        self.assertIn("must not be a symlink", str(caught.exception))
+
+    def test_a_dot_entry_is_skipped_not_treated_as_a_case(self):
+        dataset = self.tmp / "evals" / "behavioral"
+        (dataset / ".omc" / "state").mkdir(parents=True)
+        with mock.patch.object(ev, "DATASET", dataset):
+            self.assertEqual([d.name for d in ev.dataset_cases()], ["ledger-a", "money-b"])
+
+    def test_a_reference_that_is_a_directory_is_refused(self):
+        (self.skills / "fin-money-core" / "references" / "sub").mkdir()
+        with self.assertRaises(ev.ContextError):
+            ev.confined_reference("fin-money-core", "sub")
+
+    def test_dot_and_backslash_components_are_refused(self):
+        for attempt in ("./a.md", "sub/./a.md", "sub\\a.md", "  "):
+            with self.assertRaises(ev.ContextError, msg=attempt):
+                ev.confined_reference("fin-money-core", attempt)
+
+
+def shutil_rmtree(path: Path) -> None:
+    for child in sorted(path.rglob("*"), reverse=True):
+        child.rmdir() if child.is_dir() else child.unlink()
+    path.rmdir()
+
+
+# --------------------------------------------------------------------------- §2 infra is invalid
+
+
+class SandboxFailuresAreInvalid(unittest.TestCase):
+    """Docker breaking is a call that did not happen. It is never evidence about a patch."""
+
+    def setUp(self):
+        self.case = frozen_case()
+
+    def _grade_with(self, sandbox):
+        with mock.patch.object(ev, "run_in_sandbox", return_value=sandbox):
+            return ev.grade(self.case, PATCH_OK)
+
+    def test_every_infrastructure_exit_code_is_invalid(self):
+        for code, expected in ev.SANDBOX_INFRA_EXITS.items():
+            result = self._grade_with((code, "boom"))
+            self.assertEqual(result["outcome"], "invalid", code)
+            self.assertFalse(result["oracle_completed"], code)
+            self.assertFalse(result["oracle_passed"], code)
+            self.assertIn("sandbox unavailable", result["reason"])
+            self.assertIn(expected.split(" (")[0], result["reason"])
+            self.assertTrue(result["patch_applied"], "the patch still applied; docker is what broke")
+
+    def test_the_documented_infrastructure_codes_are_the_expected_ones(self):
+        self.assertEqual(sorted(ev.SANDBOX_INFRA_EXITS), [125, 126, 127, 137, 143])
+        self.assertNotIn(ev.SANDBOX_TIMEOUT_EXIT, ev.SANDBOX_INFRA_EXITS,
+                         "a timeout is the patch hanging, which IS evidence about the patch")
+
+    def test_an_oracle_rejection_is_still_a_fail_not_invalid(self):
+        result = self._grade_with((1, "assertion failed"))
+        self.assertEqual(result["outcome"], "fail")
+        self.assertTrue(result["oracle_completed"])
+
+    def test_a_timeout_is_still_a_fail(self):
+        result = self._grade_with((ev.SANDBOX_TIMEOUT_EXIT, "exceeded its 10s wall clock"))
+        self.assertEqual(result["outcome"], "fail")
+        self.assertTrue(result["patch_applied"])
+        self.assertFalse(result["oracle_completed"])
+
+    def test_a_missing_docker_binary_is_invalid_not_a_crash(self):
+        with mock.patch.object(ev, "docker_binary", return_value=None):
+            code, tail = ev.run_in_sandbox(Path("/tmp"), [], 5, "probe")
+        self.assertEqual(code, 127)
+        self.assertIn("docker", tail)
+        with mock.patch.object(ev, "run_in_sandbox", return_value=(code, tail)):
+            self.assertEqual(ev.grade(self.case, PATCH_OK)["outcome"], "invalid")
+
+    def test_a_vanished_docker_binary_mid_run_is_invalid(self):
+        with mock.patch.object(ev, "docker_binary", return_value="/usr/bin/docker"):
+            with mock.patch.object(ev.subprocess, "run", side_effect=FileNotFoundError()):
+                code, _ = ev.run_in_sandbox(Path("/tmp"), [], 5, "probe")
+        self.assertEqual(code, 127)
+
+    def test_a_docker_cli_that_will_not_start_is_invalid(self):
+        with mock.patch.object(ev, "docker_binary", return_value="/usr/bin/docker"):
+            with mock.patch.object(ev.subprocess, "run", side_effect=OSError("no fork")):
+                code, _ = ev.run_in_sandbox(Path("/tmp"), [], 5, "probe")
+        self.assertEqual(code, 125)
+
+    def test_an_os_error_while_grading_is_invalid(self):
+        with mock.patch.object(ev, "materialise", side_effect=OSError("disk full")):
+            result = ev.grade(self.case, PATCH_OK)
+        self.assertEqual(result["outcome"], "invalid")
+        self.assertIn("sandbox unavailable", result["reason"])
+
+
+# --------------------------------------------------------------------------- §3 read once
+
+
+class SharedContextIsFrozenOnce(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_each_shared_file_is_read_exactly_once_per_run(self):
+        ids = ("ledger-a", "money-b", "money-c")
+        with world(self.tmp, case_ids=ids):
+            freezer = ev.ContextFreezer()
+            real = Path.read_text
+            reads = []
+
+            def counting(self, *a, **k):
+                reads.append(str(self))
+                return real(self, *a, **k)
+
+            with mock.patch.object(Path, "read_text", counting):
+                cases = ev.freeze_cases("all", "m", "low", "abc", freezer=freezer)
+        self.assertEqual(len(cases), 3)
+        skill_reads = [r for r in reads if "/skills/" in r]
+        self.assertEqual(len(skill_reads), len(set(skill_reads)),
+                         f"a skill file was read twice in one run: {skill_reads}")
+        self.assertEqual(sorted(freezer.file_digests),
+                         ["fin-money-core/SKILL.md", "fin-money-core/references/a.md"])
+
+    def test_the_baseline_context_is_a_byte_exact_prefix_of_the_treatment_context(self):
+        with world(self.tmp, case_ids=("verification-a",), baseline=("fin-payments",)):
+            case = ev.freeze_cases("all", "m", "low", "abc")[0]
+        baseline = case.baseline_prompt.split("<skill_context>\n")[1].split("\n</skill_context>")[0]
+        treatment = case.treatment_prompt.split("<skill_context>\n")[1].split(
+            "\n</skill_context>")[0]
+        self.assertTrue(treatment.startswith(baseline + "\n\n"),
+                        "the shared half of the two prompts must be identical byte for byte")
+        self.assertEqual(ev._digest(baseline.encode())[:32], case.shared_context_digest)
+        self.assertEqual(ev._digest(treatment.encode())[:32], case.treatment_context_digest)
+
+    def test_two_cases_naming_one_skill_get_the_same_bytes(self):
+        with world(self.tmp, case_ids=("ledger-a", "money-b")):
+            a, b = ev.freeze_cases("all", "m", "low", "abc")
+        self.assertEqual(a.treatment_context_digest, b.treatment_context_digest)
+
+    def test_an_empty_baseline_has_a_recorded_digest_too(self):
+        with world(self.tmp, case_ids=("ledger-a",)):
+            case = ev.freeze_cases("all", "m", "low", "abc")[0]
+        self.assertEqual(case.baseline_context, ())
+        self.assertEqual(case.shared_context_digest, ev._digest(b"")[:32])
+        self.assertNotEqual(case.shared_context_digest, case.treatment_context_digest)
+
+
+# --------------------------------------------------------------------------- §5 validity
+
+
+class ValidityGaps(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_timeout_seconds_is_enforced_by_the_schema_loader(self):
+        dataset, skills = write_world(self.tmp, case_ids=("ledger-a",))
+        path = dataset / "ledger-a" / "case.yaml"
+        original = path.read_text()
+        with mock.patch.object(ev, "SKILLS", skills):
+            for bad in ("0", "301", "-1", "'60'", "60.5", "true"):
+                path.write_text(original.replace("timeout_seconds: 10",
+                                                 f"timeout_seconds: {bad}"), encoding="utf-8")
+                with self.assertRaises(ev.ContextError, msg=bad) as caught:
+                    ev.load_spec(dataset / "ledger-a")
+                self.assertIn("timeout_seconds", str(caught.exception))
+            for good in ("1", "300", "60"):
+                path.write_text(original.replace("timeout_seconds: 10",
+                                                 f"timeout_seconds: {good}"), encoding="utf-8")
+                self.assertEqual(ev.load_spec(dataset / "ledger-a")["timeout_seconds"], int(good))
+
+    def test_every_shipped_case_declares_a_timeout_inside_the_range(self):
+        for case in ev.dataset_cases():
+            spec = ev.load_spec(case)
+            self.assertTrue(1 <= spec["timeout_seconds"] <= 300, case.name)
+
+    def _rec(self, arm, outcome, run_id="A", key="k", attempts=1, tokens=100):
+        return {"run_id": run_id, "pair_key": key, "arm": arm, "outcome": outcome,
+                "oracle_passed": outcome == "pass", "case": "case-a", "repeat": 0,
+                "order": "baseline-treatment", "reason": "r", "latency_s": 1.0,
+                "attempts": attempts, "input_tokens": tokens, "output_tokens": tokens}
+
+    def _summary(self, records, run_id="A"):
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            ev.summarise(records, repeats=1, run_id=run_id)
+        return out.getvalue()
+
+    def test_foreign_records_are_dropped_before_every_metric(self):
+        records = [self._rec("baseline", "pass"), self._rec("treatment", "pass"),
+                   self._rec("baseline", "invalid", run_id="OTHER", key="k2", tokens=9999),
+                   self._rec("treatment", "pass", run_id="OTHER", key="k2", tokens=9999)]
+        text = self._summary(records)
+        self.assertIn("calls made 2", text, "the two foreign records are not calls this run made")
+        self.assertIn("invalid 0", text, "a foreign invalid is not this run's invalid")
+        self.assertIn("complete pairs 1", text)
+        self.assertIn("dropped before every number above and below: 2", text)
+        self.assertNotIn("9999", text)
+
+    def test_attempts_are_reported_per_arm_and_include_retries(self):
+        records = [self._rec("baseline", "pass", attempts=3),
+                   self._rec("treatment", "pass", attempts=1)]
+        text = self._summary(records)
+        header = [ln for ln in text.splitlines() if "attempts" in ln][0]
+        self.assertIn("calls", header)
+        self.assertIn("invalid", header)
+        baseline = [ln for ln in text.splitlines() if ln.strip().startswith("baseline")][0]
+        self.assertRegex(baseline, r"baseline\s+1\s+0\s+3\s+100\s+100")
+        self.assertIn("attempts include retries", text)
+
+    def test_per_arm_counts_cover_calls_invalids_and_tokens(self):
+        records = [self._rec("baseline", "invalid", attempts=3, tokens=0),
+                   self._rec("treatment", "pass", attempts=1, tokens=50)]
+        text = self._summary(records)
+        treatment = [ln for ln in text.splitlines() if ln.strip().startswith("treatment")][0]
+        self.assertRegex(treatment, r"treatment\s+1\s+0\s+1\s+50\s+50")
+        baseline = [ln for ln in text.splitlines() if ln.strip().startswith("baseline")][0]
+        self.assertRegex(baseline, r"baseline\s+1\s+1\s+3\s+0\s+0")
+
+    def test_the_attempt_ceiling_follows_from_max_calls_and_max_retries(self):
+        runs = self.tmp / "runs"
+        calls = {"n": 0}
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            return "ok", {"patch": PATCH_OK, "summary": "", "latency_s": 1.0,
+                          "attempts": 1 + ev.MAX_RETRIES, "api_status": "completed",
+                          "input_tokens": 10, "output_tokens": 5}
+
+        with world(self.tmp):
+            with mock.patch.object(ev, "RUNS", runs), \
+                 mock.patch.object(ev, "require_clean_tree"), \
+                 mock.patch.object(ev, "sandbox_preflight", return_value=None), \
+                 mock.patch.object(ev, "call_model", side_effect=flaky), \
+                 mock.patch.object(ev, "run_in_sandbox", return_value=(0, "")), \
+                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False), \
+                 mock.patch.object(sys, "argv", [
+                     "run_patch_eval.py", "--model", "m", "--effort", "low", "--cases", "all",
+                     "--repeats", "1", "--yes", "--max-calls", "4"]), \
+                 mock.patch("sys.stdout", new=io.StringIO()) as out:
+                ev.main()
+        text = out.getvalue()
+        self.assertIn(f"at most {4 * (1 + ev.MAX_RETRIES)} request attempt(s)", text)
+        manifest = json.loads((next(runs.iterdir()) / "manifest.json").read_text())
+        self.assertEqual(manifest["attempt_ceiling"], 4 * (1 + ev.MAX_RETRIES))
+        self.assertEqual(manifest["max_retries_per_call"], ev.MAX_RETRIES)
+        self.assertIn("fin-money-core/SKILL.md", manifest["shared_context_files"])
+
+    def test_a_broken_sandbox_trips_the_invalid_breaker_after_grading(self):
+        """The API is healthy and every patch applies; docker is what is broken."""
+        runs = self.tmp / "runs"
+
+        def good(*args, **kwargs):
+            return "ok", {"patch": PATCH_OK, "summary": "", "latency_s": 1.0, "attempts": 1,
+                          "api_status": "completed", "input_tokens": 10, "output_tokens": 5}
+
+        with world(self.tmp):
+            with mock.patch.object(ev, "RUNS", runs), \
+                 mock.patch.object(ev, "require_clean_tree"), \
+                 mock.patch.object(ev, "sandbox_preflight", return_value=None), \
+                 mock.patch.object(ev, "call_model", side_effect=good), \
+                 mock.patch.object(ev, "run_in_sandbox", return_value=(125, "daemon gone")), \
+                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False), \
+                 mock.patch.object(sys, "argv", [
+                     "run_patch_eval.py", "--model", "m", "--effort", "low", "--cases", "all",
+                     "--repeats", "3", "--yes", "--max-calls", "99", "--max-invalid", "2"]), \
+                 mock.patch("sys.stdout", new=io.StringIO()) as out:
+                self.assertEqual(ev.main(), 1)
+        text = out.getvalue()
+        self.assertIn("STOPPING", text)
+        self.assertIn("sandbox unavailable", text)
+        records = json.loads((next(runs.iterdir()) / "records.json").read_text())
+        self.assertEqual(len(records), 2, "it stopped after the ceiling, it did not grade the suite")
+        self.assertTrue(all(r["outcome"] == "invalid" for r in records))
+        self.assertTrue(all(r["patch_applied"] for r in records),
+                        "the patches applied; only the container failed")
+
+
+# --------------------------------------------------------------------------- the dataset checker
+
+
+import check_eval_dataset as ced          # noqa: E402
+
+
+class DatasetChecker(unittest.TestCase):
+    """Direct tests for scripts/check_eval_dataset.py, the gate that makes the fixtures worth
+    comparing against. It runs real oracles on the host, which is safe: nothing here is
+    model-generated."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.dataset, self.skills = write_world(self.tmp, case_ids=("ledger-a",))
+        self.case = self.dataset / "ledger-a"
+        ced.errors[:] = []
+        self._patches = [
+            mock.patch.object(ced, "DATASET", self.dataset),
+            mock.patch.object(ev, "DATASET", self.dataset),
+            mock.patch.object(ev, "SKILLS", self.skills),
+        ]
+        for patch in self._patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self._patches:
+            patch.stop()
+        ced.errors[:] = []
+        self._tmp.cleanup()
+
+    def _check(self, run_oracles=True):
+        with mock.patch("sys.stdout", new=io.StringIO()) as out:
+            ced.check_case(self.case, run_oracles=run_oracles)
+        return list(ced.errors), out.getvalue()
+
+    @staticmethod
+    @contextmanager
+    def _quiet():
+        """The checker reports through err(), which prints. Keep a passing run silent."""
+        with mock.patch("sys.stdout", new=io.StringIO()):
+            yield
+
+    def test_a_sound_case_passes_end_to_end(self):
+        errors, text = self._check()
+        self.assertEqual(errors, [])
+        self.assertIn("oracle fails on the planted defect", text)
+        self.assertIn("fix.patch applies", text)
+        self.assertIn("oracle passes after the reference fix", text)
+
+    def test_an_oracle_that_passes_on_the_defect_is_a_dataset_bug(self):
+        (self.case / "oracle" / "test_oracle.py").write_text("import sys\nsys.exit(0)\n",
+                                                             encoding="utf-8")
+        errors, _ = self._check()
+        self.assertTrue(any("DATASET BUG" in e and "PASSES against repo/" in e for e in errors),
+                        errors)
+
+    def test_an_oracle_that_still_fails_after_the_fix_is_a_dataset_bug(self):
+        (self.case / "oracle" / "test_oracle.py").write_text(
+            "import mod, sys\nsys.exit(0 if mod.VALUE == 3 else 1)\n", encoding="utf-8")
+        errors, _ = self._check()
+        self.assertTrue(any("still fails after the reference fix" in e for e in errors), errors)
+
+    def test_a_fix_that_does_not_apply_is_caught(self):
+        (self.case / "fix.patch").write_text(PATCH_OK.replace("-VALUE = 1", "-VALUE = 42"),
+                                             encoding="utf-8")
+        errors, _ = self._check()
+        self.assertTrue(any("does not apply" in e for e in errors), errors)
+
+    def test_a_reference_patch_is_held_to_the_graders_own_rule(self):
+        (self.case / "fix.patch").write_text(PATCH_OK + "rename to ../../escaped.py\n",
+                                             encoding="utf-8")
+        errors, _ = self._check(run_oracles=False)
+        self.assertTrue(any("would be refused by the grader" in e and "renames" in e
+                            for e in errors), errors)
+
+    def test_trailing_whitespace_in_a_patch_is_refused(self):
+        with self._quiet():
+                ced.check_patch_hygiene("--- a/repo/mod.py\n \n+++ b/repo/mod.py\n", "c")
+        self.assertTrue(any("trailing whitespace" in e for e in ced.errors), ced.errors)
+
+    def test_a_patch_ending_in_a_blank_line_or_no_newline_is_refused(self):
+        with self._quiet():
+                ced.check_patch_hygiene("--- a/repo/mod.py\n\n", "c")
+        self.assertTrue(any("ends with a blank line" in e for e in ced.errors), ced.errors)
+        ced.errors[:] = []
+        with self._quiet():
+                ced.check_patch_hygiene("--- a/repo/mod.py", "c")
+        self.assertTrue(any("does not end with a newline" in e for e in ced.errors), ced.errors)
+
+    def test_a_clean_patch_passes_hygiene(self):
+        with self._quiet():
+                ced.check_patch_hygiene(PATCH_OK, "c")
+        self.assertEqual(ced.errors, [])
+
+    def test_a_test_file_in_allowed_paths_is_refused(self):
+        (self.case / "repo" / "tests").mkdir()
+        (self.case / "repo" / "tests" / "test_mod.py").write_text("x = 1\n", encoding="utf-8")
+        text = (self.case / "case.yaml").read_text().replace(
+            "  - repo/mod.py", "  - repo/mod.py\n  - repo/tests/test_mod.py")
+        (self.case / "case.yaml").write_text(text, encoding="utf-8")
+        errors, _ = self._check(run_oracles=False)
+        self.assertTrue(any("is a test file" in e for e in errors), errors)
+
+    def test_a_banned_import_in_an_oracle_is_refused(self):
+        for source, expected in (("import socket\n", "socket"),
+                                 ("from subprocess import run\n", "subprocess"),
+                                 ("import os\nos.system('x')\n", "system"),
+                                 ("eval('1')\n", "eval")):
+            ced.errors[:] = []
+            path = self.case / "oracle" / "test_oracle.py"
+            path.write_text(source, encoding="utf-8")
+            with self._quiet():
+                ced.scan_oracle(path, "c")
+            self.assertTrue(any(expected in e for e in ced.errors), (source, ced.errors))
+
+    def test_a_credential_shaped_literal_in_an_oracle_is_refused(self):
+        # Assembled at run time so this test file does not itself carry a credential-shaped
+        # literal for the repository's own secret scan to trip over.
+        for prefix, expected in (("sk_live_", "live secret key"), ("AKIA", "aws access key")):
+            ced.errors[:] = []
+            path = self.case / "oracle" / "test_oracle.py"
+            path.write_text(f'KEY = "{prefix}{"A1B2C3D4" * 3}"\n', encoding="utf-8")
+            with self._quiet():
+                ced.scan_oracle(path, "c")
+            self.assertTrue(any(expected in e for e in ced.errors), (prefix, ced.errors))
+
+    def test_a_symlink_or_a_cache_inside_a_case_is_refused(self):
+        (self.case / "repo" / "__pycache__").mkdir()
+        (self.case / "repo" / "__pycache__" / "mod.cpython-311.pyc").write_bytes(b"\x00")
+        (self.case / "repo" / "link.py").symlink_to(self.case / "repo" / "mod.py")
+        with self._quiet():
+                ced.scan_tree(self.case, "c")
+        self.assertTrue(any("is a symlink" in e for e in ced.errors), ced.errors)
+        self.assertTrue(any("cache or artefact" in e for e in ced.errors), ced.errors)
+
+    def test_a_reference_that_escapes_its_skill_is_reported_not_raised(self):
+        text = (self.case / "case.yaml").read_text().replace("    - a.md",
+                                                             "    - ../../../etc/hosts")
+        (self.case / "case.yaml").write_text(text, encoding="utf-8")
+        errors, _ = self._check(run_oracles=False)
+        self.assertTrue(any("traversal" in e for e in errors), errors)
+
+    def test_the_oracle_child_environment_carries_no_credential(self):
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-nope", "HTTPS_PROXY": "p"},
+                             clear=False):
+            env = ced.minimal_env(self.tmp)
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertNotIn("HTTPS_PROXY", env)
+        self.assertEqual(env["PYTHONPATH"], "repo")
+        self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+
+
+
+class ShippedSuite(unittest.TestCase):
+    """Assertions about the real dataset. Deliberately not inside a class that patches DATASET."""
+
+    def test_two_cases_target_each_installed_skill(self):
+        self.assertEqual(ced.MIN_CASES_PER_SKILL, 2)
+        counts = {name: 0 for name in ev.INSTALLED_SKILLS}
+        for case in ev.dataset_cases():
+            counts[ev.load_spec(case)["target_skill"]] += 1
+        self.assertEqual(sorted(counts.values()), [2] * len(ev.INSTALLED_SKILLS), counts)
+
+    def test_every_verification_case_keeps_a_domain_skill_in_its_baseline(self):
+        """Verification is layered on domain knowledge, so its baseline is never empty."""
+        for case in ev.dataset_cases():
+            spec = ev.load_spec(case)
+            if spec["target_skill"] != "fin-verification":
+                continue
+            baseline = list(spec["baseline_context"] or [])
+            self.assertTrue(baseline, f"{case.name} compares verification against nothing")
+            self.assertNotIn("fin-verification", baseline, case.name)
+
+    def test_no_case_lets_a_patch_edit_its_own_tests(self):
+        for case in ev.dataset_cases():
+            for declared in ev.load_spec(case)["allowed_paths"]:
+                name = Path(declared).name
+                self.assertFalse(name.startswith("test_") or name.endswith("_test.py")
+                                 or {"test", "tests"} & set(Path(declared).parts),
+                                 f"{case.name} lets a patch edit {declared}")

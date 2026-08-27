@@ -1,11 +1,16 @@
 """Hidden oracle: one settled refund is one store credit, however it is reported.
 
 Every assertion is on final economic state as the store-credit service sees it: the money that
-reached the service and the number of credits it had to write. The service the handler is given
-counts those credits itself, at the point where a credit enters the service, so what is asserted
-is the customer's balance at the service and the number of external writes that produced it.
-Nothing here inspects which functions exist, and nothing depends on timing or on the order the
-threads happened to run in.
+reached the service, the credits it had to write, the balance those writes left behind, and the
+round trips the service spent moving that money. A credit the customer can spend is one the
+service actually carried out, so a credit that appears without its round trip has not been
+handed over at all. The service the workers are given is the real one, and the credits counted
+here are the writes it records for itself. Nothing here inspects which functions exist, and
+nothing depends on timing or on the order the threads happened to run in.
+
+The endpoint runs several delivery workers. A worker is a handler with its own delivery record and
+its own credit book; what the workers have in common is the one store-credit service behind them,
+so that service is the only place a claim on a refund can mean anything to all of them.
 """
 import os
 import sys
@@ -25,43 +30,51 @@ from handler import RefundCreditHandler
 
 
 class WatchedService(StoreCreditService):
-    """The store-credit service, keeping its own count of the credits that reached it.
+    """The store-credit service, read for the credits it wrote and the balances they left.
 
-    A credit exists economically once it has entered the service; that is the moment counted
-    here, and the balance asserted on is built from those credits alone. The round trip a real
-    credit spends inside the service is where a second delivery of the same refund overlaps the
-    first, so that is also where the rendezvous sits.
+    A credit exists economically once the service has written it, which is what self.writes
+    records, and the customer's balance is what those writes add up to. Handing the money over
+    costs the service one round trip per credit, counted here as round_trips once it has come
+    back, so a credit that turns up without one was never carried out. The round trip is also
+    where a second delivery of the same refund overlaps the first, so the rendezvous is hung
+    inside it.
     """
 
     def __init__(self):
         StoreCreditService.__init__(self)
-        self.__gate = None
-        self.__ledger = []
+        self.round_trips = 0
+        self._gate = None
+        self._counter_lock = threading.Lock()
+        self.before_write = self._round_trip
 
-    def _arm(self, gate):
-        self.__gate = gate
+    def _round_trip(self):
+        """One round trip to the store-credit service, handing over one credit.
 
-    def apply_credit(self, customer_id, amount_minor, memo):
-        gate = self.__gate
+        Counted once it has come back, so a hand-over the service refused is not counted as
+        money handed over.
+        """
+        gate = self._gate
         if gate is not None:
             gate()
-        result = StoreCreditService.apply_credit(self, customer_id, amount_minor, memo)
-        self.__ledger.append((customer_id, amount_minor, memo))
-        return result
+        with self._counter_lock:
+            self.round_trips += 1
+
+    def _arm(self, gate):
+        self._gate = gate
 
     def credits(self):
-        """Every credit that reached the service, in the order it arrived."""
-        return list(self.__ledger)
+        """Every credit the service wrote, in the order it wrote it."""
+        return [(w["customer_id"], w["amount"], w["memo"]) for w in self.writes]
 
     def credit_count(self):
-        return len(self.__ledger)
+        return len(self.writes)
 
     def credited(self, customer_id):
-        """The customer's balance at the service, from the credits it actually wrote."""
-        return sum(amount for cust, amount, _ in self.__ledger if cust == customer_id)
+        """The customer's store credit, from the writes the service actually made."""
+        return sum(w["amount"] for w in self.writes if w["customer_id"] == customer_id)
 
     def amounts(self):
-        return sorted(amount for _, amount, _ in self.__ledger)
+        return sorted(w["amount"] for w in self.writes)
 
 
 def refund(refund_id="re_501", amount=4500, status="succeeded", customer="cus_9",
@@ -85,10 +98,20 @@ def refund_updated(event_id, ref):
     return {"id": event_id, "type": "refund.updated", "data": {"object": ref}}
 
 
+def worker(service):
+    """One delivery worker: its own delivery record, its own credit book, the shared service."""
+    return RefundCreditHandler(EventLog(), CreditBook(service))
+
+
 def build():
     service = WatchedService()
-    handler = RefundCreditHandler(EventLog(), CreditBook(service))
-    return service, handler
+    return service, worker(service)
+
+
+def build_workers(count=2):
+    """Several delivery workers of the same endpoint, sharing one store-credit service."""
+    service = WatchedService()
+    return service, [worker(service) for _ in range(count)]
 
 
 class Failure(Exception):
@@ -100,13 +123,27 @@ def want(label, actual, expected):
         raise Failure("%s: expected %r, got %r" % (label, expected, actual))
 
 
-def deliver_concurrently(service, handler, events):
-    """Hand two separately generated deliveries to the handler at the same moment.
+def want_state(label, service, customer, credits, balance):
+    """The whole economic picture: credits written, money credited, balance left behind.
 
-    The rendezvous sits inside the credit as the service receives it, i.e. after any claim the
-    handler makes and before the money is written. Two callers that both get that far meet each
-    other there. A caller the repair serialises never arrives, the barrier times out harmlessly,
-    and that caller then sees whatever the first one reserved.
+    Every credit the customer ends up with cost the service exactly one round trip to hand it
+    over, so the round trips are part of that picture: money that appears on a balance without
+    one was never handed over, and a round trip that leaves no credit spent money for nothing.
+    """
+    want("%s: credits the service wrote" % label, service.credit_count(), credits)
+    want("%s: credited to %s" % (label, customer), service.credited(customer), balance)
+    want("%s: balance of %s" % (label, customer), service.balance(customer), balance)
+    want("%s: round trips the service spent" % label, service.round_trips, credits)
+
+
+def deliver_concurrently(service, deliveries):
+    """Hand separately generated deliveries to their workers at the same moment.
+
+    deliveries is a list of (worker, event). The rendezvous sits inside the credit as the service
+    receives it, i.e. after any claim a worker makes on its own and before the money is written.
+    Two callers that both get that far meet each other there. A caller the repair serialises never
+    arrives, the barrier times out harmlessly, and that caller then sees whatever the first one
+    reserved.
     """
     barrier = threading.Barrier(2, timeout=0.25)
 
@@ -119,13 +156,13 @@ def deliver_concurrently(service, handler, events):
     service._arm(rendezvous)
     errors = []
 
-    def deliver(event):
+    def deliver(handler, event):
         try:
             handler.handle(event)
         except Exception as exc:  # a repair that throws is not a repair
             errors.append("%s: %s" % (type(exc).__name__, exc))
 
-    threads = [threading.Thread(target=deliver, args=(e,)) for e in events]
+    threads = [threading.Thread(target=deliver, args=d) for d in deliveries]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -139,13 +176,25 @@ def deliver_concurrently(service, handler, events):
 
 
 def concurrent_pair(tag, amount, customer="cus_9", refund_id="re_501"):
-    """Both provider events for one refund, delivered at once, returning the final balance."""
+    """Both provider events for one refund, delivered at once to one worker."""
     service, handler = build()
     ref = refund(refund_id=refund_id, amount=amount, customer=customer)
     deliver_concurrently(
         service,
-        handler,
-        [charge_refunded("evt_%s_a" % tag, ref), refund_updated("evt_%s_b" % tag, ref)],
+        [(handler, charge_refunded("evt_%s_a" % tag, ref)),
+         (handler, refund_updated("evt_%s_b" % tag, ref))],
+    )
+    return service, ref
+
+
+def concurrent_pair_across_workers(tag, amount, customer="cus_9", refund_id="re_501"):
+    """The same refund reported to two different workers of the endpoint at the same moment."""
+    service, (first_worker, second_worker) = build_workers(2)
+    ref = refund(refund_id=refund_id, amount=amount, customer=customer)
+    deliver_concurrently(
+        service,
+        [(first_worker, charge_refunded("evt_%s_a" % tag, ref)),
+         (second_worker, refund_updated("evt_%s_b" % tag, ref))],
     )
     return service, ref
 
@@ -156,10 +205,8 @@ def concurrent_pair(tag, amount, customer="cus_9", refund_id="re_501"):
 def concurrent_same_refund_credits_once():
     """Three runs, same scenario: two events, one refund of 4500, one credit of 4500."""
     for attempt in range(1, 4):
-        service, ref = concurrent_pair("c%d" % attempt, 4500)
-        want("run %d credits reaching the service" % attempt, service.credit_count(), 1)
-        want("run %d balance of %s" % (attempt, ref["customer"]),
-             service.credited("cus_9"), 4500)
+        service, _ = concurrent_pair("c%d" % attempt, 4500)
+        want_state("run %d" % attempt, service, "cus_9", 1, 4500)
 
 
 def concurrent_credit_is_not_a_special_case_of_4500():
@@ -170,8 +217,34 @@ def concurrent_credit_is_not_a_special_case_of_4500():
         ("m3", 1, "cus_55", "re_779"),
     ):
         service, _ = concurrent_pair(tag, amount, customer=customer, refund_id=refund_id)
-        want("credits for %s at %d" % (customer, amount), service.credit_count(), 1)
-        want("balance of %s" % customer, service.credited(customer), amount)
+        want_state("%s at %d" % (customer, amount), service, customer, 1, amount)
+
+
+def two_workers_colliding_on_one_refund_credit_it_once():
+    """The regression: two workers, one shared store-credit service, one refund.
+
+    Each worker has its own delivery record and its own credit book, so neither can see that the
+    other has taken the refund; the two provider events are separately generated, with different
+    event ids, and arrive at the same moment. Three runs, and the customer is owed 4500 once.
+    """
+    for attempt in range(1, 4):
+        service, _ = concurrent_pair_across_workers("w%d" % attempt, 4500)
+        want_state("two workers colliding, run %d" % attempt, service, "cus_9", 1, 4500)
+
+
+def two_workers_in_sequence_credit_one_refund_once():
+    """The same two workers, one after the other rather than at once: still one credit."""
+    ref = refund()
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_wa", ref))
+    want_state("after the first worker", service, "cus_9", 1, 4500)
+    second_worker.handle(refund_updated("evt_wb", ref))
+    want_state("after the second worker", service, "cus_9", 1, 4500)
+
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(refund_updated("evt_wc", ref))
+    second_worker.handle(charge_refunded("evt_wd", ref))
+    want_state("after the workers in the other order", service, "cus_9", 1, 4500)
 
 
 def two_events_for_one_refund_credit_once_in_either_order():
@@ -179,14 +252,12 @@ def two_events_for_one_refund_credit_once_in_either_order():
     service, handler = build()
     handler.handle(charge_refunded("evt_a", ref))
     handler.handle(refund_updated("evt_b", ref))
-    want("charge-first balance", service.credited("cus_9"), 4500)
-    want("charge-first credits", service.credit_count(), 1)
+    want_state("charge first", service, "cus_9", 1, 4500)
 
     service, handler = build()
     handler.handle(refund_updated("evt_b", ref))
     handler.handle(charge_refunded("evt_a", ref))
-    want("refund-first balance", service.credited("cus_9"), 4500)
-    want("refund-first credits", service.credit_count(), 1)
+    want_state("refund first", service, "cus_9", 1, 4500)
 
 
 def a_redelivery_of_one_event_id_credits_nothing_extra():
@@ -195,17 +266,15 @@ def a_redelivery_of_one_event_id_credits_nothing_extra():
     handler.handle(refund_updated("evt_b", ref))
     handler.handle(refund_updated("evt_b", ref))
     handler.handle(refund_updated("evt_b", ref))
-    want("balance after three deliveries of evt_b", service.credited("cus_9"), 4500)
-    want("credits after three deliveries of evt_b", service.credit_count(), 1)
+    want_state("after three deliveries of evt_b", service, "cus_9", 1, 4500)
 
 
 def a_refund_credits_only_once_it_settles():
     service, handler = build()
     handler.handle(refund_updated("evt_p", refund(status="pending")))
-    want("balance while pending", service.credited("cus_9"), 0)
+    want_state("while pending", service, "cus_9", 0, 0)
     handler.handle(refund_updated("evt_s", refund()))
-    want("balance once settled", service.credited("cus_9"), 4500)
-    want("credits once settled", service.credit_count(), 1)
+    want_state("once settled", service, "cus_9", 1, 4500)
 
 
 def a_second_genuine_refund_is_credited_in_full():
@@ -216,8 +285,20 @@ def a_second_genuine_refund_is_credited_in_full():
     handler.handle(refund_updated("evt_b", first))
     handler.handle(charge_refunded("evt_c", second))
     handler.handle(refund_updated("evt_d", second))
-    want("balance after two refunds", service.credited("cus_9"), 5700)
-    want("credits after two refunds", service.credit_count(), 2)
+    want_state("after two refunds", service, "cus_9", 2, 5700)
+
+
+def a_second_genuine_refund_through_another_worker_is_credited_in_full():
+    """The second refund happens to be handled by a different worker: it is still owed."""
+    first = refund()
+    second = refund(refund_id="re_512", amount=1200, charge="ch_778")
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_wa1", first))
+    second_worker.handle(refund_updated("evt_wb1", first))
+    second_worker.handle(charge_refunded("evt_wa2", second))
+    first_worker.handle(refund_updated("evt_wb2", second))
+    want_state("after two refunds across workers", service, "cus_9", 2, 5700)
+    want("the amounts credited", service.amounts(), [1200, 4500])
 
 
 def two_partial_refunds_of_one_payment_are_both_credited():
@@ -227,11 +308,24 @@ def two_partial_refunds_of_one_payment_are_both_credited():
     service, handler = build()
     handler.handle(charge_refunded("evt_1", first))
     handler.handle(refund_updated("evt_2", first))
-    want("balance after the first partial", service.credited("cus_9"), 2000)
+    want_state("after the first partial", service, "cus_9", 1, 2000)
     handler.handle(charge_refunded("evt_3", first, second))
     handler.handle(refund_updated("evt_4", second))
-    want("balance after both partials", service.credited("cus_9"), 4500)
-    want("credits after both partials", service.credit_count(), 2)
+    want_state("after both partials", service, "cus_9", 2, 4500)
+    want("the amounts credited", service.amounts(), [2000, 2500])
+
+
+def two_partial_refunds_across_workers_are_both_credited():
+    """The two partials of one payment reach different workers: both are still owed."""
+    first = refund(refund_id="re_631", amount=2000)
+    second = refund(refund_id="re_632", amount=2500)
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_x1", first))
+    second_worker.handle(refund_updated("evt_x2", first))
+    want_state("after the first partial across workers", service, "cus_9", 1, 2000)
+    second_worker.handle(charge_refunded("evt_x3", first, second))
+    first_worker.handle(refund_updated("evt_x4", second))
+    want_state("after both partials across workers", service, "cus_9", 2, 4500)
     want("the amounts credited", service.amounts(), [2000, 2500])
 
 
@@ -239,66 +333,67 @@ def two_equal_partial_refunds_of_one_payment_are_both_credited():
     """Two returns of 1500 against one order are two refunds that are both owed."""
     first = refund(refund_id="re_621", amount=1500)
     second = refund(refund_id="re_622", amount=1500)
-    service, handler = build()
-    handler.handle(charge_refunded("evt_e1", first))
-    handler.handle(refund_updated("evt_e2", first))
-    want("balance after the first 1500", service.credited("cus_9"), 1500)
-    handler.handle(charge_refunded("evt_e3", first, second))
-    handler.handle(refund_updated("evt_e4", second))
-    want("balance after both 1500s", service.credited("cus_9"), 3000)
-    want("credits after both 1500s", service.credit_count(), 2)
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_e1", first))
+    second_worker.handle(refund_updated("evt_e2", first))
+    want_state("after the first 1500", service, "cus_9", 1, 1500)
+    second_worker.handle(charge_refunded("evt_e3", first, second))
+    first_worker.handle(refund_updated("evt_e4", second))
+    want_state("after both 1500s", service, "cus_9", 2, 3000)
     want("the amounts credited", service.amounts(), [1500, 1500])
 
 
 def interleaved_deliveries_for_several_refunds_are_each_credited_once():
     """Workers hand over several refunds at once, so the deliveries arrive shuffled together.
 
-    Every charge event lands before any of the refund events, so the news of a refund can be
-    arbitrarily far from the news of that same refund.
+    Every charge event lands before any of the refund events, and the two workers take them in
+    turn, so the news of a refund can be arbitrarily far from the news of that same refund and
+    can reach a different worker than the first delivery did.
     """
     first = refund(refund_id="re_651", amount=2100, charge="ch_651")
     second = refund(refund_id="re_652", amount=900, charge="ch_652")
     third = refund(refund_id="re_653", amount=4400, charge="ch_653")
-    service, handler = build()
-    handler.handle(charge_refunded("evt_i1", first))
-    handler.handle(charge_refunded("evt_i2", second))
-    handler.handle(charge_refunded("evt_i3", third))
-    handler.handle(refund_updated("evt_i4", first))
-    handler.handle(refund_updated("evt_i5", second))
-    handler.handle(refund_updated("evt_i6", third))
-    want("balance after the interleaved deliveries", service.credited("cus_9"), 7400)
-    want("credits after the interleaved deliveries", service.credit_count(), 3)
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_i1", first))
+    second_worker.handle(charge_refunded("evt_i2", second))
+    first_worker.handle(charge_refunded("evt_i3", third))
+    second_worker.handle(refund_updated("evt_i4", first))
+    first_worker.handle(refund_updated("evt_i5", second))
+    second_worker.handle(refund_updated("evt_i6", third))
+    want_state("after the interleaved deliveries", service, "cus_9", 3, 7400)
     want("the amounts credited", service.amounts(), [900, 2100, 4400])
 
 
 def two_partial_refunds_colliding_are_both_credited_once():
     """Each partial arrives as a colliding pair; two refunds, two credits, no more."""
-    service, handler = build()
+    service, (first_worker, second_worker) = build_workers(2)
     first = refund(refund_id="re_611", amount=3000)
     second = refund(refund_id="re_612", amount=1500)
     deliver_concurrently(
-        service, handler,
-        [charge_refunded("evt_p1a", first), refund_updated("evt_p1b", first)],
+        service,
+        [(first_worker, charge_refunded("evt_p1a", first)),
+         (second_worker, refund_updated("evt_p1b", first))],
     )
     deliver_concurrently(
-        service, handler,
-        [charge_refunded("evt_p2a", first, second), refund_updated("evt_p2b", second)],
+        service,
+        [(second_worker, charge_refunded("evt_p2a", first, second)),
+         (first_worker, refund_updated("evt_p2b", second))],
     )
-    want("balance after two colliding partials", service.credited("cus_9"), 4500)
-    want("credits after two colliding partials", service.credit_count(), 2)
+    want_state("after two colliding partials", service, "cus_9", 2, 4500)
+    want("the amounts credited", service.amounts(), [1500, 3000])
 
 
 def two_distinct_refunds_colliding_are_both_credited():
     """Two different refunds in flight together are two debts; neither may be swallowed."""
-    service, handler = build()
+    service, (first_worker, second_worker) = build_workers(2)
     first = refund(refund_id="re_661", amount=2400, charge="ch_661")
     second = refund(refund_id="re_662", amount=600, charge="ch_662")
     deliver_concurrently(
-        service, handler,
-        [charge_refunded("evt_d1", first), refund_updated("evt_d2", second)],
+        service,
+        [(first_worker, charge_refunded("evt_d1", first)),
+         (second_worker, refund_updated("evt_d2", second))],
     )
-    want("balance after two colliding refunds", service.credited("cus_9"), 3000)
-    want("credits after two colliding refunds", service.credit_count(), 2)
+    want_state("after two colliding refunds", service, "cus_9", 2, 3000)
     want("the amounts credited", service.amounts(), [600, 2400])
 
 
@@ -306,26 +401,53 @@ def either_event_type_alone_credits_the_refund_in_full():
     """Not every refund is reported by both events; whichever one arrives has to credit it."""
     service, handler = build()
     handler.handle(charge_refunded("evt_only_charge", refund(refund_id="re_801", amount=3300)))
-    want("balance from charge.refunded alone", service.credited("cus_9"), 3300)
-    want("credits from charge.refunded alone", service.credit_count(), 1)
+    want_state("charge.refunded alone", service, "cus_9", 1, 3300)
 
     service, handler = build()
     handler.handle(refund_updated("evt_only_refund", refund(refund_id="re_802", amount=3300)))
-    want("balance from refund.updated alone", service.credited("cus_9"), 3300)
-    want("credits from refund.updated alone", service.credit_count(), 1)
+    want_state("refund.updated alone", service, "cus_9", 1, 3300)
 
 
 def two_distinct_refunds_of_the_same_amount_are_both_credited():
     """Two returns of the same price are two refunds, not one reported twice."""
     first = refund(refund_id="re_701", amount=2500, charge="ch_701")
     second = refund(refund_id="re_702", amount=2500, charge="ch_702")
-    service, handler = build()
-    handler.handle(charge_refunded("evt_s1", first))
-    handler.handle(refund_updated("evt_s2", first))
-    handler.handle(charge_refunded("evt_s3", second))
-    handler.handle(refund_updated("evt_s4", second))
-    want("balance after two refunds of 2500", service.credited("cus_9"), 5000)
-    want("credits after two refunds of 2500", service.credit_count(), 2)
+    service, (first_worker, second_worker) = build_workers(2)
+    first_worker.handle(charge_refunded("evt_s1", first))
+    second_worker.handle(refund_updated("evt_s2", first))
+    second_worker.handle(charge_refunded("evt_s3", second))
+    first_worker.handle(refund_updated("evt_s4", second))
+    want_state("after two refunds of 2500", service, "cus_9", 2, 5000)
+    want("the amounts credited", service.amounts(), [2500, 2500])
+
+
+def a_refused_hand_over_leaves_the_refund_still_owed():
+    """The store-credit service turns one hand-over away; the provider reports the refund again.
+
+    A refund the endpoint could not hand over is still owed to the customer. Whatever the
+    endpoint noted down about that refund must not outlive the money: the next delivery, on
+    whichever worker, has to put the 3600 on the customer, and a delivery after that must not put
+    it on a second time.
+    """
+    ref = refund(refund_id="re_901", amount=3600)
+    service, (first_worker, second_worker) = build_workers(2)
+
+    def refuse():
+        raise RuntimeError("the store-credit service is not reachable")
+
+    service._arm(refuse)
+    try:
+        first_worker.handle(charge_refunded("evt_f1", ref))
+    except Exception:
+        pass
+    service._arm(None)
+    want_state("after the refused hand-over", service, "cus_9", 0, 0)
+
+    second_worker.handle(refund_updated("evt_f2", ref))
+    want_state("after the provider reported it again", service, "cus_9", 1, 3600)
+
+    first_worker.handle(charge_refunded("evt_f3", ref))
+    want_state("after one more delivery of it", service, "cus_9", 1, 3600)
 
 
 def an_unrelated_event_credits_nothing():
@@ -333,11 +455,14 @@ def an_unrelated_event_credits_nothing():
     handler.handle(
         {"id": "evt_x", "type": "charge.succeeded", "data": {"object": {"id": "ch_501"}}}
     )
-    want("balance after an unrelated event", service.credited("cus_9"), 0)
-    want("credits after an unrelated event", service.credit_count(), 0)
+    want_state("after an unrelated event", service, "cus_9", 0, 0)
 
 
 PROPERTIES = (
+    ("two workers over one store-credit service colliding on one refund credit it once (3 runs)",
+     two_workers_colliding_on_one_refund_credit_it_once),
+    ("two workers over one store-credit service credit one refund once in sequence",
+     two_workers_in_sequence_credit_one_refund_once),
     ("two events for one refund, delivered at once, credit it once (3 runs)",
      concurrent_same_refund_credits_once),
     ("the same collision at other amounts and customers credits once",
@@ -350,8 +475,12 @@ PROPERTIES = (
      a_refund_credits_only_once_it_settles),
     ("a second genuine refund on the same customer is credited in full",
      a_second_genuine_refund_is_credited_in_full),
+    ("a second genuine refund handled by another worker is credited in full",
+     a_second_genuine_refund_through_another_worker_is_credited_in_full),
     ("two partial refunds of one payment are both credited",
      two_partial_refunds_of_one_payment_are_both_credited),
+    ("two partial refunds of one payment reaching different workers are both credited",
+     two_partial_refunds_across_workers_are_both_credited),
     ("two partial refunds of one payment for the same amount are both credited",
      two_equal_partial_refunds_of_one_payment_are_both_credited),
     ("deliveries for several refunds arriving interleaved credit each once",
@@ -364,6 +493,8 @@ PROPERTIES = (
      either_event_type_alone_credits_the_refund_in_full),
     ("two distinct refunds of the same amount are both credited",
      two_distinct_refunds_of_the_same_amount_are_both_credited),
+    ("a refund the service refused to take is still credited when it is reported again",
+     a_refused_hand_over_leaves_the_refund_still_owed),
     ("an unrelated event credits nothing",
      an_unrelated_event_credits_nothing),
 )
