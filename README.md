@@ -5,156 +5,166 @@
 
 Financial correctness skills for coding agents.
 
-Six skills for code that trades, pays, keeps a ledger, or moves value on-chain. They target one
-class of defect: the program runs, every component behaves exactly as specified, and the economic
-outcome is still wrong.
+Catch bugs in trading, payments, ledgers, on-chain systems, and prediction markets that compile
+cleanly but produce the wrong position, balance, payout, or settlement.
 
-## The defect they are built for
+Six focused skills for Claude Code, Codex, Cursor, and other agents that read the Agent Skills
+format. Your agent loads the one matching the code in front of it and reviews the money path, not
+the syntax.
 
-Ask an agent for a trading bot and it writes this. It compiles, it reads well, and it passes review:
+## Install
+
+```bash
+npx skills add nbailo/financial-engineering-skills
+```
+
+```bash
+npx skills list
+```
+
+They land in your agent's own directory: `.claude/skills/` for Claude Code, `.agents/skills/` for
+Codex, Cursor and several others.
+
+> Pre-1.0: this installs the current `main` branch. Review updates before applying them to sensitive
+> financial code.
+
+<details>
+<summary>Claude Code plugin (optional)</summary>
+
+```text
+/plugin marketplace add nbailo/financial-engineering-skills
+/plugin install financial-engineering-skills@financial-engineering-skills
+```
+
+</details>
+
+More paths, including the two advanced skills, are in [INSTALL.md](INSTALL.md).
+
+## What it catches
+
+| Failure | What goes wrong |
+| --- | --- |
+| Ambiguous order submission | A timeout is read as a failure, the retry lands, and one intent becomes two live orders |
+| Venue constraints | Price and size are rounded separately, or quantized to zero, and the order fills at a size nobody chose |
+| Refunds and disputes | A refund is issued against headroom a dispute or in-flight refund already took, and the customer is paid twice |
+| Concurrent balance updates | Two transfers read the same balance, both write, and the difference is gone with no error |
+| On-chain credits | A deposit is credited from a notification's amount field, before finality, or without the token's real transfer semantics |
+| Prediction-market settlement | A redelivered settlement double-credits, a split payout reads as a winner, or a provisional determination is spent |
+| Reconciliation | A break is detected, then posted away to suspense, so the books balance and the signal is gone |
+
+The one most agents write by default:
 
 ```python
 try:
-    order = client.new_order(symbol="BTCUSDT", side="BUY", type="LIMIT",
-                             quantity=qty, price=price)
+    order = client.new_order(symbol="BTCUSDT", side="BUY", quantity=qty, price=price)
 except requests.Timeout:
     order = client.new_order(...)   # retry
 ```
 
-A timeout says nothing about whether the first request reached the matching engine. The retry can
-buy twice.
+The timeout says nothing about whether the first request reached the matching engine. The retry can
+buy twice. `fin-exchange-integration` treats a lost response as UNKNOWN: commit the order identity
+before the send, then resolve it by asking the venue about that identity, never by sending again.
 
-`fin-exchange-integration` treats a lost response as UNKNOWN rather than as a failure: mint the
-order identity from the intent, commit it durably before the send, and resolve the unknown by
-asking the venue about the identity you sent, never by sending again.
+## How to use it
 
-## See it in 30 seconds
+Copy one of these after installing:
 
-No install, no credentials, no network. Two bots read the same frozen event log:
+```text
+Review this trading bot for duplicate orders, unknown outcomes, venue filters, and position drift.
+
+Review this Stripe refund flow for combined refund and dispute exposure.
+
+Check this ledger transfer for lost updates, incorrect holds, and unsafe corrections.
+
+Review this withdrawal worker for nonce ownership, ambiguous broadcast, and replay recovery.
+
+Review this prediction-market client for outcome identity, fee semantics, and terminal settlement.
+```
+
+Routing is automatic: the agent picks the skill from the code and the request. Name one directly to
+force a specific review, for example "use `fin-verification`: is this safe to ship?".
+
+## The six skills
+
+| Skill | What it owns | Typical use |
+| --- | --- | --- |
+| `fin-money-core` | Amount arithmetic, rounding, operation identity, retries, dedupe, concurrency, limits | Anything that moves or records value |
+| `fin-exchange-integration` | Orders, fills, positions, PnL, fees, reconnects, and **prediction markets** | Trading bots, venue clients, market makers |
+| `fin-payments` | Capture, refunds, disputes, payouts, webhooks, settlement reconciliation | Processor and rail integrations |
+| `fin-ledger` | Postings, balances, holds, reversals, period close | Balance systems other services trust |
+| `fin-onchain` | Deposits, finality and reorgs, nonces, token semantics, custody state | Wallets, indexers, withdrawal workers |
+| `fin-verification` | Reconciliation, planted-break tests, crash recovery, replay | Tests, kill switches, ship decisions |
+
+Prediction markets are part of `fin-exchange-integration`, not a seventh skill: a Polymarket or
+Kalshi client is a venue client with binary-contract arithmetic on top.
+
+## Where it applies
+
+**Trading and exchange clients.** A few hundred lines against Binance, Bybit, Hyperliquid or ccxt
+already carry duplicate-order risk, filters that quantize a size to zero, fills that arrive out of
+order, and a position that drifts from the venue's own.
+
+**Prediction markets.** Polymarket, Kalshi and Limitless, with the arithmetic binary contracts need:
+a fee on notional and the same rate on payout are different trades, and complete-set collateral is
+the maximum liability across resolution states, not the largest entry in a payout vector.
+
+**Payments.** Stripe, Adyen, PayPal and bank rails, where a redelivered webhook, a refund ignoring
+an open claim, or a reversal assuming the fee came back moves real money.
+
+**Ledgers.** Double-entry books, holds and available-versus-posted balances, where a correction
+written as an edit destroys the audit trail.
+
+**On-chain.** Nonce ownership, reorg handling and credited value, where a notification's amount is
+not what the protocol actually moved.
+
+Coverage is deliberately uneven. [docs/providers.md](docs/providers.md) lists which venues have
+dedicated references, and how fresh each one's sourcing is.
+
+## Run the example
+
+Cloning here is for running the example, not for installing the skills.
 
 ```bash
 git clone https://github.com/nbailo/financial-engineering-skills
 cd financial-engineering-skills
 python3 examples/prediction-market-bot/demo.py
+python3 examples/prediction-market-bot/run_tests.py
 ```
 
-```
-Scenario A: a reconnect replays the settlement, then the market resolves YES
-                                              safe            unsafe
-  FUSD available                       1051.000000       1118.879000
-  FUSD held for resting orders            0.000000      not modelled
-  fees paid                        1.113000 FPOINT     2.121000 FUSD
-  payout credited                        70.000000        140.000000
-  YES position                                  70                70
-  difference in FUSD                                       67.879000
-```
+Two bots read the same frozen event log. The unsafe one books a redelivered settlement twice, reads
+a split payout as a winner and credits nothing, charges fees in the wrong asset, and never reserves
+for concurrent resting orders. It raises no exception in any of them; it just ends up with the wrong
+balance. The corrected bot prevents or detects each one.
 
-The unsafe bot books the payout twice, because a reconnect redelivered the settlement and nothing
-made the credit idempotent. It never raises. In a second scenario, where the market resolves half
-and half, it credits nothing at all: it reads a winning index that a split resolution does not
-have. It charges its fees in the wrong asset too, and never reserves for them.
+All 93 tests run offline, with no credentials and no live venue.
 
-```bash
-python3 examples/prediction-market-bot/run_tests.py    # 93 tests, offline
-```
+## Advanced skills
 
-## Install
+Two more skills live in `advanced/`, **not** installed by default. `fin-matching-engine` is for
+teams operating the venue that creates executions; `fin-market-data-publication` is for teams
+originating a canonical feed. Both are opt-in BETA. Clients of someone else's venue, and consumers
+of someone else's feed, want `fin-exchange-integration` instead.
+See [advanced/README.md](advanced/README.md).
 
-There is no supported public release yet, so pin a commit you have read:
+## Evidence and limitations
 
-```bash
-npx skills add nbailo/financial-engineering-skills#<commit>
-```
+What exists, and runs on every push: 93 offline worked-example tests, 82 lexical routing cases, 198
+adversarial installer tests, 20 cited incidents mapped to the rules they motivate, provider and
+protocol provenance in the references, and strict structural and size validation.
 
-The skills land in your agent's own directory: `.claude/skills/` for Claude Code, `.agents/skills/`
-for Codex, Cursor and several others. Claude Code users can install the plugin instead with
-`/plugin marketplace add nbailo/financial-engineering-skills`.
+The repository does not yet publish a model-based skills-on/off benchmark. CI proves the
+repository's deterministic contracts and examples, not a measured uplift in agent performance.
 
-[INSTALL.md](INSTALL.md) has the other paths, the verification steps, and the optional routing block
-that edits files in your repository.
+[docs/methodology.md](docs/methodology.md) explains what the rules were sourced from and what is
+not measured. [SECURITY.md](SECURITY.md) covers the security policy and how to report an issue.
 
-## The six skills
+## Contributing
 
-| Skill | Use it when the code |
-| --- | --- |
-| `fin-money-core` | does money arithmetic, retries an operation that moves value, or rolls one out behind a flag |
-| `fin-exchange-integration` | sends orders to a venue it does not operate, or derives fills, positions or PnL from one |
-| `fin-payments` | integrates a processor: capture, refunds, disputes, webhooks, payouts |
-| `fin-ledger` | keeps balances, postings, holds, or double-entry books |
-| `fin-onchain` | signs, broadcasts, indexes, or credits value on a chain |
-| `fin-verification` | needs tests, reconciliation, or proof before shipping |
+The useful contributions are corrections:
 
-A skill loads when the mechanism it owns appears in the change, and opens a reference only when that
-reference's mechanism appears. A change confined to one domain should normally load that one
-domain skill; cross-domain work, and anything about tests, reconciliation or a ship decision, can
-reasonably load more. Nothing here measures how often that actually happens.
+- an invariant that is wrong, with the case it gets wrong;
+- a provider correction, with the primary source;
+- a real financial incident, or a minimal reproduction.
 
-## Where it applies
-
-**Trading bots.** A few hundred lines against Binance, Bybit or Hyperliquid already carry
-duplicate-order risk, venue filters that quantize a quantity to zero, fills that arrive out of
-order, and a position that drifts from the venue's own.
-
-**Prediction markets.** Part of `fin-exchange-integration`, not a separate skill: Polymarket CLOB
-V2, Kalshi, Limitless and Hyperliquid outcome markets, with the arithmetic binary contracts need.
-A fee quoted on notional and the same rate quoted on payout are different trades, and the
-break-even prices differ by a factor of the price.
-
-**Payments.** Capture, refund and dispute paths, where a redelivered webhook or a reversal that
-assumes the fee came back moves real money.
-
-**Ledgers.** Balances, holds and double-entry books, where a correction written as an edit rather
-than a reversal destroys the audit trail, and an unexplained break posted to suspense hides itself.
-
-**On-chain.** Nonces, reorgs, token semantics and crediting deposits, where a notification's amount
-field is not the credited value.
-
-## Evidence, and what is not proven
-
-Every rule is meant to trace to something you can check: vendor documentation, a protocol
-specification, source read at a pinned commit, or a cited incident. That is the standard, not a
-guarantee about every sentence. Where a venue's behaviour could not be confirmed, the reference
-marks the claim unverified at the point it is used and its provenance block records what was and
-was not read. Material marked that way is **non-normative**: it is context for a human to check,
-never a rule for an agent to apply.
-
-What actually runs, on every push:
-
-| Check | What it proves |
-| --- | --- |
-| example tests | the worked prediction-market bot behaves as described, offline |
-| installer tests | the routing-block installer does what [SECURITY.md](SECURITY.md) says, on Linux and macOS |
-| routing lint cases | a description has not lost the vocabulary of the tasks it owns |
-
-What is **not** proven, stated plainly:
-
-- **No model-based effectiveness benchmark, and no skills-on/off baseline.** Nothing here measures
-  whether these skills change what an agent produces. There is no such harness in this repository
-  and no published result. Treat any claim that these skills improve an agent as unproven. A proper
-  runtime evaluation is deferred to a separate future change.
-- **The routing lint is a lint, not a routing measurement.** It scores word overlap between a task
-  and eight descriptions. No model runs, nothing observes an agent choosing a skill, and 124
-  over-activations are recorded in the fixture and not charged. A green result says a description
-  still carries the vocabulary of its cases. It is not an accuracy figure and implies none.
-- **Coverage is uneven.** [docs/providers.md](docs/providers.md) says which venues have dedicated
-  references and how fresh the sourcing is behind each.
-- **Some provider claims are unverified and say so.** A reference that could not be re-read against
-  its primary source carries `verified_at: not established` rather than a date that would imply
-  someone checked.
-
-## Two advanced skills, opt-in and BETA
-
-`fin-matching-engine` and `fin-market-data-publication` live in `advanced/` and are **not** installed
-by default. They are for teams operating the authority itself: the venue that owns the order book
-and creates the executions, or the originator of a canonical market-data feed. If you are
-integrating with someone else's venue, or consuming someone else's feed, you want
-`fin-exchange-integration` instead. See [advanced/README.md](advanced/README.md).
-
-## Contributing, security, license
-
-Corrections are the useful contribution, especially a rule that is wrong or out of date. Bring the
-primary source. [CONTRIBUTING.md](CONTRIBUTING.md) has the checks and the bar a claim has to meet.
-
-Security policy and reporting: [SECURITY.md](SECURITY.md).
-
-MIT. See [LICENSE](LICENSE).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the checks and the bar a claim has to meet. Security policy
+and reporting: [SECURITY.md](SECURITY.md). MIT licensed, see [LICENSE](LICENSE).
