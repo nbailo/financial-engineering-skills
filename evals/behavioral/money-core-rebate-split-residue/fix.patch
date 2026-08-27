@@ -1,28 +1,43 @@
 diff --git a/repo/payouts.py b/repo/payouts.py
+index 95ac45a..4f33f8f 100644
 --- a/repo/payouts.py
 +++ b/repo/payouts.py
-@@ -10,10 +10,23 @@ def split_amount(total_minor, weights):
-     Each share is proportional to that member's weight. Amounts are integer
-     minor units, so the arithmetic is exact and no share is ever a fraction of
-     a cent.
+@@ -30,9 +30,35 @@ def split_amount(total_minor, weights_by_member):
+     weights_by_member maps a member id to that member's weight. Every member
+     in the mapping appears in the result. Amounts are integer minor units, so
+     the arithmetic is exact and no share is ever a fraction of a cent.
 +
-+    The parts sum to total_minor exactly. Integer division drops a residue of
-+    fewer minor units than there are members with a non-zero remainder; it goes
-+    to the members with the largest dropped fraction, ties broken by position.
-+    The split is therefore deterministic and no member lands more than one
-+    minor unit from its exact share.
++    Flooring every share alone would leave the pool short by up to one minor
++    unit per member, so the shortfall is measured and given back: each member
++    keeps the whole units it is owed, and the units left over go to the
++    members whose exact entitlement was cut by the most. That keeps the shares
++    summing to the pool while holding every member within one minor unit of
++    its exact proportional share.
      """
-     if not weights:
-         return []
-     total_weight = sum(weights)
+     total_weight = sum(weights_by_member.values())
      if total_weight <= 0:
-         return [0 for _ in weights]
--    return [total_minor * weight // total_weight for weight in weights]
-+    shares = [total_minor * weight // total_weight for weight in weights]
-+    residue = total_minor - sum(shares)
-+    by_dropped_fraction = sorted(
-+        range(len(weights)),
-+        key=lambda i: (-((total_minor * weights[i]) % total_weight), i))
-+    for i in by_dropped_fraction[:residue]:
-+        shares[i] += 1
+-        return {member_id: 0 for member_id in weights_by_member}
+-    return {member_id: total_minor * weight // total_weight
+-            for member_id, weight in weights_by_member.items()}
++        raise UndefinedSplit(
++            "no member carries a positive weight, so a pool of %d has no "
++            "proportional split" % total_minor)
++
++    shares = {}
++    claims = []
++    for member_id, weight in weights_by_member.items():
++        owed = total_minor * weight
++        shares[member_id] = owed // total_weight
++        if weight > 0:
++            # How far this member was cut by the flooring, in units of
++            # 1/total_weight of a minor unit. A member carrying no weight is
++            # owed nothing exactly and never joins the queue for a spare unit.
++            claims.append((-(owed % total_weight), member_id))
++
++    # The residue is strictly smaller than the number of members that were cut
++    # at all, so every spare unit lands on a member with a real shortfall.
++    residue = total_minor - sum(shares.values())
++    claims.sort()
++    for _, member_id in claims[:residue]:
++        shares[member_id] += 1
 +    return shares

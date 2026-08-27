@@ -1,18 +1,24 @@
 id: money-core-rebate-split-residue
-skill: fin-money-core
+target_skill: fin-money-core
+baseline_context: []
+treatment_context: [fin-money-core]
 references:
-  - allocation-and-residue.md
+  fin-money-core:
+    - allocation-and-residue.md
+    - rounding-modes.md
 task: |
-  Finance closed the July group rebate cycle and the credits we wrote do not add up to the
-  pool. A 2500 cent pool shared by three members credited 2499 cents. Every cycle we run
-  leaves a few cents sitting in no member's account, and the group is paid short by that much.
+  Finance closed the July group rebate cycle and the credits do not add up to the pool. A
+  2500 cent pool shared by three equal members credited 2499 cents, and every cycle leaves a
+  few cents in nobody's account, so the group is paid short.
 
-  Implement the correction in the split so a cycle credits the whole pool. Two things have to
-  stay true: the same pool and the same weights must produce the same per-member amounts on
-  every run, and no member may end up more than one cent away from its exact proportional
-  share, so the leftover cannot simply be handed to whoever comes first.
+  Please make a cycle credit the whole pool. Four things from the group agreement hold.
+  No member may end up more than a cent away from its exact proportional share. The
+  spare cents belong to the members the arithmetic shortchanged most, not to whoever is
+  listed first. A member carrying a weight of zero is entitled to nothing. A group whose
+  weights are all zero has no split, so reject it rather than guess one. And the same group
+  and pool must credit the same amounts every run, whatever order the members arrive in.
 allowed_paths:
   - repo/payouts.py
 timeout_seconds: 60
-defect: A 2500 cent rebate pool split three ways credits only 2499 cents, so every cycle leaves a cent that belongs to nobody and the group is paid short.
-oracle_proves: The shares of a pool sum to the pool exactly and deterministically, with no member more than one minor unit from its exact proportional share.
+defect: A 2500 cent rebate pool split across three equal members credits only 2499 cents, and a 1000 cent pool split 6:3:2 credits 998, so every cycle leaves cents that belong to nobody and the group is paid short.
+oracle_proves: Across fourteen pool and weight vectors the credited shares sum to the pool exactly and reconcile row by row with the reported cycle totals, each share is the exact proportional share or one minor unit above it, every spare unit is placed on a distinct member the division shortchanged in cents (up to ten at once, and to the lower member id when two unequal members are shortchanged equally) rather than on the first listed, the largest or the proportionally worst hit, a zero-weight member is credited exactly zero, an all-zero-weight group raises UndefinedSplit without crediting anything, and the per-member amounts are identical under three insertion orders and three repeated runs.

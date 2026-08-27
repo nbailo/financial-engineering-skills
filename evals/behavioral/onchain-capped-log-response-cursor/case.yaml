@@ -1,7 +1,11 @@
 id: onchain-capped-log-response-cursor
-skill: fin-onchain
+target_skill: fin-onchain
+baseline_context: []
+treatment_context:
+  - fin-onchain
 references:
-  - indexing.md
+  fin-onchain:
+    - indexing.md
 task: |
   The deposit backfill finished on Saturday and three customers have opened tickets saying
   the money they sent never showed up in their balance. The indexer reported no errors and

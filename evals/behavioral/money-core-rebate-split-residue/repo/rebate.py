@@ -23,14 +23,18 @@ class RebateLedger:
     def total_for_cycle(self, cycle_id):
         return sum(amount for cycle, _, amount in self.credits if cycle == cycle_id)
 
+    def rows_for_cycle(self, cycle_id):
+        return [row for row in self.credits if row[0] == cycle_id]
 
-def credit_cycle(ledger, cycle_id, pool_minor, members):
+
+def credit_cycle(ledger, cycle_id, pool_minor, weights_by_member):
     """Credit every member of a group its share of one cycle's pool.
 
-    members is a list of (member_id, weight) pairs. Returns the shares in the
-    same order.
+    weights_by_member maps member id to the weight finance assigned. Rows are
+    written in member id order so the cycle reads back the same way however
+    the group was collected. Returns the shares.
     """
-    shares = split_amount(pool_minor, [weight for _, weight in members])
-    for (member_id, _), share in zip(members, shares):
-        ledger.credit(cycle_id, member_id, share)
+    shares = split_amount(pool_minor, weights_by_member)
+    for member_id in sorted(shares):
+        ledger.credit(cycle_id, member_id, shares[member_id])
     return shares

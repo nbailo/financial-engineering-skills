@@ -1,8 +1,12 @@
 id: exchange-integration-delta-hedger-sizing
-skill: fin-exchange-integration
+target_skill: fin-exchange-integration
+baseline_context: []
+treatment_context:
+  - fin-exchange-integration
 references:
-  - pre-trade-controls.md
-  - venues/binance-filters.md
+  fin-exchange-integration:
+    - pre-trade-controls.md
+    - venues/binance-filters.md
 task: |
   The delta hedger ran all weekend against a demo account. The options book barely moved on
   Sunday and the residual delta stayed tiny all day, but the perp account finished the day

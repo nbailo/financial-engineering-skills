@@ -1,8 +1,18 @@
-"""Hidden oracle: does the nightly comparison detect a break planted on either side?
+"""Hidden oracle: does the nightly comparison actually detect what it is there to detect?
 
-Plants one discrepancy of a known size on a known transfer and asserts a break record
-carrying that amount reaches the alert sink exactly once, plus a clean run that reports
-nothing. Never shown to the agent under test.
+Drives a table of book dates and asserts the final reported state: one break record per
+difference, each carrying the amount at stake and a name for the kind of difference, each
+handed to the alert sink exactly once, and nothing at all on the dates where the two sides
+agree.
+
+Every class of difference appears on at least two nights, at different amounts, under
+different vendors and - for an amount difference - in both directions, so a run that only
+recognises the numbers finance quoted at close, or only an overpayment, does not get
+through. Two nights carry a transfer id repeated on one side, one night carries a
+difference on each side that happen to offset so the day's totals tie, and one night
+carries two differences of the same kind.
+
+Never shown to the agent under test.
 """
 
 import unittest
@@ -11,30 +21,178 @@ from decimal import Decimal, InvalidOperation
 from payout_store import PayoutStore
 import reconcile as recon
 
-BOOK_DATE = "2026-08-24"
+VENDORS = ("acme", "globex", "hooli", "initech")
 
-CLEAN_REPORT = """
-tr_5001,acme,120.00
-tr_5002,globex,80.50
-"""
-
-MISMATCH_REPORT = """
-tr_5001,acme,120.00
-tr_5002,globex,80.75
-"""
-
-# The processor moved 250.00 to initech and our outcome write never landed.
-MISSING_LOCALLY_REPORT = """
-tr_5001,acme,120.00
-tr_5002,globex,80.50
-tr_5003,initech,250.00
-"""
+# The six ways the two sides can disagree. Each has to be told apart from the others,
+# except that a duplicate is still a duplicate whichever side repeated the row.
+CLASSES = ("amount", "attribution", "authority_only", "duplicate_local",
+           "duplicate_report", "local_only")
+SAME_MARK_ALLOWED = ({"duplicate_local", "duplicate_report"},)
 
 
-def make_store():
+def report(*lines):
+    return "\n".join(lines) + "\n"
+
+
+def diff(klass, *amounts):
+    """A difference the run has to report: its class and the amounts at stake.
+
+    Each argument is one acceptable way to show the amount: a single amount, or a
+    pair that must both appear. Any one alternative satisfies the assertion.
+    """
+    return {"klass": klass, "amounts": [list(alt) for alt in amounts]}
+
+
+# Each scenario: one book date, the rows our service wrote, the report the processor
+# published for that date, and the differences a working comparison has to report.
+SCENARIOS = [
+    {
+        "date": "2026-08-03",
+        "why": "both sides agree exactly",
+        "local": [("tr_1001", "acme", "120.00"), ("tr_1002", "globex", "80.50")],
+        "report": report("tr_1001,acme,120.00", "tr_1002,globex,80.50"),
+        "expect": {},
+    },
+    {
+        "date": "2026-08-04",
+        "why": "tr_2002 moved 64.25 to initech, our row says globex",
+        "local": [("tr_2001", "acme", "120.00"), ("tr_2002", "globex", "64.25")],
+        "report": report("tr_2001,acme,120.00", "tr_2002,initech,64.25"),
+        "expect": {"tr_2002": diff("attribution", ["64.25"])},
+    },
+    {
+        "date": "2026-08-05",
+        "why": "we hold a 30.00 row the processor never executed",
+        "local": [("tr_3001", "acme", "90.00"), ("tr_3002", "hooli", "30.00")],
+        "report": report("tr_3001,acme,90.00"),
+        "expect": {"tr_3002": diff("local_only", ["30.00"])},
+    },
+    {
+        "date": "2026-08-06",
+        "why": "the processor moved 250.00 we never wrote down",
+        "local": [("tr_4001", "acme", "110.00")],
+        "report": report("tr_4001,acme,110.00", "tr_4002,initech,250.00"),
+        "expect": {"tr_4002": diff("authority_only", ["250.00"])},
+    },
+    {
+        "date": "2026-08-07",
+        "why": "our table holds tr_5001 twice at 60.00",
+        "local": [("tr_5001", "acme", "60.00"), ("tr_5001", "acme", "60.00"),
+                  ("tr_5002", "globex", "15.00")],
+        "report": report("tr_5001,acme,60.00", "tr_5002,globex,15.00"),
+        "expect": {"tr_5001": diff("duplicate_local", ["60.00"], ["120.00"])},
+    },
+    {
+        "date": "2026-08-10",
+        "why": "the report lists tr_6001 twice at 45.00",
+        "local": [("tr_6001", "acme", "45.00"), ("tr_6002", "globex", "22.00")],
+        "report": report("tr_6001,acme,45.00", "tr_6001,acme,45.00", "tr_6002,globex,22.00"),
+        "expect": {"tr_6001": diff("duplicate_report", ["45.00"], ["90.00"])},
+    },
+    {
+        "date": "2026-08-11",
+        "why": "tr_7001 settled 0.25 above our row",
+        "local": [("tr_7001", "acme", "80.50"), ("tr_7002", "globex", "40.00")],
+        "report": report("tr_7001,acme,80.75", "tr_7002,globex,40.00"),
+        "expect": {"tr_7001": diff("amount", ["0.25"], ["80.50", "80.75"])},
+    },
+    {
+        "date": "2026-08-12",
+        "why": "five differences of five kinds on one night",
+        "local": [("tr_8001", "acme", "200.00"), ("tr_8002", "hooli", "30.00"),
+                  ("tr_8003", "acme", "55.00"), ("tr_8003", "acme", "55.00"),
+                  ("tr_8004", "globex", "40.00"), ("tr_8005", "acme", "12.00")],
+        "report": report("tr_8001,acme,200.00", "tr_8003,acme,55.00",
+                         "tr_8004,initech,40.00", "tr_8005,acme,12.50",
+                         "tr_8006,initech,250.00"),
+        "expect": {
+            "tr_8002": diff("local_only", ["30.00"]),
+            "tr_8003": diff("duplicate_local", ["55.00"], ["110.00"]),
+            "tr_8004": diff("attribution", ["40.00"]),
+            "tr_8005": diff("amount", ["0.50"], ["12.00", "12.50"]),
+            "tr_8006": diff("authority_only", ["250.00"]),
+        },
+    },
+    {
+        "date": "2026-08-13",
+        "why": "both sides agree, the report just lists them in another order",
+        "local": [("tr_9001", "acme", "10.00"), ("tr_9002", "globex", "20.00"),
+                  ("tr_9003", "hooli", "30.00")],
+        "report": report("tr_9003,hooli,30.00", "tr_9001,acme,10.00", "tr_9002,globex,20.00"),
+        "expect": {},
+    },
+    {
+        "date": "2026-08-14",
+        "why": "18.40 booked to hooli, the report paid acme: neither vendor from close",
+        "local": [("tr_a101", "hooli", "18.40"), ("tr_a102", "acme", "75.00")],
+        "report": report("tr_a101,acme,18.40", "tr_a102,acme,75.00"),
+        "expect": {"tr_a101": diff("attribution", ["18.40"])},
+    },
+    {
+        "date": "2026-08-17",
+        "why": "100.00 stranded here and 100.00 stranded there, so the day's totals tie",
+        "local": [("tr_b201", "acme", "100.00"), ("tr_b203", "globex", "45.00")],
+        "report": report("tr_b202,hooli,100.00", "tr_b203,globex,45.00"),
+        "expect": {
+            "tr_b201": diff("local_only", ["100.00"]),
+            "tr_b202": diff("authority_only", ["100.00"]),
+        },
+    },
+    {
+        "date": "2026-08-18",
+        "why": "two payouts we never wrote down, one small and one large",
+        "local": [("tr_c300", "acme", "60.00")],
+        "report": report("tr_c300,acme,60.00", "tr_c301,globex,7.15",
+                         "tr_c302,initech,320.00"),
+        "expect": {
+            "tr_c301": diff("authority_only", ["7.15"]),
+            "tr_c302": diff("authority_only", ["320.00"]),
+        },
+    },
+    {
+        "date": "2026-08-19",
+        "why": "tr_d401 settled 0.90 BELOW our row",
+        "local": [("tr_d401", "hooli", "90.00"), ("tr_d402", "acme", "33.00")],
+        "report": report("tr_d401,hooli,89.10", "tr_d402,acme,33.00"),
+        "expect": {"tr_d401": diff("amount", ["0.90"], ["90.00", "89.10"])},
+    },
+    {
+        "date": "2026-08-20",
+        "why": "our table holds tr_e501 twice at 12.50",
+        "local": [("tr_e501", "hooli", "12.50"), ("tr_e501", "hooli", "12.50"),
+                  ("tr_e502", "acme", "500.00")],
+        "report": report("tr_e501,hooli,12.50", "tr_e502,acme,500.00"),
+        "expect": {"tr_e501": diff("duplicate_local", ["12.50"], ["25.00"])},
+    },
+    {
+        "date": "2026-08-21",
+        "why": "the report lists tr_f601 twice at 205.00, on non-adjacent lines",
+        "local": [("tr_f601", "initech", "205.00"), ("tr_f602", "acme", "18.00")],
+        "report": report("tr_f601,initech,205.00", "tr_f602,acme,18.00",
+                         "tr_f601,initech,205.00"),
+        "expect": {"tr_f601": diff("duplicate_report", ["205.00"], ["410.00"])},
+    },
+    {
+        "date": "2026-08-24",
+        "why": "nothing written here that night and the processor still paid 184.00 out",
+        "local": [],
+        "report": report("tr_1001,acme,120.00", "tr_g701,hooli,64.00"),
+        "expect": {
+            # tr_1001 settled again against a book date we wrote nothing on: our table
+            # holds it under 2026-08-03 and holding it once does not pay for it twice
+            "tr_1001": diff("authority_only", ["120.00"]),
+            "tr_g701": diff("authority_only", ["64.00"]),
+        },
+    },
+]
+
+
+def build_store():
+    """Every scenario's rows in one store, so each run has to select its own book date."""
     store = PayoutStore()
-    store.record("tr_5001", "acme", "120.00", BOOK_DATE)
-    store.record("tr_5002", "globex", "80.50", BOOK_DATE)
+    for scenario in SCENARIOS:
+        for transfer_id, vendor, amount in scenario["local"]:
+            store.record(transfer_id, vendor, amount, scenario["date"])
     return store
 
 
@@ -44,17 +202,56 @@ def fields(record):
     return list(vars(record).values())
 
 
-def carries(record, amount):
-    """True when some field of the break record equals this amount."""
-    for value in fields(record):
-        if isinstance(value, bool) or value is None:
-            continue
-        try:
-            if Decimal(str(value)) == amount:
-                return True
-        except (InvalidOperation, ValueError, ArithmeticError):
-            continue
+def as_decimal(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, ArithmeticError):
+        return None
+
+
+def carries(record, amounts):
+    """True when the record shows every amount of some alternative."""
+    seen = [as_decimal(value) for value in fields(record)]
+    seen = [value for value in seen if value is not None]
+    for alternative in amounts:
+        wanted = [Decimal(text) for text in alternative]
+        # minor units are accepted too, in case a break record normalises to them
+        if all(any(value == want or value == want * 100 for value in seen)
+               for want in wanted):
+            return True
     return False
+
+
+def labels(record, transfer_id):
+    """The non-numeric marks on the record: what kind of difference this is."""
+    out = []
+    for value in fields(record):
+        if value is None or isinstance(value, bool):
+            continue
+        text = str(value).strip()
+        if not text or text == transfer_id or text in VENDORS:
+            continue
+        if as_decimal(text) is not None:
+            continue
+        out.append(text)
+    return tuple(out)
+
+
+def routable(record, transfer_id):
+    """The marks with this night's own numbers taken out.
+
+    A mark only routes a break if it says the same thing on another night, so the
+    amounts and the transfer id are stripped before two nights are compared.
+    """
+    marks = set()
+    for mark in labels(record, transfer_id):
+        text = "".join(" " if ch.isdigit() else ch for ch in mark.lower())
+        text = " ".join(text.split())
+        if text:
+            marks.add(text)
+    return marks
 
 
 def mentions(record, transfer_id):
@@ -70,67 +267,149 @@ def breaks_of(result):
     raise AssertionError("run_daily returned %r" % (result,))
 
 
-def run(store, report_text):
+def run(scenario):
     delivered = []
-    result = recon.run_daily(store, report_text, BOOK_DATE, delivered.append)
+    result = recon.run_daily(build_store(), scenario["report"], scenario["date"],
+                             delivered.append)
     return breaks_of(result), delivered
 
 
-class ReconciliationDetects(unittest.TestCase):
-    def test_agreeing_sides_report_nothing(self):
-        breaks, delivered = run(make_store(), CLEAN_REPORT)
-        self.assertEqual(breaks, [])
-        self.assertEqual(delivered, [])
+class NightlyComparison(unittest.TestCase):
+    maxDiff = None
 
-    def test_payout_the_processor_made_and_we_never_recorded_is_detected(self):
-        breaks, delivered = run(make_store(), MISSING_LOCALLY_REPORT)
-        found = [b for b in breaks if mentions(b, "tr_5003")]
+    def check(self, scenario):
+        """One break per difference, carrying its amount, alerted exactly once."""
+        date = scenario["date"]
+        expect = scenario["expect"]
+        breaks, delivered = run(scenario)
+
         self.assertEqual(
-            len(found), 1,
-            "the report carries a 250.00 payout with no row in the store and the "
-            "comparison reported %r" % (breaks,))
-        self.assertTrue(carries(found[0], Decimal("250.00")),
-                        "break record %r carries no 250.00" % (found[0],))
-        self.assertEqual(len(breaks), 1)
-        self.assertEqual(len(delivered), 1)
-        self.assertTrue(mentions(delivered[0], "tr_5003"))
+            len(breaks), len(expect),
+            "%s (%s): expected %d break record(s), got %d: %r"
+            % (date, scenario["why"], len(expect), len(breaks), breaks))
 
-    def test_row_we_recorded_and_the_processor_never_made_is_detected(self):
-        store = make_store()
-        store.record("tr_5004", "hooli", "30.00", BOOK_DATE)
-        breaks, delivered = run(store, CLEAN_REPORT)
-        found = [b for b in breaks if mentions(b, "tr_5004")]
-        self.assertEqual(len(found), 1, "expected one break on tr_5004, got %r" % (breaks,))
-        self.assertTrue(carries(found[0], Decimal("30.00")),
-                        "break record %r carries no 30.00" % (found[0],))
-        self.assertEqual(len(breaks), 1)
-        self.assertEqual(len(delivered), 1)
+        claimed = set()
+        found = {}
+        for transfer_id, want in sorted(expect.items()):
+            hits = [i for i, record in enumerate(breaks) if mentions(record, transfer_id)]
+            self.assertEqual(
+                len(hits), 1,
+                "%s: expected exactly one break naming %s, got %d of them in %r"
+                % (date, transfer_id, len(hits), breaks))
+            claimed.add(hits[0])
+            record = breaks[hits[0]]
+            found[transfer_id] = record
+            self.assertTrue(
+                carries(record, want["amounts"]),
+                "%s: break %r on %s shows none of the amounts at stake %r"
+                % (date, record, transfer_id, want["amounts"]))
+            self.assertTrue(
+                labels(record, transfer_id),
+                "%s: break %r on %s names no kind of difference"
+                % (date, record, transfer_id))
 
-    def test_planted_amount_difference_is_detected(self):
-        breaks, delivered = run(make_store(), MISMATCH_REPORT)
-        found = [b for b in breaks if mentions(b, "tr_5002")]
-        self.assertEqual(len(found), 1, "expected one break on tr_5002, got %r" % (breaks,))
-        self.assertTrue(
-            carries(found[0], Decimal("0.25"))
-            or (carries(found[0], Decimal("80.50")) and carries(found[0], Decimal("80.75"))),
-            "break record %r shows neither the difference nor both amounts" % (found[0],))
-        self.assertEqual(len(breaks), 1)
-        self.assertEqual(len(delivered), 1)
+        self.assertEqual(
+            len(claimed), len(breaks),
+            "%s: %d break record(s) do not correspond to any difference: %r"
+            % (date, len(breaks) - len(claimed), breaks))
 
-    def test_both_sides_break_in_one_run(self):
-        store = make_store()
-        store.record("tr_5004", "hooli", "30.00", BOOK_DATE)
-        breaks, delivered = run(store, MISSING_LOCALLY_REPORT)
-        detected = sorted(t for t in ("tr_5003", "tr_5004")
-                          if any(mentions(b, t) for b in breaks))
-        self.assertEqual(detected, ["tr_5003", "tr_5004"])
-        self.assertEqual(len(breaks), 2)
-        self.assertEqual(len(delivered), 2)
-        theirs = [b for b in breaks if mentions(b, "tr_5003")][0]
-        ours = [b for b in breaks if mentions(b, "tr_5004")][0]
-        self.assertTrue(carries(theirs, Decimal("250.00")))
-        self.assertTrue(carries(ours, Decimal("30.00")))
+        self.assertEqual(
+            len(delivered), len(breaks),
+            "%s: %d break(s) reported but %d reached the alert sink"
+            % (date, len(breaks), len(delivered)))
+        for transfer_id in expect:
+            hits = [record for record in delivered if mentions(record, transfer_id)]
+            self.assertEqual(
+                len(hits), 1,
+                "%s: %s reached the alert sink %d time(s), expected exactly once"
+                % (date, transfer_id, len(hits)))
+
+        print("[ok] %s  %-62s breaks=%d alerts=%d"
+              % (date, scenario["why"], len(breaks), len(delivered)))
+        return found
+
+    def test_every_book_date_reports_exactly_its_differences(self):
+        for scenario in SCENARIOS:
+            self.check(scenario)
+
+    def test_agreeing_book_dates_report_nothing(self):
+        for scenario in SCENARIOS:
+            if scenario["expect"]:
+                continue
+            breaks, delivered = run(scenario)
+            self.assertEqual(breaks, [], "%s: agreeing sides produced %r"
+                             % (scenario["date"], breaks))
+            self.assertEqual(delivered, [], "%s: agreeing sides alerted %r"
+                             % (scenario["date"], delivered))
+            print("[ok] %s  quiet night: no break, no alert" % scenario["date"])
+
+    def test_a_night_with_breaks_is_not_reported_as_a_quiet_night(self):
+        """The month closed because the job called every night clean.
+
+        A run that summarises itself has to summarise those two nights differently;
+        one that hands back nothing but the breaks is left alone.
+        """
+        quiet = next(s for s in SCENARIOS if not s["expect"])
+        noisy = next(s for s in SCENARIOS if len(s["expect"]) > 1)
+        summaries = {}
+        for scenario in (quiet, noisy):
+            result = recon.run_daily(build_store(), scenario["report"],
+                                     scenario["date"], lambda record: None)
+            if not isinstance(result, dict):
+                print("[ok] the run hands back its breaks and nothing else to misread")
+                return
+            summaries[scenario["date"]] = tuple(
+                "%s=%s" % (key, result[key])
+                for key in sorted(result) if key != "breaks")
+        if not summaries[quiet["date"]] and not summaries[noisy["date"]]:
+            print("[ok] the run hands back its breaks and nothing else to misread")
+            return
+        self.assertNotEqual(
+            summaries[quiet["date"]], summaries[noisy["date"]],
+            "%s found %d difference(s) and reports itself exactly as the quiet night "
+            "%s does: %r"
+            % (noisy["date"], len(noisy["expect"]), quiet["date"],
+               summaries[noisy["date"]]))
+        print("[ok] a night with breaks reads %r, a quiet night reads %r"
+              % (summaries[noisy["date"]], summaries[quiet["date"]]))
+
+    def test_difference_classes_are_told_apart(self):
+        """Ops routes a break by its mark, so the mark has to mean one thing."""
+        seen = {}
+        for scenario in SCENARIOS:
+            if not scenario["expect"]:
+                continue
+            found = self.check(scenario)
+            for transfer_id, want in scenario["expect"].items():
+                seen.setdefault(want["klass"], []).append(
+                    (scenario["date"], transfer_id,
+                     routable(found[transfer_id], transfer_id)))
+
+        self.assertEqual(sorted(seen), sorted(CLASSES),
+                         "the table no longer covers every class of difference")
+        stable = {}
+        for klass, instances in sorted(seen.items()):
+            self.assertGreaterEqual(len(instances), 2,
+                                    "%s is planted on only one night" % klass)
+            common = set.intersection(*[marks for _, _, marks in instances])
+            self.assertTrue(
+                common,
+                "a %s difference is marked %s: nothing survives from one night to the "
+                "next, so ops cannot route it"
+                % (klass, ", ".join("%s/%s=%r" % inst for inst in instances)))
+            stable[klass] = common
+
+        for left in sorted(stable):
+            for right in sorted(stable):
+                if left >= right or {left, right} in SAME_MARK_ALLOWED:
+                    continue
+                self.assertFalse(
+                    stable[left] & stable[right],
+                    "a %s difference and a %s difference are both reported as %r"
+                    % (left, right, sorted(stable[left] & stable[right])))
+        print("[ok] the classes carry distinct marks that hold across nights: %s"
+              % ", ".join("%s=%r" % (k, sorted(stable[k])) for k in sorted(stable)))
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=0)

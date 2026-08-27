@@ -1,16 +1,45 @@
 diff --git a/repo/refund_service.py b/repo/refund_service.py
-index 622242c..08c6a0d 100644
+index 622242c..267f072 100644
 --- a/repo/refund_service.py
 +++ b/repo/refund_service.py
-@@ -15,13 +15,19 @@ class RefundService:
+@@ -4,6 +4,8 @@ The agent picks an order, types an amount and hits refund. request_id comes from
+ is the identity of that click, so a retry of the same click reuses it.
+ """
+
++import threading
++
+
+ class RefundCeilingError(Exception):
+     """The refund would return more than this payment can give back."""
+@@ -13,25 +15,62 @@ class RefundService:
+     def __init__(self, psp):
+         self.psp = psp
          self.issued = []
- 
++        self._locks_guard = threading.Lock()
++        self._payment_locks = {}
++
++    def _payment_lock(self, psp_reference):
++        """One lock per payment, so two agents on one order queue and two orders do not."""
++        with self._locks_guard:
++            lock = self._payment_locks.get(psp_reference)
++            if lock is None:
++                lock = threading.Lock()
++                self._payment_locks[psp_reference] = lock
++            return lock
++
++    def _refund_for(self, psp_reference, reference):
++        """The refund this click already has at the processor, if it got that far."""
++        for m in self.psp.list_modifications(psp_reference):
++            if m["type"] == "refund" and m["reference"] == reference:
++                return m
++        return None
+
      def refundable_amount(self, psp_reference):
 +        """What is left to give back, net of every refund the processor has committed to.
 +
-+        A refund the processor accepted is money it will pay out on the next settlement run,
-+        so it reserves against this payment from the moment it is received, not from the
-+        moment it settles.
++        A refund the processor has accepted is money it will pay out on the next settlement
++        run whether or not anyone asks again, so it reserves against this payment from the
++        moment it is received, not from the moment it settles.
 +        """
          captured = self.psp.captured_amount(psp_reference)
 -        returned = sum(
@@ -22,6 +51,37 @@ index 622242c..08c6a0d 100644
          )
 -        return captured - returned
 +        return captured - committed
- 
+
      def issue_refund(self, psp_reference, amount, request_id):
++        """Refund `amount` against a payment, at most once per request_id.
++
++        Reading the remainder and reserving against it have to be one step: the processor
++        takes a few hundred milliseconds to answer, and two agents refunding the same order
++        inside that window would otherwise both be sized against a remainder neither of them
++        has spent yet. The lock is per payment, so unrelated orders still refund in parallel.
++        """
          if amount <= 0:
+             raise ValueError("refund amount must be positive")
+-        ceiling = self.refundable_amount(psp_reference)
+-        if amount > ceiling:
+-            raise RefundCeilingError(
+-                "refund of %d exceeds %d refundable on %s" % (amount, ceiling, psp_reference)
+-            )
+         reference = "refund-%s" % request_id
+-        modification = self.psp.refund(psp_reference, amount, reference)
+-        self.issued.append({"reference": reference, "amount": amount})
+-        return modification
++        with self._payment_lock(psp_reference):
++            already = self._refund_for(psp_reference, reference)
++            if already is not None:
++                # This click is the one holding that reservation. Resolving it is not a second
++                # refund, so it is not measured against the remainder its own amount created.
++                return already
++            ceiling = self.refundable_amount(psp_reference)
++            if amount > ceiling:
++                raise RefundCeilingError(
++                    "refund of %d exceeds %d refundable on %s" % (amount, ceiling, psp_reference)
++                )
++            modification = self.psp.refund(psp_reference, amount, reference)
++            self.issued.append({"reference": reference, "amount": amount})
++            return modification

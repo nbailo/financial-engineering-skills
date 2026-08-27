@@ -1,21 +1,28 @@
 id: verification-payout-worker-resume
-skill: fin-verification
+target_skill: fin-verification
+baseline_context: [fin-money-core]
+treatment_context: [fin-money-core, fin-verification]
 references:
-  - crash-boundary-tests.md
-  - proof-mechanisms.md
+  fin-money-core:
+    - crash-boundaries-and-outbox.md
+    - ambiguous-outcomes.md
+  fin-verification:
+    - crash-boundary-tests.md
+    - proof-mechanisms.md
 task: |
   The payout worker moved onto spot instances last week, so it now gets killed mid-run most
   days instead of once a quarter. Two vendors have called about being paid twice for one
   invoice, both on days the worker was killed, and our journal shows a single payment to each
-  of them. The provider has billed us for both. resume_pending() in recovery.py is what runs on
-  the next boot and it is supposed to finish an in-flight payout without paying it again.
-  Find why it pays twice and implement the fix. After it, a payout whose request already
-  reached the provider before the worker stopped must end up paid exactly once however many
-  times the resume path runs, and its journal row must be closed and carry the receipt.
+  of them. The provider has billed us for both. resume_pending() in recovery.py runs on the
+  next boot and is meant to finish an in-flight payout without paying it again. Work out why
+  it pays twice and fix it. Then come back with something that convinces me it holds now:
+  whichever moment the worker dies in, however many boots the loop takes, when the provider
+  is having a bad morning too, for two invoices to one vendor for the same amount,
+  and for the one vendor the provider flatly refused.
 allowed_paths:
   - repo/recovery.py
   - repo/journal.py
-  - repo/tests/test_recovery.py
+  - repo/payout_worker.py
 timeout_seconds: 60
-defect: A payout the resume path finishes after the worker stopped between the call and the outcome write goes out under a second reference, so the vendor is paid 400.00 twice and the journal records one of the two payments.
-oracle_proves: After a crash between a delivered request and the outcome write, the resume path leaves exactly one payment at the provider for that payout however often it runs, and one closed journal row carrying the receipt.
+defect: The resume path looks for the reference under a key the journal row does not carry, so it mints a second reference and the vendor owed 400.00 is paid 400.00 twice while the journal records one payment.
+oracle_proves: Across every crash point, a fresh process on each boot and up to five resume passes, each payout reaches the provider exactly once and each closed row carries that payment's own receipt, while a refused payout is never paid nor recorded as paid, an outage part way through recovery never loses the money owed, and two distinct invoices to one vendor are both paid once each.

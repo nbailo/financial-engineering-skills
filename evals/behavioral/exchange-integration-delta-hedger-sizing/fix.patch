@@ -11,6 +11,6 @@ index 20cdbd2..3375eb4 100644
 +        # Padding up to minQty sends a hedge the book never asked for and leaves the
 +        # opposite residual behind for the next cycle to chase.
 +        return None
- 
+
      if qty * mark_price < venue["notional"]:
          return None

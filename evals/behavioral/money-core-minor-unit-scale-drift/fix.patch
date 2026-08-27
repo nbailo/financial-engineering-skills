@@ -1,0 +1,55 @@
+diff --git a/repo/amounts.py b/repo/amounts.py
+index a4a3c3e..0a55005 100644
+--- a/repo/amounts.py
++++ b/repo/amounts.py
+@@ -4,11 +4,19 @@ Amounts reach us as text: spreadsheet exports, CSV uploads, partner files.
+ Everything downstream counts in whole minor units, so this module is the one
+ place where the two representations meet. Both directions live here so they
+ stay in step with each other.
++
++Two rules make the conversion exact. The scale is the currency's own, read
++from the metadata table rather than assumed to be two decimal places, so a
++yen amount is not multiplied by a hundred and a dinar is not divided by ten.
++And the arithmetic is decimal, not binary: "1.15" is a decimal fraction that
++binary floating point cannot hold, so a float conversion loses a minor unit on
++ordinary amounts. An amount finer than the currency can express is refused
++outright; rounding it here would store a number nobody typed.
+ """
+
+-from currencies import is_supported, normalise_code
++from decimal import Decimal, InvalidOperation
+
+-MINOR_UNITS_PER_MAJOR = 100
++from currencies import is_supported, minor_unit_exponent, normalise_code
+
+
+ class AmountError(ValueError):
+@@ -28,10 +36,18 @@ def to_minor_units(currency, amount):
+     if not text:
+         raise AmountError("empty amount for %s" % code)
+     try:
+-        value = float(text)
+-    except ValueError:
++        value = Decimal(text)
++    except InvalidOperation:
++        raise AmountError("not a decimal amount: %r" % text)
++    if not value.is_finite():
+         raise AmountError("not a decimal amount: %r" % text)
+-    return int(value * MINOR_UNITS_PER_MAJOR)
++    scaled = value.scaleb(minor_unit_exponent(code))
++    whole = scaled.to_integral_value()
++    if scaled != whole:
++        raise AmountError(
++            "%s holds %d decimal places and cannot express %s"
++            % (code, minor_unit_exponent(code), text))
++    return int(whole)
+
+
+ def to_decimal_string(currency, minor_units):
+@@ -43,4 +59,5 @@ def to_decimal_string(currency, minor_units):
+     code = normalise_code(currency)
+     if not is_supported(code):
+         raise AmountError("unsupported currency: %s" % code)
+-    return "%.2f" % (int(minor_units) / float(MINOR_UNITS_PER_MAJOR))
++    value = Decimal(int(minor_units)).scaleb(-minor_unit_exponent(code))
++    return format(value, "f")

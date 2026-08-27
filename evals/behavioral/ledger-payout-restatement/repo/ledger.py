@@ -2,7 +2,8 @@
 
 Amounts are signed integer minor units: a credit is positive, a debit is negative.
 One payout is one balanced group of legs sharing a transaction id. A statement run
-records the sequence number it cut at and quotes balances as of that cut.
+records the sequence number it cut at and quotes balances as of that cut, so an
+already-sent statement can be re-run and must come back with the same figures.
 """
 
 
@@ -60,12 +61,13 @@ class Journal:
             self._legs.append(Leg(self._seq, txn_id, account, amount, currency, memo))
         return self._seq
 
-    def correct(self, txn_id, new_amount, reason):
+    def correct(self, txn_id, new_amount, reason, request_id):
         """Restate a payout that went out at the wrong amount.
 
         Support calls this from the ops console once finance confirms the invoice
         total. new_amount is the magnitude the payout should have carried; each leg
-        keeps its own side.
+        keeps its own side. request_id is the console's own reference for this press
+        of the button, carried through onto the legs so ops can find it again.
         """
         legs = self.group(txn_id)
         if not legs:
@@ -74,14 +76,18 @@ class Journal:
             raise ValueError("a payout carries a positive amount")
         for leg in legs:
             leg.amount = new_amount if leg.amount > 0 else -new_amount
-            leg.memo = reason
-        return self._seq
+            leg.memo = "%s (%s)" % (reason, request_id)
+        return request_id
 
     def group(self, txn_id):
         return [leg for leg in self._legs if leg.txn_id == txn_id]
 
     def rows(self, txn_id):
         return [leg.as_row() for leg in self.group(txn_id)]
+
+    def all_rows(self):
+        """Every leg the journal carries, oldest first, for an export or an audit."""
+        return [leg.as_row() for leg in self._legs]
 
     def head(self):
         """The sequence number a statement run records as its cut-off."""

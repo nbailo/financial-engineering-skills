@@ -6,7 +6,14 @@ status "received", and the money leaves the merchant account when the nightly ru
 modification. The API does not compare the request against what is left on the payment, so a
 merchant that asks for more than it captured gets exactly that, and reads about it later on the
 settlement report.
+
+The real call is a round trip over the wire and takes a few hundred milliseconds: long enough
+that a second agent can press refund on the same order while the first request is still open.
+This stand-in answers out of memory, so it holds its own state under a lock rather than the
+wire's.
 """
+
+import threading
 
 
 class Payment:
@@ -22,6 +29,7 @@ class PspClient:
         self.payments = {}
         self.merchant_paid_out = 0
         self._seq = 0
+        self._api_lock = threading.Lock()
 
     def seed_capture(self, psp_reference, captured, currency="EUR"):
         self.payments[psp_reference] = Payment(psp_reference, captured, currency)
@@ -32,29 +40,32 @@ class PspClient:
 
     def list_modifications(self, psp_reference):
         """Every modification the processor holds against this payment, settled or not."""
-        return [dict(m) for m in self.payments[psp_reference].modifications]
+        with self._api_lock:
+            return [dict(m) for m in self.payments[psp_reference].modifications]
 
     def refund(self, psp_reference, amount, reference):
         """Accept a refund request. The same reference twice returns the first modification."""
-        payment = self.payments[psp_reference]
-        for m in payment.modifications:
-            if m["reference"] == reference:
-                return dict(m)
-        self._seq += 1
-        modification = {
-            "psp_reference": "MOD%03d" % self._seq,
-            "reference": reference,
-            "type": "refund",
-            "amount": amount,
-            "status": "received",
-        }
-        payment.modifications.append(modification)
-        return dict(modification)
+        with self._api_lock:
+            payment = self.payments[psp_reference]
+            for m in payment.modifications:
+                if m["reference"] == reference:
+                    return dict(m)
+            self._seq += 1
+            modification = {
+                "psp_reference": "MOD%03d" % self._seq,
+                "reference": reference,
+                "type": "refund",
+                "amount": amount,
+                "status": "received",
+            }
+            payment.modifications.append(modification)
+            return dict(modification)
 
     def settle(self):
         """The nightly run: every received refund becomes money out of the merchant account."""
-        for payment in self.payments.values():
-            for m in payment.modifications:
-                if m["type"] == "refund" and m["status"] == "received":
-                    m["status"] = "settled"
-                    self.merchant_paid_out += m["amount"]
+        with self._api_lock:
+            for payment in self.payments.values():
+                for m in payment.modifications:
+                    if m["type"] == "refund" and m["status"] == "received":
+                        m["status"] = "settled"
+                        self.merchant_paid_out += m["amount"]

@@ -1,32 +1,92 @@
+diff --git a/repo/ledger.py b/repo/ledger.py
+index e04e805..0d0fae6 100644
 --- a/repo/ledger.py
 +++ b/repo/ledger.py
-@@ -66,16 +66,26 @@
+@@ -19,6 +19,14 @@ class UnknownTransaction(Exception):
+     """No group carries this transaction id."""
+
+
++class CorrectionConflict(Exception):
++    """One console reference was reused to restate a payout to a second amount.
++
++    Two different agreed amounts under one reference cannot both be right, and
++    guessing which one ops meant would move money on a coin toss.
++    """
++
++
+ class Leg:
+     __slots__ = ("seq", "txn_id", "account", "amount", "currency", "memo")
+
+@@ -41,6 +49,12 @@ class Journal:
+     def __init__(self):
+         self._legs = []
+         self._seq = 0
++        # request_id -> the restatement it already recorded, so a second press of
++        # the same button is answered from the record instead of being replayed.
++        self._corrections = {}
++        # txn_id -> the magnitude currently in force, which is what the next
++        # restatement has to start from rather than the amount first posted.
++        self._in_force = {}
+
+     def post(self, txn_id, legs, memo=""):
+         """Append one balanced group.
+@@ -67,17 +81,54 @@ class Journal:
          Support calls this from the ops console once finance confirms the invoice
          total. new_amount is the magnitude the payout should have carried; each leg
-         keeps its own side.
+         keeps its own side. request_id is the console's own reference for this press
+-        of the button, carried through onto the legs so ops can find it again.
++        of the button.
 +
-+        The original group stays exactly as it was posted. The restatement is a new
-+        balanced group that reverses every original leg and re-posts it at the agreed
-+        amount, so a statement cut before the correction still quotes what was sent.
-+        Its transaction id is derived from the original, so a second press of the
-+        button is rejected by post rather than moving the balance twice.
++        What was sent is what the statement said, so the posted group is never
++        rewritten. The restatement is a later balanced group carrying only the
++        difference between the amount in force and the agreed one: a statement cut
++        before it still quotes the figures the merchant received, a statement cut
++        after it quotes the agreed figures, and the journal itself accounts for the
++        whole difference between them.
++
++        Carrying only the difference is also what makes a third amount land where
++        ops expect: the second restatement starts from the amount now in force, not
++        from the amount the payout was first posted at.
++
++        One reference buys one restatement. Pressing the button again with the same
++        payout and the same agreed amount returns the reference of the correction
++        already recorded and writes nothing, so a double press cannot move the
++        balance twice. Pressing it again with a different amount is a conflict for
++        ops to resolve, never a silent second restatement.
          """
          legs = self.group(txn_id)
          if not legs:
              raise UnknownTransaction(txn_id)
          if new_amount <= 0:
              raise ValueError("a payout carries a positive amount")
-+        restatement = []
-         for leg in legs:
+-        for leg in legs:
 -            leg.amount = new_amount if leg.amount > 0 else -new_amount
--            leg.memo = reason
--        return self._seq
-+            restatement.append((leg.account, -leg.amount, leg.currency))
-+            restatement.append((leg.account,
-+                                new_amount if leg.amount > 0 else -new_amount,
-+                                leg.currency))
-+        return self.post(txn_id + "/correction", restatement,
-+                         "correction of %s: %s" % (txn_id, reason))
- 
+-            leg.memo = "%s (%s)" % (reason, request_id)
+-        return request_id
++        recorded = self._corrections.get(request_id)
++        if recorded is not None:
++            if recorded["txn_id"] != txn_id or recorded["amount"] != new_amount:
++                raise CorrectionConflict(
++                    "%s already restated %s to %d and cannot restate %s to %d"
++                    % (request_id, recorded["txn_id"], recorded["amount"],
++                       txn_id, new_amount))
++            return recorded["correction_id"]
++        in_force = self._in_force.get(txn_id)
++        if in_force is None:
++            in_force = max(abs(leg.amount) for leg in legs)
++        delta = new_amount - in_force
++        correction_id = "%s/correction/%s" % (txn_id, request_id)
++        self.post(correction_id,
++                  [(leg.account, delta if leg.amount > 0 else -delta, leg.currency)
++                   for leg in legs],
++                  "correction of %s: %s" % (txn_id, reason))
++        self._in_force[txn_id] = new_amount
++        self._corrections[request_id] = {
++            "txn_id": txn_id,
++            "amount": new_amount,
++            "correction_id": correction_id,
++        }
++        return correction_id
+
      def group(self, txn_id):
          return [leg for leg in self._legs if leg.txn_id == txn_id]

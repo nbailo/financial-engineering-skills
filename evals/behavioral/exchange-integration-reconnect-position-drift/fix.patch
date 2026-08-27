@@ -3,8 +3,8 @@ index 52c3e95..7692e28 100644
 --- a/repo/backfill.py
 +++ b/repo/backfill.py
 @@ -10,8 +10,13 @@ from decimal import Decimal
- 
- 
+
+
  def fill_key(row):
 -    """Namespace the trade id by symbol, so ids from two symbols cannot collide."""
 -    return "%s:%s" % (row["symbol"], row["id"])
@@ -15,6 +15,6 @@ index 52c3e95..7692e28 100644
 +    the book then holds a position the venue does not have.
 +    """
 +    return row["id"]
- 
- 
+
+
  def replay_missed_trades(book, rows):

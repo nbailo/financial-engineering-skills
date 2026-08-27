@@ -4,24 +4,24 @@ index e21e013..676eec6 100644
 +++ b/repo/indexer.py
 @@ -6,11 +6,16 @@ CONFIRMATIONS are left for a later pass.
  """
- 
+
  from chain import ACCOUNT_BY_DEPOSIT_ADDRESS, INTERNAL_ADDRESSES, TRACKED_TOKEN
 +from node import MAX_LOGS_PER_RESPONSE
- 
+
  CONFIRMATIONS = 12
  RANGE_SPAN = 50
- 
- 
+
+
 +class CoverageError(Exception):
 +    """One block holds more logs than a single response can carry."""
 +
 +
  class DepositStore:
      """Customer balances in base units, the watermark, and what has been applied."""
- 
+
 @@ -40,12 +45,26 @@ def is_deposit(log):
- 
- 
+
+
  def sync(node, store):
 -    """Credit every deposit between the watermark and the confirmed head."""
 +    """Credit every deposit between the watermark and the confirmed head.

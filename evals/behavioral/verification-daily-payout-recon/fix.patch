@@ -1,38 +1,92 @@
 diff --git a/repo/reconcile.py b/repo/reconcile.py
-index 1b5a435..2ca6a27 100644
+index 6e6ab68..6ed79ee 100644
 --- a/repo/reconcile.py
 +++ b/repo/reconcile.py
-@@ -22,17 +22,25 @@ def _break(kind, transfer_id, ours, theirs):
- 
- 
+@@ -23,20 +23,65 @@ def _break(kind, transfer_id, ours, theirs, amount, note=""):
+     }
+
+
++def _group(rows):
++    """Every row that carries a transfer id, kept.
++
++    The transfer id is the processor's key and neither side promises it appears
++    once: our writer can land an outcome twice and the processor re-cuts batches.
++    Folding either side into one row per id would silently discard the very row
++    that says so, so the rows stay in a list per id and the length is evidence.
++    """
++    grouped = {}
++    for row in rows:
++        grouped.setdefault(row["transfer_id"], []).append(row)
++    return grouped
++
++
++def _total(rows):
++    total = ZERO
++    for row in rows:
++        total += row["amount"]
++    return total
++
++
  def reconcile(local_rows, report_rows):
 -    """One break record per difference between our payouts and the report."""
+-    reported = {row["transfer_id"]: row for row in report_rows}
 +    """One break record per difference between our payouts and the report.
 +
-+    Walks the union of both sides. A transfer the processor executed and we never
-+    wrote down has no local row to iterate over, and it is the difference that
-+    matters most: the money left the account and nothing here reflects it.
++    Walks the union of the two sides. A transfer the processor executed and we
++    never wrote down has no local row to iterate over, and it is the difference
++    that matters most: the money left the account and nothing here reflects it.
++    Equal amounts under different vendors is a difference too. The totals still
++    tie out, so no other control will ever catch it.
 +    """
-     reported = {row["transfer_id"]: row for row in report_rows}
-+    ours = {row["transfer_id"]: row for row in local_rows}
++    ours = _group(local_rows)
++    theirs = _group(report_rows)
      breaks = []
 -    for row in local_rows:
 -        theirs = reported.get(row["transfer_id"])
-+    for transfer_id in sorted(set(ours) | set(reported)):
-+        mine = ours.get(transfer_id)
-+        theirs = reported.get(transfer_id)
-         if theirs is None:
--            breaks.append(_break("not_in_report", row["transfer_id"], row["amount"], ZERO))
+-        if theirs is None:
+-            breaks.append(_break("not_in_report", row["transfer_id"],
+-                                 row["amount"], ZERO, row["amount"]))
 -            continue
 -        if theirs["amount"] != row["amount"]:
 -            breaks.append(_break("amount_differs", row["transfer_id"],
--                                 row["amount"], theirs["amount"]))
-+            breaks.append(_break("not_in_report", transfer_id, mine["amount"], ZERO))
-+        elif mine is None:
-+            breaks.append(_break("not_in_store", transfer_id, ZERO, theirs["amount"]))
-+        elif theirs["amount"] != mine["amount"]:
+-                                 row["amount"], theirs["amount"],
+-                                 abs(theirs["amount"] - row["amount"])))
++    for transfer_id in sorted(set(ours) | set(theirs)):
++        mine = ours.get(transfer_id, [])
++        reported = theirs.get(transfer_id, [])
++        our_total = _total(mine)
++        their_total = _total(reported)
++        if len(mine) > 1 or len(reported) > 1:
++            kind = "duplicate_here" if len(mine) > 1 else "duplicate_in_report"
++            breaks.append(_break(kind, transfer_id, our_total, their_total,
++                                 abs(our_total - their_total),
++                                 "%d rows here against %d in the report"
++                                 % (len(mine), len(reported))))
++        elif not reported:
++            breaks.append(_break("not_in_report", transfer_id,
++                                 our_total, ZERO, our_total))
++        elif not mine:
++            breaks.append(_break("not_in_store", transfer_id,
++                                 ZERO, their_total, their_total))
++        elif our_total != their_total:
 +            breaks.append(_break("amount_differs", transfer_id,
-+                                 mine["amount"], theirs["amount"]))
++                                 our_total, their_total,
++                                 abs(their_total - our_total)))
++        elif mine[0]["vendor"] != reported[0]["vendor"]:
++            breaks.append(_break("vendor_differs", transfer_id,
++                                 our_total, their_total, our_total,
++                                 "booked to %s, the report paid %s"
++                                 % (mine[0]["vendor"], reported[0]["vendor"])))
      return breaks
- 
- 
+
+
+@@ -44,7 +89,8 @@ def run_daily(store, report_text, book_date, alert):
+     """Compare one book date and deliver every break to `alert`.
+
+     `alert` has no default. A run with nowhere to send a break is a run that
+-    cannot report one, so the caller has to name the destination.
++    cannot report one, so the caller has to name the destination. Each break is
++    handed over once, in the order the comparison produced them.
+     """
+     breaks = reconcile(store.rows_for(book_date), parse_report(report_text))
+     for record in breaks:

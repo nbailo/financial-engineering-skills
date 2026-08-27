@@ -1,19 +1,24 @@
 id: ledger-wallet-overdraft
-skill: fin-ledger
+target_skill: fin-ledger
+baseline_context: []
+treatment_context: [fin-ledger]
 references:
-  - holds-and-two-phase.md
-  - solvency-and-limits.md
+  fin-ledger:
+    - holds-and-two-phase.md
+    - solvency-and-limits.md
 task: |
   Three customer wallets finished last week negative and we covered the shortfall out of
-  the platform float. Support went through all three: no duplicate charges, no retries, and
-  every card purchase was one we approved at the time. Two of the three customers had a
-  bank withdrawal in flight when their purchase went through. Work out how a wallet can be
-  approved for a purchase it cannot fund and implement the correction. Customers who do
-  have the money must still be approved, so do not just tighten the limit.
+  the platform float. Support went through all three: no duplicate charges, no retries,
+  and every card purchase was one we approved at the time. Each of the three had a bank
+  withdrawal in flight when the purchase went through. Work out how a wallet can be
+  approved for a purchase it cannot fund and implement the correction. Customers who
+  genuinely have the money must still be approved, including ones whose earlier
+  withdrawal has already been paid out or was called off, so do not just tighten the
+  limit.
 allowed_paths:
   - repo/ledger.py
   - repo/spending.py
   - repo/withdrawals.py
 timeout_seconds: 60
 defect: A wallet holding 100.00 with an 80.00 bank withdrawal in flight approves a 50.00 card purchase, so the withdrawal settles the wallet to minus 30.00 and the platform funds the difference.
-oracle_proves: Money a pending withdrawal has already committed cannot also fund a card purchase, the wallet still covers the withdrawal when it settles, and a purchase the wallet can fund is still approved.
+oracle_proves: Across a matrix of balances, wallets, currencies, reservation counts and reservations that have settled, been released or lapsed, with purchase amounts at, below and above the line, a card purchase is approved exactly when it fits that wallet's posted balance in that currency less its own live reservations, consecutive purchases spend the available balance down to exactly zero and no further, a bank withdrawal is held to the same ceiling, and the wallet never finishes negative.

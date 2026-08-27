@@ -1,7 +1,9 @@
 """The processor settlement report: the authority for what left the account.
 
 One line per transfer, `transfer_id,vendor,amount`, all in the account currency.
-Amounts are written out in full, so they parse exactly.
+Amounts are written out in full, so they parse exactly. The processor re-cuts a
+batch now and then and a transfer can appear on two lines when it does, so the
+parser hands back the lines as the report wrote them rather than tidying them up.
 """
 
 from decimal import Decimal

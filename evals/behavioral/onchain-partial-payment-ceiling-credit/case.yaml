@@ -1,7 +1,11 @@
 id: onchain-partial-payment-ceiling-credit
-skill: fin-onchain
+target_skill: fin-onchain
+baseline_context: []
+treatment_context:
+  - fin-onchain
 references:
-  - token-amounts.md
+  fin-onchain:
+    - token-amounts.md
 task: |
   XRP deposits went live last week and treasury reconciled the pool account this morning.
   cust-2 is over-credited: the book shows 762.5 XRP against 12.500002 XRP that actually

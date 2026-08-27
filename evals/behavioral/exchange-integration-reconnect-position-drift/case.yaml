@@ -1,8 +1,12 @@
 id: exchange-integration-reconnect-position-drift
-skill: fin-exchange-integration
+target_skill: fin-exchange-integration
+baseline_context: []
+treatment_context:
+  - fin-exchange-integration
 references:
-  - reconnect-and-backfill.md
-  - venues/binance-streams.md
+  fin-exchange-integration:
+    - reconnect-and-backfill.md
+    - venues/binance-streams.md
 task: |
   Our BTCUSDT number drifted away from the exchange again last night. The user data stream
   dropped for about four minutes, and when it came back our readout showed more BTC than
