@@ -81,8 +81,19 @@ generalising later. The following change with N and each one is a place a binary
   value of a single contract at settlement in dollars", and its settlement record documents `market_result` values of `yes`,
   `no` and `scalar` with a `value` field described as "Payout of a single yes contract in cents". A payout of one dollar per
   contract is a common case, not a rule.
-- **Collateral.** The collateral that backs a complete set is a function of the maximum payout across the outcome set, not of
-  the number two. Any constant `1` in a collateral expression is an assumption about both N and the payout scale.
+- **Collateral.** The collateral that backs a position is the **maximum aggregate liability across the resolution
+  states the market can reach**, not the largest single entry in the payout vector:
+
+      required = max over states s of  sum over outcomes i of  position[i] * payout[i](s)
+
+  `max(payout_vector)` is the same number only when exactly one outcome pays in every state. It understates a
+  split resolution, and a split is a state real venues reach. One complete set of a two-outcome market: under
+  winner-takes-all the states are `[1,0]` and `[0,1]`, each summing to 1, so `max(...)` and the aggregate agree
+  at 1. Under a `[50,50]` split both entries pay, the aggregate is 100 and `max(...)` reads 50, half the
+  liability. Under `[70,30]` the aggregate is again 100 while `max(...)` reads 70. Take the maximum over states
+  of the total, and enumerate the states the venue documents rather than assuming there are only N of them. Any
+  constant `1` in a collateral expression is an assumption about N, about the payout scale, and about the market
+  never splitting.
 
 **Do not state a binary property as universal.** Where this file states a relationship that holds only for two outcomes, it
 says so in the same sentence. Do the same in the code, with the outcome count asserted next to the arithmetic that assumes it.
@@ -92,6 +103,7 @@ says so in the same sentence. Do the same in the code, with the outcome count as
 ```python
 # tests/test_prediction_market_outcome_identity.py
 from decimal import Decimal
+from fractions import Fraction
 import pytest
 
 def test_the_identifier_on_a_fill_was_published_by_the_market(book_fill, market_payload):
@@ -111,9 +123,29 @@ def test_complement_price_only_where_there_are_two_outcomes(binary_market, multi
     with pytest.raises(NoSingleComplement):          # the complement is a basket, not an instrument
         multi_market.complement_price(multi_market.outcomes[0])
 
-def test_collateral_is_the_maximum_payout_not_the_constant_one(multi_market):
-    # any constant 1 in a collateral expression is an assumption about both N and the payout scale
-    assert multi_market.complete_set_collateral == max(multi_market.payout_vector)
+def aggregate_liability(position, payout_states):
+    # the maximum over resolution STATES of the total owed in that state, not the largest
+    # single entry in any one payout vector
+    return max(sum(p * q for p, q in zip(position, state)) for state in payout_states)
+
+def test_collateral_is_the_maximum_aggregate_liability_across_states(multi_market):
+    one_complete_set = [1, 1]                       # one of each outcome token
+
+    # winner-takes-all: exactly one outcome pays, so the total is 1 in either state
+    assert aggregate_liability(one_complete_set, [[1, 0], [0, 1]]) == 1
+
+    # a 50/50 split pays BOTH entries. max(vector) reads 0.5 and is half the liability.
+    assert aggregate_liability(one_complete_set, [[Fraction(1, 2), Fraction(1, 2)]]) == 1
+    assert max([Fraction(1, 2), Fraction(1, 2)]) == Fraction(1, 2)   # what the old rule read
+
+    # a 70/30 split is the same total. max(vector) reads 0.7.
+    assert aggregate_liability(one_complete_set, [[Fraction(7, 10), Fraction(3, 10)]]) == 1
+    assert max([Fraction(7, 10), Fraction(3, 10)]) == Fraction(7, 10)
+
+    # the collateral the venue requires is the aggregate, over every state it documents
+    assert multi_market.complete_set_collateral == aggregate_liability(
+        one_complete_set, multi_market.documented_payout_states
+    )
     assert multi_market.outcome_count_asserted_beside_the_arithmetic is True
 ```
 

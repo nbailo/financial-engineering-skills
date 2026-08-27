@@ -12,7 +12,7 @@ from fake_venue import (BUY, MAKER, MICRO, SELL, TAKER, FakeVenue, Rejected,
                         expected_profit_fee_micro, load_market, load_script, load_session,
                         run_script)
 from safe_bot import (INTENTS, IllegalTransition, InsufficientAvailable, SafeBot,
-                      UnknownFeeAsset, rebuild)
+                      SequenceAnomaly, UnknownFeeAsset, rebuild)
 from tests import scenario
 
 MARKET_ID = "FAKE-BINARY-1"
@@ -27,6 +27,18 @@ def fill_event(seq, **over):
              "fee": {"amount_micro": 0, "rate_ppm": 70000, "asset": "FPOINT"}}
     event.update(over)
     return event
+
+
+def at_next(bot, event):
+    """Renumber a synthetic event so it is the next sequence on the stream.
+
+    These tests exercise transition legality, not stream sequencing. A synthetic event
+    minted at an arbitrary far sequence is a GAP now, and a gap is buffered rather than
+    applied. Sequencing is the subject of the Sequencing class at the end of this file;
+    here the sequence is incidental and is set to whatever comes next.
+    """
+    seq = bot.stream_watermark + 1
+    return dict(event, seq=seq, event_id=f"{event['event_id']}-at{seq}")
 
 
 def working_buy():
@@ -244,21 +256,21 @@ class Fees(unittest.TestCase):
     def test_a_fee_in_an_asset_this_process_does_not_hold_is_refused(self):
         _, bot = working_buy()
         with self.assertRaises(UnknownFeeAsset):
-            bot.apply_event(fill_event(90, fee={"amount_micro": 1, "rate_ppm": 70000,
-                                                "asset": "SOMETHING-ELSE"}))
+            bot.apply_event(at_next(bot, fill_event(90, fee={
+                "amount_micro": 1, "rate_ppm": 70000, "asset": "SOMETHING-ELSE"})))
 
     def test_an_amount_that_does_not_match_the_rate_raises_an_alert(self):
         _, bot = working_buy()
-        bot.apply_event(fill_event(90, qty=10, price_micro=400000,
-                                   fee={"amount_micro": 999, "rate_ppm": 70000,
-                                        "asset": "FPOINT"}))
+        bot.apply_event(at_next(bot, fill_event(90, qty=10, price_micro=400000,
+                                                fee={"amount_micro": 999, "rate_ppm": 70000,
+                                                     "asset": "FPOINT"})))
         self.assertTrue(any("does not match" in a for a in bot.alerts), bot.alerts)
 
     def test_a_rate_that_does_not_match_the_metadata_raises_an_alert(self):
         _, bot = working_buy()
-        bot.apply_event(fill_event(90, liquidity=MAKER,
-                                   fee={"amount_micro": 0, "rate_ppm": 70000,
-                                        "asset": "FPOINT"}))
+        bot.apply_event(at_next(bot, fill_event(90, liquidity=MAKER,
+                                                fee={"amount_micro": 0, "rate_ppm": 70000,
+                                                     "asset": "FPOINT"})))
         self.assertTrue(any("metadata says" in a for a in bot.alerts), bot.alerts)
 
 
@@ -302,7 +314,7 @@ class Legality(unittest.TestCase):
     def test_an_event_for_an_intent_we_never_committed_is_refused(self):
         _, bot = working_buy()
         with self.assertRaises(IllegalTransition):
-            bot.apply_event(fill_event(90, client_key="ck-never-sent"))
+            bot.apply_event(at_next(bot, fill_event(90, client_key="ck-never-sent")))
 
     def test_an_unknown_event_type_is_refused_not_ignored(self):
         _, bot = working_buy()
@@ -313,12 +325,12 @@ class Legality(unittest.TestCase):
         venue, bot = working_buy()
         accepted = dict(venue.events[0], event_id="ev-901", seq=901)
         with self.assertRaises(IllegalTransition):
-            bot.apply_event(accepted)
+            bot.apply_event(at_next(bot, accepted))
 
     def test_a_fill_beyond_the_remaining_quantity_is_refused(self):
         _, bot = working_buy()
         with self.assertRaises(IllegalTransition) as caught:
-            bot.apply_event(fill_event(90, qty=101))
+            bot.apply_event(at_next(bot, fill_event(90, qty=101)))
         self.assertIn("exceeds remaining", str(caught.exception))
 
     def test_a_filled_order_accepts_no_further_fill(self):
@@ -327,7 +339,7 @@ class Legality(unittest.TestCase):
         bot.apply_all(venue.events_since(1))
         self.assertEqual(bot.orders["ck-1"].state, "FILLED")
         with self.assertRaises(IllegalTransition):
-            bot.apply_event(fill_event(90, qty=1))
+            bot.apply_event(at_next(bot, fill_event(90, qty=1)))
 
     def test_a_late_fill_on_a_cancelled_order_is_a_correction_and_is_booked(self):
         venue, events = scenario.winner_takes_all()
@@ -336,7 +348,7 @@ class Legality(unittest.TestCase):
         late = fill_event(90, order_id="ord-002", client_key="ck-buy-no-1", outcome="NO",
                           qty=50, price_micro=550000,
                           fee={"amount_micro": 866250, "rate_ppm": 70000, "asset": "FPOINT"})
-        self.assertEqual(bot.apply_event(late), "APPLIED")
+        self.assertEqual(bot.apply_event(at_next(bot, late)), "APPLIED")
         self.assertEqual(bot.positions["NO"], 50)
         self.assertEqual(bot.orders["ck-buy-no-1"].state, "CANCELLED")
         self.assertGreaterEqual(bot.reserved["FUSD"], 0)
@@ -349,7 +361,7 @@ class Legality(unittest.TestCase):
         bot.seen_events.clear()
         bot.watermark.clear()
         amended = dict(venue.events[0], qty=60, event_id="ev-902", seq=902)
-        bot.apply_event(amended)
+        bot.apply_event(at_next(bot, amended))
         self.assertEqual(bot.orders["ck-1"].qty, 60)
         self.assertEqual(bot.reserved["FUSD"], 24 * MICRO)
         self.assertTrue(any("differ from the intent" in a for a in bot.alerts), bot.alerts)
@@ -386,7 +398,14 @@ class Settlement(unittest.TestCase):
 
     def test_an_order_still_open_at_resolution_is_alerted(self):
         venue, events = scenario.winner_takes_all()
-        bot = rebuild(load_market(), venue, [e for e in events if e["seq"] != 7])
+        # The cancel at seq 7 never happened, so the stream is 1..6 and then the
+        # resolution. Renumbered rather than punched out: a hole in the sequence is a gap
+        # now, and a gap is buffered rather than applied, which is the Sequencing class's
+        # subject. Here the point is only that an order is still open when the market
+        # resolves.
+        without_cancel = [e for e in events if e["seq"] != 7]
+        without_cancel[-1] = dict(without_cancel[-1], seq=7)
+        bot = rebuild(load_market(), venue, without_cancel)
         self.assertTrue(any("orders still open" in a for a in bot.alerts), bot.alerts)
 
     def test_rounding_leaves_dust_that_is_accounted_for(self):
@@ -464,7 +483,7 @@ class ProvisionalDetermination(unittest.TestCase):
         late = {"seq": 900, "event_id": "ev-900", "type": "MARKET_DETERMINED",
                 "market_id": MARKET_ID, "payout_numerators": [0, 1],
                 "payout_denominator": 1, "provisional": True}
-        self.assertEqual(bot.apply_event(late), "APPLIED")
+        self.assertEqual(bot.apply_event(at_next(bot, late)), "APPLIED")
         self.assertEqual(bot.available["FUSD"], 1051 * MICRO)
         self.assertEqual(bot.settlement_credit[MARKET_ID], 70 * MICRO)
         self.assertEqual(bot.provisional_credit, {})
@@ -523,6 +542,121 @@ class IntentLog(unittest.TestCase):
         keys = {i["client_key"] for i in INTENTS}
         seen = {e["client_key"] for e in load_session() if e["type"] == "ORDER_ACCEPTED"}
         self.assertEqual(keys, seen)
+
+
+class Sequencing(unittest.TestCase):
+    """Arrival order is not economic order, and the difference is a position.
+
+    The rule these all check: the watermark advances over a CONTIGUOUS run and never past
+    a gap. Everything else follows. An event beneath the watermark was applied, so a new
+    identity carrying it is a redelivery. An event above the next sequence is real and
+    unseen, so it waits rather than pushing the mark past the one still missing.
+    """
+
+    def stream(self):
+        venue, events = scenario.winner_takes_all()
+        return venue, events
+
+    def opened(self, venue, events):
+        """A bot that has applied seq 1 and holds only the intent that sequence needs.
+
+        rebuild() commits every remaining intent once it runs out of events, and the sell
+        intent needs a position the later fills create, so it is given just the intent the
+        first three sequences require.
+        """
+        return rebuild(load_market(), venue, events[:1],
+                       intents=[i for i in INTENTS if i["before_seq"] <= 1])
+
+    def test_two_fills_that_arrive_swapped_produce_the_same_position(self):
+        venue, events = self.stream()
+        in_order = rebuild(load_market(), venue, events)
+
+        swapped = list(events)
+        swapped[1], swapped[2] = swapped[2], swapped[1]      # seq 3 before seq 2
+        out_of_order = rebuild(load_market(), venue, swapped)
+
+        self.assertEqual(out_of_order.positions, in_order.positions)
+        self.assertEqual(out_of_order.available, in_order.available)
+        self.assertEqual(out_of_order.stream_watermark, in_order.stream_watermark)
+        self.assertIsNone(out_of_order.open_gap())
+
+    def test_the_event_that_arrives_early_is_buffered_not_applied(self):
+        venue, events = self.stream()
+        bot = self.opened(venue, events)                      # seq 1 applied
+        self.assertEqual(bot.apply_event(events[2]), "BUFFERED")   # seq 3, gap at 2
+        self.assertEqual(bot.stream_watermark, 1, "the mark did not move over the gap")
+        self.assertEqual(bot.open_gap(), 2, "and it says which sequence it is waiting on")
+        self.assertEqual(bot.positions.get("YES", 0), 0, "nothing from seq 3 was booked")
+
+    def test_closing_the_gap_drains_what_was_waiting_behind_it(self):
+        venue, events = self.stream()
+        bot = self.opened(venue, events)
+        bot.apply_event(events[2])                            # buffered
+        self.assertEqual(bot.apply_event(events[1]), "APPLIED")    # closes the gap
+        self.assertEqual(bot.stream_watermark, 3, "seq 2 and then the buffered seq 3")
+        self.assertIsNone(bot.open_gap())
+        self.assertEqual(bot.positions["YES"], 100, "both fills are booked, once each")
+
+    def test_the_old_bug_a_late_event_after_a_higher_one_is_never_dropped(self):
+        """The regression this class exists for.
+
+        The first version advanced the watermark to whatever arrived. seq 3 first pushed
+        the mark to 3, and the real seq 2 then looked stale and was discarded, silently,
+        leaving a position short by that fill and no alert anywhere.
+        """
+        venue, events = self.stream()
+        bot = self.opened(venue, events)
+        bot.apply_event(events[2])
+        self.assertNotEqual(bot.apply_event(events[1]), "STALE",
+                            "the missing event is not stale, it is the one we were waiting for")
+        self.assertEqual(bot.positions["YES"], 100)
+
+    def test_a_redelivered_event_is_a_duplicate_and_a_re_identified_one_is_stale(self):
+        venue, events = self.stream()
+        bot = rebuild(load_market(), venue, events)
+        before = dict(bot.positions)
+
+        self.assertEqual(bot.apply_event(events[1]), "DUPLICATE", "same event id")
+        renamed = dict(events[1], event_id="ev-002-again")
+        self.assertEqual(bot.apply_event(renamed), "STALE", "new id, sequence already applied")
+        self.assertEqual(bot.positions, before, "neither moved the position")
+
+    def test_an_unseen_sequence_beneath_the_mark_cannot_happen_and_says_so(self):
+        venue, events = self.stream()
+        bot = rebuild(load_market(), venue, events)
+        # Contiguity means an unseen sequence beneath the STREAM mark is a redelivery under
+        # a new identity, which is why that branch returns STALE. The anomaly that remains
+        # is the entity watermark disagreeing with the stream, which contiguity cannot
+        # produce and only corrupt state can. It must not pass quietly.
+        key = ("orders", events[1]["order_id"])
+        bot.stream_watermark = 0
+        bot.watermark[key] = 99
+        with self.assertRaises(SequenceAnomaly):
+            bot.apply_event(dict(events[1], event_id="ev-002-corrupt", seq=1))
+
+    def test_a_restart_during_a_gap_recovers_to_the_same_state(self):
+        venue, events = self.stream()
+        complete = rebuild(load_market(), venue, events)
+
+        # Crash with a gap open: seq 3 buffered, seq 2 still missing.
+        crashed = self.opened(venue, events)
+        crashed.apply_event(events[2])
+        self.assertEqual(crashed.open_gap(), 2)
+        durable_mark = crashed.stream_watermark      # the buffer is lost, this is not
+        self.assertEqual(durable_mark, 1, "the mark never crossed the gap")
+
+        # Restart: the buffer is gone. Replaying from the durable mark is enough precisely
+        # because the mark never advanced past the missing sequence.
+        resumed = rebuild(load_market(), venue,
+                          events[:durable_mark] + venue.events_since(durable_mark))
+
+        self.assertIsNone(resumed.open_gap(), "the backfill closed it")
+        self.assertEqual(resumed.positions, complete.positions)
+        self.assertEqual(resumed.available, complete.available)
+        self.assertEqual(resumed.stream_watermark, complete.stream_watermark)
+        self.assertEqual({k: v.state for k, v in resumed.orders.items()},
+                         {k: v.state for k, v in complete.orders.items()},
+                         "and every order ends in the same state")
 
 
 if __name__ == "__main__":

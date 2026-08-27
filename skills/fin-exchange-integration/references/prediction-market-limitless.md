@@ -70,9 +70,15 @@ fields that change what your code does:
 - `winningOutcomeIndex` and `payoutNumerators`, the resolution fields.
 
 **Tick size and minimum order size are UNVERIFIED.** Neither the market-details page nor the orderbook page as read on
-2026-08-25 documents a tick grid or a minimum size. Do not assume Polymarket's grid applies. Discover the constraint
-empirically against the live API before you round anything, and put the answer behind a named constant with the date you
-established it.
+2026-08-25 documents a tick grid or a minimum size. Do not assume Polymarket's grid applies.
+
+**Do not discover them by sending orders.** There is no sandbox, the base URL is mainnet and the collateral is real
+USDC, so a probe order is a real order at a real price with real settlement. Sending orders to learn a rounding rule is
+an unbounded loss for information a request can supply. Get the constraint from a documented source instead: the
+market-details response for the market you are about to trade, whatever the venue publishes about its grid, or the
+venue directly. Until you have it, refuse to round: reject the order locally rather than guess a grid and discover it
+from a rejection or, worse, from a fill at a price you did not intend. Put the answer behind a named constant with its
+source and the date, and treat it as stale on the cadence in `revalidate_when` above.
 
 ## REST and WebSocket boundaries, and the absence of any sandbox
 
@@ -101,6 +107,14 @@ Three modes, with different reach:
 
 Scopes: `trading` (place and cancel orders, and the required base scope for delegated signing), `account_creation`,
 `delegated_signing` ("Server signs orders on behalf of sub-accounts"), `withdrawal`, and `admin`.
+
+**Two different integrations are described by that list, and most readers are only the first.** Ordinary trading access
+is `trading`, and optionally `withdrawal`: you hold a key, you sign your own orders, you trade your own account. That is
+the whole surface this file is about. `account_creation`, `delegated_signing`, sub-accounts and placement on behalf of
+another profile are a **partner integration**, where you act for accounts that are not yours. Whether a given token can
+hold those scopes is the venue's decision and is granted, not self-selected, so treat anything below that depends on
+them as unavailable until the venue has actually granted it. Building against them speculatively produces a code path
+nobody can execute and a permission model nobody reviewed.
 
 **The asymmetry worth designing around:** the withdraw page states that "Withdrawal-address allowlist management requires
 a Privy identity token. HMAC/scoped API tokens cannot add or delete withdrawal addresses." A compromised HMAC token can

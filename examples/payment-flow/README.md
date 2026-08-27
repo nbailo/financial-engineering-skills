@@ -177,15 +177,22 @@ WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
 # fails rather than alerting into a void.
 ALERT_SINK = os.environ["PAYMENTS_ALERT_SINK"]
 
-# A dispute is closed only in these three states. Anything else, including a status
-# this code has never seen, is open. On a Stripe card chargeback the vendor documents
-# the block, so open means no refund here; that is Stripe's answer for this claim type
-# on this rail, not a general rule. Fail closed on a status we do not recognise.
-CLOSED_DISPUTE = {"won", "lost", "warning_closed"}
+# Two different things arrive on the same object and must not be treated alike.
+# Stripe: *"In the API, the Dispute object `status` relating to an inquiry is prepended
+# with `warning`."* An inquiry is a request for information, not a debit; a formal
+# dispute has already pulled the funds.
+INQUIRY = {"warning_needs_response", "warning_under_review", "warning_closed"}
 
-# Closing does not end the exposure. `lost` means the network already took the money,
-# so the claim is a subtrahend in the ceiling below; `won` and `warning_closed` take
-# nothing. A closed-means-refundable reading returns the amount a second time.
+# A formal dispute is closed only in these two states. Anything else, including a status
+# this code has never seen, is open, and Stripe: *"You can't issue a refund outside the
+# dispute process while the dispute is open."* That is Stripe's answer for this claim
+# type on this rail, not a general rule. Fail closed on a status we do not recognise.
+CLOSED_DISPUTE = {"won", "lost"}
+
+# Closing does not end the exposure. `lost` means the network already took the money, so
+# the claim is a subtrahend in the ceiling below; `won` takes nothing. A
+# closed-means-refundable reading returns the amount a second time. Stripe also documents
+# a rare `lost` to `won` late win, so this is read fresh on every call and never cached.
 CLAIM_TOOK_THE_MONEY = {"lost"}
 
 # Ordering is per object, on the authority's own sequence, and the guard is the write.
@@ -228,7 +235,7 @@ def create_refund(order_id):
 
     # ---- outside any transaction: the API is current state, not the payload -------
     intent = stripe.PaymentIntent.retrieve(
-        order.payment_intent_id, expand=["latest_charge.dispute"]
+        order.payment_intent_id, expand=["latest_charge"]
     )
     charge = intent.latest_charge
     if charge is None or charge.captured is False:
@@ -237,63 +244,101 @@ def create_refund(order_id):
     if charge.currency != currency:
         return jsonify(error=f"currency mismatch: charge is {charge.currency}"), 400
 
-    dispute = charge.dispute
-    if dispute is not None and dispute.status not in CLOSED_DISPUTE:
-        return jsonify(error=f"dispute {dispute.id} is open ({dispute.status})"), 409
-
+    # Every claim on this charge, not the one Stripe inlines. `latest_charge.dispute` is a
+    # single object, and Stripe: *"In extremely rare cases, you might receive more than one
+    # dispute per payment."* One expanded field cannot see the second one, and the second
+    # one is the one that takes the money twice.
     claimed = 0
-    if dispute is not None and dispute.status in CLAIM_TOOK_THE_MONEY:
-        if dispute.currency != charge.currency:
-            # Claim FX is struck at claim time. There is no rate we may invent.
-            return jsonify(error=f"dispute {dispute.id} is in {dispute.currency}"), 409
-        claimed = dispute.amount
+    open_inquiries = []
+    for claim in stripe.Dispute.list(charge=charge.id, limit=100).auto_paging_iter():
+        if claim.status in INQUIRY:
+            # An inquiry does not debit and does not block. Stripe: an inquiry is resolved
+            # by *"Issuing a full refund"*, and *"Inquiries on partially refunded charges
+            # can still escalate to a chargeback."* So a full refund helps and a partial
+            # one does not, which the caller is told rather than left to assume.
+            if claim.status != "warning_closed":
+                open_inquiries.append(claim.id)
+            continue
+        if claim.status not in CLOSED_DISPUTE:
+            return jsonify(error=f"dispute {claim.id} is open ({claim.status})"), 409
+        if claim.status in CLAIM_TOOK_THE_MONEY:
+            if claim.currency != charge.currency:
+                # Claim FX is struck at claim time. There is no rate we may invent, and
+                # Stripe documents the disputed amount differing from the charge amount.
+                return jsonify(error=f"dispute {claim.id} is in {claim.currency}"), 409
+            claimed += claim.amount
 
-    # The ceiling is the captured amount minus everything in flight and everything a
-    # claim has taken, computed here from the authority's own numbers.
-    pending = db.session.execute(
-        text("SELECT COALESCE(SUM(amount_cents),0) FROM refund_attempts"
-             " WHERE charge_id = :c AND status IN ('pending','requires_action')"),
-        {"c": charge.id},
-    ).scalar_one()
-    refundable = charge.amount_captured - charge.amount_refunded - pending - claimed
-    if amount_cents > refundable:
-        return jsonify(error=f"exceeds refundable {refundable}"), 400
+    # ---- one critical section: resolve the key, then reserve ----------------------
+    # The lock is on the CHARGE, because the charge is what the ceiling is about; locking
+    # the order row misses a second order against the same charge.
+    db.session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:c))"), {"c": charge.id}
+    )
+    body_now = json.dumps(
+        {"charge": charge.id, "amount": amount_cents, "currency": currency}, sort_keys=True
+    )
 
-    # ---- phase 1: COMMIT the intent, with the key and the exact bytes -------------
-    attempt = db.session.execute(
-        text("""
-        INSERT INTO refund_attempts
-            (client_key, charge_id, order_id, amount_cents, currency,
-             idempotency_key, request_body, status)
-        VALUES (:ck, :charge, :order, :amt, :cur, :key, :body, 'inflight')
-        ON CONFLICT (client_key) DO NOTHING
-        RETURNING id, idempotency_key, request_body, status
-        """),
-        {
-            "ck": client_key, "charge": charge.id, "order": order_id,
-            "amt": amount_cents, "cur": currency,
-            # Operation identity: minted from the intent instance, not from a row id,
-            # not from a body hash, and from a value that survives ROLLBACK.
-            "key": f"rf_{uuid.uuid4().hex}",
-            "body": json.dumps(
-                {"charge": charge.id, "amount": amount_cents, "currency": currency},
-                sort_keys=True,
-            ),
-        },
+    # RESOLVE THE KEY FIRST. A retry under a key that already has an attempt is not a new
+    # refund and must not be measured against the headroom its own attempt is holding.
+    # Checking the ceiling first inverts that: capture 100 with a same-key inflight of 60,
+    # retried at 60, sums its own reservation into `reserved` and answers "exceeds
+    # refundable 40" to a caller who is asking about that very reservation.
+    existing = db.session.execute(
+        text("SELECT id, idempotency_key, request_body, status, stripe_refund_id"
+             " FROM refund_attempts WHERE client_key = :ck"),
+        {"ck": client_key},
     ).one_or_none()
-    db.session.commit()  # <- the intent is on disk before the first byte goes out
 
-    if attempt is None:  # the retry resolves to the winner's row, never a raw 23505
-        attempt = db.session.execute(
-            text("SELECT id, idempotency_key, request_body, status, stripe_refund_id"
-                 " FROM refund_attempts WHERE client_key = :ck"),
-            {"ck": client_key},
-        ).one()
-        stored = json.loads(attempt.request_body)
-        if stored != {"charge": charge.id, "amount": amount_cents, "currency": currency}:
+    if existing is not None:
+        db.session.commit()  # release the lock; nothing new is being reserved
+        if json.loads(existing.request_body) != json.loads(body_now):
             return jsonify(error="idempotency key reused with a different body"), 422
-        if attempt.status != "inflight":
-            return jsonify(refund_id=attempt.stripe_refund_id, status=attempt.status), 200
+        if existing.status != "inflight":
+            # Terminal: the stored result IS the answer, and re-deciding it would let one
+            # key produce two outcomes.
+            return jsonify(refund_id=existing.stripe_refund_id, status=existing.status), 200
+        # Still inflight: continue the SAME recovery under the SAME Stripe key. No second
+        # reservation, because the first one is still standing.
+        attempt = existing
+    else:
+        # A genuinely new key. Every reservation still standing counts against it,
+        # including the ones other keys hold. `inflight` is the row this endpoint writes
+        # before it calls Stripe: leaving it out, as the first version did, lets a
+        # concurrent request spend the same headroom a second time.
+        reserved = db.session.execute(
+            text("SELECT COALESCE(SUM(amount_cents),0) FROM refund_attempts"
+                 " WHERE charge_id = :c"
+                 "   AND status IN ('inflight','pending','requires_action')"),
+            {"c": charge.id},
+        ).scalar_one()
+
+        # Combined exposure: what the processor says it has already returned, what this
+        # service has already committed to returning, and what a lost claim already took.
+        refundable = charge.amount_captured - charge.amount_refunded - reserved - claimed
+        if amount_cents > refundable:
+            db.session.rollback()
+            return jsonify(error=f"exceeds refundable {refundable}"), 400
+
+        # pg_advisory_xact_lock is transaction scoped, so the read above and this insert
+        # are one atomic reservation. The commit persists the intent and releases the lock.
+        attempt = db.session.execute(
+            text("""
+            INSERT INTO refund_attempts
+                (client_key, charge_id, order_id, amount_cents, currency,
+                 idempotency_key, request_body, status)
+            VALUES (:ck, :charge, :order, :amt, :cur, :key, :body, 'inflight')
+            RETURNING id, idempotency_key, request_body, status
+            """),
+            {
+                "ck": client_key, "charge": charge.id, "order": order_id,
+                "amt": amount_cents, "cur": currency,
+                # Operation identity: minted from the intent instance, not from a row id,
+                # not from a body hash, and from a value that survives ROLLBACK.
+                "key": f"rf_{uuid.uuid4().hex}",
+                "body": body_now,
+            },
+        ).one()
+        db.session.commit()  # <- reservation on disk, lock released, before the first byte
 
     # ---- phase 2: the call. No transaction lexically encloses it. -----------------
     try:
@@ -314,7 +359,22 @@ def create_refund(order_id):
 
     # ---- phase 3: record the outcome ---------------------------------------------
     _finish(attempt.id, sr.status, sr.id)
-    return jsonify(refund_id=sr.id, status=sr.status), 201
+
+    # An open inquiry is not a debit and did not block this refund, but whether this
+    # refund RESOLVES it depends on the amount. Stripe resolves an inquiry on a full
+    # refund only, and *"Inquiries on partially refunded charges can still escalate to a
+    # chargeback."* Say which of the two happened rather than let the caller assume the
+    # claim is handled.
+    resolves = open_inquiries and amount_cents == charge.amount_captured - claimed
+    return jsonify(
+        refund_id=sr.id,
+        status=sr.status,
+        open_inquiries=open_inquiries,
+        inquiry_note=(
+            "full refund; the open inquiries above may close on it" if resolves
+            else "partial refund; open inquiries can still escalate to a chargeback"
+        ) if open_inquiries else None,
+    ), 201
 
 
 def _finish(attempt_id, status, refund_id):
@@ -478,9 +538,35 @@ dead-letter table and are *not* marked processed.
 correct and was left alone. The event-id dedupe table stayed; it is still the right first gate, it just
 cannot substitute for a per-object watermark. Amounts remained integer minor units, because they already
 were. The endpoint is still one Flask route with a synchronous Stripe call; nothing was moved to a queue.
-The `with_for_update()` on the order row was **removed**, not tightened. The ceiling is now computed from
-Stripe's own captured figure and enforced by a unique constraint on `client_key`, so the row lock was
-protecting nothing that still needed protecting.
+The `with_for_update()` on the ORDER row was **moved, not kept**. It guarded the wrong object: the ceiling
+is a fact about the charge, and two orders can point at one charge, so locking the order row leaves the real
+race open. The lock is now a transaction-scoped advisory lock on the charge id, and it spans the whole
+critical section: read the reserved total, compute the ceiling, insert the reservation, commit. The first
+version read the ceiling outside any transaction and inserted afterwards, so two concurrent requests could
+read the same headroom and both pass a check only one may pass.
+
+The reserved total also now counts `inflight`, which is the state this endpoint writes before it calls
+Stripe. Summing only `pending` and `requires_action`, as the first version did, made every reservation
+invisible during exactly the window it exists to cover.
+
+**The key resolves before the ceiling, and the order of those two is the whole point.** Counting first and
+resolving second charges a retry for the reservation it is retrying:
+
+```text
+capture                            100
+existing same-key inflight          60
+retry, same key, same body          60
+
+ceiling first:   reserved = 60  ->  refundable = 40  ->  "exceeds refundable 40"   WRONG
+key first:       the attempt exists and is inflight  ->  reuse it, reserve nothing  RIGHT
+```
+
+The caller is asking about the reservation being counted against it, and the honest answer is the stored
+attempt. So: same key with a different body is `422`, because one key may not mean two refunds; same key with
+a terminal attempt returns that attempt's stored result, because re-deciding it lets one key produce two
+outcomes; same key with an `inflight` attempt continues under the SAME Stripe idempotency key and reserves
+nothing further. A DIFFERENT key still counts every `inflight`, `pending` and `requires_action` reservation
+standing against the charge, including the ones this caller does not own.
 
 **Not changed, and named as out of scope.** `post_refund_to_ledger` is a call, not an implementation. The
 balanced group it must write is *Reversal fee treatment is a term of the contract, confirmed against

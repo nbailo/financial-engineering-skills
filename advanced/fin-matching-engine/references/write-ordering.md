@@ -16,7 +16,7 @@ SKILL.md's *authoritative state is reproducible from durable, ordered inputs* st
 path below is one way to satisfy it.
 
 ```
-1  seq = sequencer.next()                      // inside the core; one of five counters
+1  seq = sequencer.next()                      // the engine-event sequence, in the core
 2  journal.append(Record{seq, cmd_bytes, crc32c(len ‖ cmd_bytes)})
    journal.flush()                             // durable BEFORE the book is touched
 3  tx = db.begin()

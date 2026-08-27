@@ -20,32 +20,35 @@ and still be conflated wrongly.
   and every subscriber rather than per key, because a per-key slot bounds one key and instruments times
   subscribers is what has to fit in memory. Unbounded conflation is indistinguishable from a stalled
   stream during exactly the burst that caused it.
-- **Recoverable.** A consumer can tell exactly which raw updates a conflated message accounts for, and
-  can check that no conflated message went missing. Two mechanisms deliver that, and either is enough.
+- **Recoverable under a declared contract.** The stream states which of the two contracts below it offers,
+  and a consumer can check continuity within that contract. The two answer different questions, and
+  neither is a substitute for the other.
 
 Miss one condition and the corruption is silent: the transport sequence stays contiguous, because you
 dropped the message before it was numbered, so no gap detector fires. The book is wrong until
 the next snapshot, and every decision taken against it was taken against a state that never existed.
 
-## The two mechanisms that make a conflated stream recoverable
+## The two contracts, and what each one actually promises
 
-The property is one sentence: **a consumer must be able to tell exactly which raw updates a conflated
-message accounts for.** Which mechanism carries it is a protocol question, not a correctness one, and
-there is no universal requirement for a second counter.
+Declare which one this stream offers. They are not two spellings of one idea.
 
-- **A covered raw sequence range on the message.** Where the protocol has room for the field, the
-  conflated message names the first and last raw sequence number it collapses. That is sufficient on its
-  own: the ranges tile the raw space, a consumer reads off the message which raw updates it accounts
-  for, and a range that does not begin where the previous one ended is a detected drop.
-- **A counter of its own for the conflated stream.** Where the protocol cannot carry a range, the
-  conflated stream gets its own counter in its own space, published beside the raw one, with a sentence
-  saying which counter gap detection runs on and what the other is not valid for. A counter still needs
-  the join to the raw space written into the specification, because a snapshot names a point in one
-  space and the consumer has to place it in the other.
+- **A self-contained state feed.** The stream has its own sequence space and its own snapshot, and it is
+  continuous in that same space. A consumer recovers by re-reading state: take the snapshot, apply the
+  conflated messages after it, and the book is right. It makes **no claim about which raw updates any
+  message represents**, and it does not have to: the consumer never reasons about the raw stream. Do not
+  require this feed to identify every raw update. That is a different contract, and demanding it of a
+  state feed is asking for a field the design has no use for.
+- **A raw-accounting feed.** The message names the raw coverage it accounts for, as a first and last raw
+  sequence number or whatever the protocol provides, and the specification gives a checkable continuity or
+  predecessor rule over that coverage. A consumer can then place every raw update: the coverage tiles the
+  raw space, and coverage that does not continue from the previous message is a detected drop.
 
-Both need a link a consumer can check against the message they last received, or a dropped conflated
-message is undetectable. Both forbid the same thing: a conflated message published under one raw
-sequence number with the rest of the range unaccounted for. The raw stream's gap detector then reports
+**A counter over the conflated stream proves only that no conflated message was lost.** That is worth
+having, and it is all it is. It says nothing about which raw updates a message represents, so it does not
+turn a state feed into a raw-accounting one, and publishing a raw range and a counter together is not
+itself the obligation: the obligation is the contract you declared and the continuity rule that checks it.
+Both contracts forbid the same thing: a conflated message published under one raw sequence number with the
+rest of its coverage unaccounted for. The raw stream's gap detector then reports
 contiguity across a hole, to every consumer at once, including those who never subscribed to the
 conflated stream. A raw sequence number is never reused for different content, and the raw space is
 never renumbered to close the hole conflation made.

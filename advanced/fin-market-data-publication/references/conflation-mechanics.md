@@ -16,8 +16,9 @@
 > field is confirmed or removed.
 
 What a publisher owes a consumer once it has dropped something, and what to do with a subscriber that cannot
-keep up. A conflated stream stays contiguous while it loses events, so the covered range and the chain link
-are the only things that let a consumer detect a drop or join a snapshot. Read this when a slow subscriber is
+keep up. A conflated stream stays contiguous while it loses events, so a consumer detects a drop and joins a
+snapshot only through whatever the DECLARED CONTRACT gives it: continuity in the stream's own sequence space
+on a self-contained state feed, or raw coverage plus a predecessor rule on a raw-accounting feed. Read this when a slow subscriber is
 dropped or blocked, when an outbound queue bound is chosen, or when a coalesced event's fields are designed.
 Whether the stream may be conflated at all is decided in this skill's conflation legality reference.
 
@@ -35,13 +36,15 @@ Whether the stream may be conflated at all is decided in this skill's conflation
 
 ## What a conflated message must say about the raw stream
 
-A conflated stream is a second feed, not a cheaper rendering of the first, and the property that makes it
-usable is that a consumer can tell exactly which raw updates a conflated message accounts for. Which of the
-two mechanisms carries that property, and what neither of them permits, is settled in this skill's conflation
-legality reference; this file assumes that choice is made and works from it.
+A conflated stream is a second feed, not a cheaper rendering of the first, and what makes it usable is the
+contract it declares: a self-contained state feed continuous in its own space with its own snapshot, or a
+raw-accounting feed that names its raw coverage and gives a rule for checking that coverage continues. Which
+contract applies, and what neither permits, is settled in this skill's conflation legality reference; this
+file assumes that choice is made and works from it.
 
-Where you do publish a second counter, publishing both is the whole obligation, plus one sentence saying
-which one gap detection runs on and what the other is not valid for. CME does the negative half of this
+Where you publish a counter over the conflated stream, say in one sentence which counter gap detection runs
+on and what the other is not valid for. Publishing the counter is not the obligation discharged: it detects a
+lost conflated message and proves nothing about raw coverage. CME does the negative half of this
 explicitly on its conflated TCP group, which sends the per-instrument report sequence as a literal zero
 rather than as a number that looks usable; the detail is in the CME reference, and the shape is what to
 copy. A consumer that can see the counter is absent stops; a consumer handed a plausible wrong number does
@@ -49,10 +52,12 @@ not.
 
 ## The covered-range identifier
 
-A conflated event has to say which updates it stands for, or a consumer cannot join it to a snapshot and
-cannot detect a dropped event at all. Binance's spot diff depth stream is the worked example of the range
-half: its payload carries `U`, documented as "First update ID in event", and `u`, "Final update ID in event",
-on a stream described as depth updates "used to locally manage an order book". The chain half, a field
+A raw-accounting conflated event has to say which raw updates it stands for, or a consumer cannot join it to
+a raw-sequence snapshot and cannot detect a dropped raw interval. A self-contained state feed instead joins
+through its own sequence and snapshot and makes no raw-coverage claim. Binance's spot diff depth stream is the
+worked example of the raw-range contract: its payload carries `U`, documented as "First update ID in event",
+and `u`, "Final update ID in event", on a stream described as depth updates "used to locally manage an order
+book". The chain half, a field
 carrying the previous event's final update id, exists on the futures diff depth stream, and that field and the
 sentence describing each event as the absolute quantity for a price level were **not re-verified in this
 pass**, because the futures documentation URL redirected to the docs index on 2026-08-25. Treat the futures
@@ -67,12 +72,16 @@ arithmetic the publisher can widen at will.
 
 Three consequences for your own feed:
 
-- Publish the covered range on every conflated event, not only on the ones where conflation actually
-  happened. A field that appears sometimes is a field consumers do not code for.
-- Publish a chain link that a consumer can check against the previous event they received, not only a range
-  the publisher computes.
-- State the snapshot join in the same terms. A snapshot whose as-of point is expressed in a counter the
-  conflated stream does not carry cannot be joined to it at all.
+- Publish whichever continuity field your contract requires on EVERY event, not only on the ones where
+  conflation actually happened. A field that appears sometimes is a field consumers do not code for. On a
+  self-contained state feed that field is the stream's own sequence; on a raw-accounting feed it is the
+  covered raw range. **Covered ranges and raw predecessor links belong to the raw-accounting contract only.**
+  A state feed makes no claim about individual raw updates, so requiring a raw range on it asks for a field
+  its own recovery never reads.
+- Publish a link a consumer can check against the previous event they received, not only a value the
+  publisher computes for itself.
+- State the snapshot join in the same terms as the contract. A snapshot whose as-of point is expressed in a
+  space the stream does not carry cannot be joined to it at all.
 
 ## What conflation destroys even when it is legal
 
@@ -94,7 +103,9 @@ If depth is conflated under load and not otherwise, the feed's semantics are a f
 backtest built on quiet-period captures does not describe the feed they trade against at the open, and the
 difference appears exactly when their exposure is largest. Two acceptable designs, and no third:
 
-1. The stream is always conflated, at a stated interval, and every event carries its covered range.
+1. The stream is always conflated, at a stated interval, and every event carries the continuity field its
+   declared contract requires: the stream's own sequence on a self-contained state feed, or the covered raw
+   range on a raw-accounting feed.
 2. The stream is never conflated, and a consumer who cannot keep up is disconnected.
 
 A hybrid is acceptable only if the transition is itself an event on the stream, carrying the interval that is
@@ -106,7 +117,7 @@ now in force, so a consumer can see the semantics change rather than infer it fr
 |---|---|---|---|
 | Block the publisher | Everything | Only where a bounded buffer stops the backpressure before it reaches the sequencer or the matcher | The bound, and what happens when it is reached |
 | Disconnect the consumer | Nothing, until they recover | The default, provided the recovery path can absorb the reconnects the policy causes | The disconnect reason and the recovery entry point |
-| Conflate **state** (replace the pending update for a key with its latest absolute value) | The book at each observed instant, **not** the path between instants | The feed is absolute-quantity per key | That intermediate states are unobservable, plus a covered-range identifier per event |
+| Conflate **state** (replace the pending update for a key with its latest absolute value) | The book at each observed instant, **not** the path between instants | The feed is absolute-quantity per key | That intermediate states are unobservable; continuity and snapshot join in the declared contract's own sequence space |
 | Conflate **deltas** (drop some) | Nothing correct, ever | Never | n/a |
 
 Blocking is disqualified by where the backpressure ends, not by anything about the consumer. A publisher that
@@ -150,8 +161,8 @@ a conflation policy is behaving as documented.
 ## What to publish, and the tests
 
 Publish the conflation policy per stream: whether the stream is conflated at all, whether it is state or
-delta encoded, the interval or trigger, the queue bound, whether a conflated message carries a covered raw
-range or its own counter, the chain link, and the fact that intermediate states are unobservable. Publish
+delta encoded, the interval or trigger, the queue bound, which of the two contracts the stream offers and the
+continuity rule that checks it, the chain link, and the fact that intermediate states are unobservable. Publish
 the disconnect reason codes, the recovery entry point for each, and, where blocking is the chosen policy on
 a stream, the buffer that terminates the backpressure and what happens when it fills.
 
@@ -161,9 +172,10 @@ Three tests hold this in place:
   leaves the same state as applying it once. A new field that carries a delta fails this test on the day it
   is added, which is the day to catch it.
 - **Raw-stream equivalence test.** Publish one input twice, raw and conflated, under a burst that exceeds the
-  queue bound. Replay both into the same consumer implementation and assert that at every covered-range
-  boundary the state built from the conflated stream equals the state the raw stream reached at that same
-  point, and that every conflated event chains to the previous one. Comparing the conflated consumer against
+  queue bound. Replay both into the same consumer implementation and assert that at every comparison point
+  the contract defines, a covered-range boundary on a raw-accounting feed or a snapshot-plus-sequence point
+  on a self-contained state feed, the state built from the conflated stream equals the state the raw stream
+  reached at that same point, and that every conflated event links to the previous one. Comparing the conflated consumer against
   the publisher's own book is the weaker test, and it passes while the two are wrong together, because both
   are projections of the same code path. The raw stream is the only comparison that is not.
 - **Trade passthrough test.** Under the same burst, assert that the count and the sum of quantities of trade

@@ -33,8 +33,8 @@ mints an identifier others consume because you minted it. Suggested by `order_bo
 
 ## When not to
 
-- Trades on a venue you do not operate: a bot or client on Binance, Hyperliquid, Polymarket, Kalshi or
-  Limitless, `create_order`, `ccxt`, a venue SDK, a FIX order-entry session, or reconciliation against
+- Trades on a venue you do not operate: a bot or client on any external venue, `create_order`, `ccxt`,
+  a venue SDK, a FIX order-entry session, or reconciliation against
   somebody else's fills. All of it is `fin-exchange-integration`.
 - Publishes the feed rather than computing the book, so packet sequencing, snapshot joins, gap detection,
   A/B arbitration, conflation: `fin-market-data-publication`.
@@ -61,7 +61,7 @@ mints an identifier others consume because you minted it. Suggested by `order_bo
 2. Recovery reproduces what this engine **decided**: persisted immutable decisions, or replay under a
    journaled reducer identity and the configuration then in force.
 3. Determinism is demonstrated by a seeded replay that byte-compares the emitted sequence, never asserted.
-4. Five identifiers, five counters, none derived from another, each naming its own owner: command, match,
+4. Distinct identifier roles, none derived from another, each naming its own owner: command, match,
    execution, session, feed.
 5. Only enumerated `(state, event)` pairs are legal, on state re-read from the committed store, and every
    other pair is refused with a typed error the engine counts.
@@ -69,9 +69,9 @@ mints an identifier others consume because you minted it. Suggested by `order_bo
    eligibility, the auction tie-break, self-match scope and strategy.
 7. One band derivation, called from every session state, against **that instrument's own** reference price;
    a missing price rejects and a sentinel is never multiplied.
-8. Working-order, filled-position and settlement exposure are three named buckets; a fill **transfers**
-   between the first two; a resting limit order counts at its own limit price and a market order under a
-   rule of its own, never at a hoped-for fill price.
+8. Working-order, filled-position and settlement exposure are three named buckets; a fill **reduces the
+   first and creates the second**, which are not the same risk and never net. A working order's
+   contribution is per product, side, fee schedule, margin regime and rulebook, never one formula.
 9. Allocation is unfinished until the residue has an owner, and `Σ allocations == min(aggressing qty, Σ
    resting qty)` is asserted before an execution is emitted.
 10. An aggregate you publish is checked in the build you ship, and one that overflowed, saturated or failed

@@ -55,7 +55,7 @@ and half, it credits nothing at all: it reads a winning index that a split resol
 have. It charges its fees in the wrong asset too, and never reserves for them.
 
 ```bash
-python3 examples/prediction-market-bot/run_tests.py    # 86 tests, offline
+python3 examples/prediction-market-bot/run_tests.py    # 93 tests, offline
 ```
 
 ## Install
@@ -122,17 +122,16 @@ What actually runs, on every push:
 
 | Check | What it proves |
 | --- | --- |
-| 86 example tests | the worked prediction-market bot behaves as described, offline |
-| 63 Decimal cases in 13 fixtures | the arithmetic behind each corrected rule, with at least one case per fixture written to fail against the rule it replaced |
-| 12 behavioral cases | each planted defect is real: the hidden oracle fails on it and passes on the reference fix, with no model involved |
-| 198 installer tests | the routing-block installer does what [SECURITY.md](SECURITY.md) says, on Linux and macOS |
-| 82 routing lint cases | a description has not lost the vocabulary of the tasks it owns |
+| example tests | the worked prediction-market bot behaves as described, offline |
+| installer tests | the routing-block installer does what [SECURITY.md](SECURITY.md) says, on Linux and macOS |
+| routing lint cases | a description has not lost the vocabulary of the tasks it owns |
 
 What is **not** proven, stated plainly:
 
-- **No published score against a baseline.** `scripts/eval_runtime.py` runs the behavioral cases
-  against a real agent with skills on and off, but no paired result is published here. Treat any
-  claim that these skills improve an agent as unproven until you run it yourself.
+- **No model-based effectiveness benchmark, and no skills-on/off baseline.** Nothing here measures
+  whether these skills change what an agent produces. There is no such harness in this repository
+  and no published result. Treat any claim that these skills improve an agent as unproven. A proper
+  runtime evaluation is deferred to a separate future change.
 - **The routing lint is a lint, not a routing measurement.** It scores word overlap between a task
   and eight descriptions. No model runs, nothing observes an agent choosing a skill, and 124
   over-activations are recorded in the fixture and not charged. A green result says a description
@@ -142,9 +141,6 @@ What is **not** proven, stated plainly:
 - **Some provider claims are unverified and say so.** A reference that could not be re-read against
   its primary source carries `verified_at: not established` rather than a date that would imply
   someone checked.
-
-[docs/evaluation.md](docs/evaluation.md) describes the three layers and what each one cannot tell
-you.
 
 ## Two advanced skills, opt-in and BETA
 

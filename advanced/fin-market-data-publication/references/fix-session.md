@@ -49,7 +49,8 @@ that the use of Sequence Reset - Reset may result in the possibility of lost mes
 Fill mode)."
 
 Treat that as a rule about your own publisher, not as advice to consumers. Answering a resend with a plain
-reset is the FIX-session equivalent of minting a new session identity on a multicast feed: it closes the gap
-by declaring the content unrecoverable, and every consumer with a position from the skipped range now
-has one derived from nothing. It belongs in a runbook for an unrecoverable store, with an alert, never in
+reset closes the gap by declaring the content unrecoverable: the numbering moves on, the skipped messages are
+never sent, and every consumer with a position from the skipped range now has one derived from nothing. It
+does not create a new addressable session, and nothing about the FIX identifiers changed, so there is no
+second place a consumer can go to ask for what it missed. It belongs in a runbook for an unrecoverable store, with an alert, never in
 the normal resend path.

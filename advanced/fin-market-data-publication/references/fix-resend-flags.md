@@ -58,10 +58,21 @@ you publish has to state when it happens and what remains recoverable across it.
 incident, and it is worth an explicit operational record for the same reason a market-data session restart
 is: it is the moment content stopped being recoverable through the ordinary path.
 
-A new identity does not destroy what came before; it moves it out of the identity you are now on, so
-anything still unrecovered is reachable only by going back to the old one while the new session restarts
-numbering at one. The operational instinct under load is always to restart, and restarting converts a
-bounded gap into a recovery problem in a session nobody is watching any more. Say so in your own
+**A sequence reset changes sequence state inside the session identifiers you already have.** `ResetSeqNumFlag`
+restarts `MsgSeqNum` at one. `SenderCompID`, `TargetCompID` and the rest are unchanged, so the session is the
+same session and there is no new thing to address. A counter that returns to one leaves two different messages
+numbered `1`, and a consumer that dedupes on the number alone cannot tell them apart.
+
+**There is no old identity to go back to.** Whatever was unrecovered before the reset is not sitting in a
+second session waiting to be re-requested; it is unreachable through the ordinary path, because the only
+identifiers that exist now number the messages after the reset. Do not design a recovery that returns to a
+previous logical identity unless you built one.
+
+If you need the two sides of a reset told apart, define a **logical epoch** explicitly. It is valid only when
+your publisher defines it, persists it, exposes it to consumers beside the sequence, and can address it during
+recovery. All four, or it is not an epoch, it is a hope. Do not infer one from the fact that a reset happened,
+and do not assume the counterparty inferred the same thing. The operational instinct under load is always to
+restart, and restarting converts a bounded gap into content nobody can ask for. Say so in your own
 specification, in whatever terms your protocol uses.
 
 ## Duplicate and resend flags

@@ -57,6 +57,15 @@ class IllegalTransition(RuntimeError):
     pass
 
 
+class SequenceAnomaly(RuntimeError):
+    """An unseen event below the watermark.
+
+    The watermark only advances over a contiguous run, so nothing under it was skipped.
+    An unseen event arriving there means the stream or our own state is wrong, and the
+    honest response is to stop rather than to drop a fill and keep trading.
+    """
+
+
 class UnknownFeeAsset(RuntimeError):
     pass
 
@@ -101,6 +110,15 @@ class SafeBot:
     by_order_id: dict = field(default_factory=dict)
     seen_events: set = field(default_factory=set)
     watermark: dict = field(default_factory=dict)
+    # The highest sequence this process has applied with NO gap beneath it. The per-entity
+    # watermark above is about staleness within one order or market; this one is about
+    # completeness of the stream, and only the stream carries a contiguous sequence. It is
+    # the durable number: a reconnect asks the venue for everything after it.
+    stream_watermark: int = 0
+    # Out-of-order arrivals, by sequence, held until the gap in front of them closes.
+    # Deliberately NOT durable. Losing it on restart costs nothing because the stream
+    # watermark never advanced past the gap, so the backfill replays the same events.
+    pending_events: dict = field(default_factory=dict)
     settled: set = field(default_factory=set)
     settlement_credit: dict = field(default_factory=dict)
     provisional_credit: dict = field(default_factory=dict)
@@ -320,24 +338,75 @@ class SafeBot:
         if event_type not in SOURCE:
             raise IllegalTransition(f"unknown event type: {event_type!r}")
         event_id = ev["event_id"]
+        seq = ev["seq"]
+
+        # A KNOWN duplicate is a redelivery of something already applied. It is the only
+        # event that may be dropped, because dropping it changes nothing.
         if event_id in self.seen_events:
             return "DUPLICATE"
-        entity = ev.get("order_id") or ev["market_id"]
-        key = (SOURCE[event_type], entity)
-        if ev["seq"] <= self.watermark.get(key, 0):
+
+        # An UNSEEN event id at or below the stream watermark is a REDELIVERY UNDER A NEW
+        # IDENTITY, not a lost event. A provider can generate a second event object, with
+        # its own id, describing a transition it already reported. Suppressing it is safe
+        # here for one reason only: the watermark below never advances over a gap, so a
+        # sequence at or beneath it was definitely applied.
+        #
+        # That reason is what the first version of this method lacked. It advanced the
+        # watermark to whatever arrived, so a higher sequence arriving first pushed the
+        # mark past an event that had never been seen, and the real event was then dropped
+        # as STALE when it turned up. Same label, opposite meaning.
+        if seq <= self.stream_watermark:
             self.seen_events.add(event_id)
             return "STALE"
 
+        # A gap in front of this event. It is legitimate and unseen, but it is not next.
+        # Buffer it and leave the watermark where it is. Advancing here is exactly what
+        # made the event filling the gap look stale when it finally arrived.
+        if seq > self.stream_watermark + 1:
+            self.pending_events[seq] = ev
+            return "BUFFERED"
+
+        self._apply_in_order(ev)
+        self._drain()
+        return "APPLIED"
+
+    def _apply_in_order(self, ev: dict) -> None:
+        event_type = ev["type"]
+        entity = ev.get("order_id") or ev["market_id"]
+        key = (SOURCE[event_type], entity)
+        if ev["seq"] <= self.watermark.get(key, 0):
+            raise SequenceAnomaly(
+                f"{key} seq {ev['seq']} is not above its entity watermark "
+                f"{self.watermark.get(key, 0)}"
+            )
         if event_type == "MARKET_DETERMINED":
             self._on_determined(ev)
         elif event_type == "MARKET_RESOLVED":
             self._on_resolved(ev)
         else:
             self._on_order_event(ev)
-
         self.watermark[key] = ev["seq"]
-        self.seen_events.add(event_id)
-        return "APPLIED"
+        self.stream_watermark = ev["seq"]
+        self.seen_events.add(ev["event_id"])
+
+    def _drain(self) -> int:
+        """Apply whatever the closed gap just made contiguous."""
+        applied = 0
+        while True:
+            nxt = self.pending_events.pop(self.stream_watermark + 1, None)
+            if nxt is None:
+                return applied
+            self._apply_in_order(nxt)
+            applied += 1
+
+    def open_gap(self):
+        """The sequence the stream is waiting on, or None when it is complete.
+
+        A caller about to act on position or PnL asks this first. A non-None answer means
+        the state is known to be incomplete, and trading on it is trading on a number the
+        venue does not agree with.
+        """
+        return self.stream_watermark + 1 if self.pending_events else None
 
     def apply_all(self, events) -> None:
         for ev in events:

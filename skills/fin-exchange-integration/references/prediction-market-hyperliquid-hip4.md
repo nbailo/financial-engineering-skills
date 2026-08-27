@@ -106,8 +106,21 @@ millisecond timestamp on the block of the transaction". So resolve a timeout by 
 action under its original nonce, which the venue either applies once or rejects as used. Never sign a fresh nonce
 for a value-moving action whose outcome you are unsure of: that is a second instruction, and it can apply twice. The
 replay holds only while that nonce is still above the smallest of the signer's hundred and still inside the time
-window, and only while the signing wallet lives, since "previously signed actions can be replayed once the nonce set
-is pruned". Outside those conditions the replay is not available to you.
+window. Outside those conditions the replay is not available to you, and you resolve by querying rather than by
+signing again.
+
+**Pruning is a replay hazard, not an expiry.** The venue states that "previously signed actions can be replayed once
+the nonce set is pruned". Read that as written: pruning removes the record that made a nonce single-use, so an old
+signed action becomes acceptable again. The rule that follows is about the ADDRESS, not the calendar. **Never reuse
+an API-wallet address after it has been deregistered or after its nonce set has been pruned.** A fresh registration
+at a previously used address inherits every signed action ever produced for it, and anyone holding one of those
+payloads can submit it against the new registration.
+
+Do not treat wallet deactivation or expiry as replay protection. Expiry ends the wallet's authority to sign
+something new; it does nothing about bytes that were already signed, which remain valid input to whatever will
+accept them. The protections are the two above: a nonce that is still in the set, and an address that is never
+reused. For anything signed and unresolved, keep the exact signed action and its nonce, and resolve that identity
+against the venue.
 
 **Correctly attributed.** At most once still leaves the question of whether it happened, and your position and cost
 basis need an answer. A measured delta answers it in one case only: where attribution over the measurement window is

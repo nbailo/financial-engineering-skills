@@ -60,8 +60,11 @@ conflation, a `top_of_book` aggregate that leaves the process.
 - **A snapshot is the book as of a stated point, stamped with the copy.**
 - **Two paths carrying one sequence space are byte-identical per sequence number.**
 - **Recovery must terminate, and truncation is where it stops terminating.** Specialises *durable dedupe*.
-- **Conflation is legitimate only where it is equivalent, bounded and recoverable:** a consumer can
-  tell exactly which raw updates a conflated message accounts for.
+- **A conflated stream declares which of two contracts it offers, and a counter of its own proves
+  neither.** A *self-contained state* feed carries its own sequence and its own snapshot, and a consumer
+  recovers by re-reading state, never by counting raw events. A *raw-accounting* feed states the raw range
+  each message covers and is continuous in that range. An independent counter over conflated messages says
+  only that no conflated message was lost; it says nothing about which raw updates any of them accounts for.
 - **The raw print is one fact; eligibility is several filters over it, in several documents.**
 - **Four questions, four measurements, and one timestamp cannot answer another's.**
 - **The aggregate you publish is checked on the path that publishes it,** and a corrupted or saturated
@@ -76,7 +79,7 @@ A literal below appears in the code, the repo or the task text: load that refere
 
 - [feed-spec](references/feed-spec.md): an explicit design, review or ship-readiness task, and only then: the specification consumers read
 - [feed-versioning](references/feed-versioning.md): a live feed gains a field, a published number is tightened, a constant gains data
-- [sequencing-obligations](references/sequencing-obligations.md): a session identity you mint, the gap-detection counter, a timestamp
+- [sequencing-obligations](references/sequencing-obligations.md): a session identity you mint, the gap-detection counter, a timestamp, `snapshot`, `as_of`, a snapshot and incremental join, a sequence reset, a heartbeat
 - [publication-obligations](references/publication-obligations.md): one event fans out to several sinks, no record of what each sink got
 - [prints-and-eligibility](references/prints-and-eligibility.md): `ITCH`, `Printable`, session volume, fee tier, index input
 - [conflation-legality](references/conflation-legality.md): `conflate`, `coalesce`, a last-value cache, a delta field on a coalesced stream

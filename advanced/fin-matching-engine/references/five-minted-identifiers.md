@@ -1,36 +1,50 @@
-# Five identifiers, five counters, five named owners
+# The identifier ownership matrix
 
-There are five identifiers, they are distinct, each has its own counter, and **each has exactly one owner
-named in the design**. The owners are not all the matcher: the matcher owns the identity of what it decided,
+These identifiers are distinct roles, each with its own counter, and **each with exactly one owner named in
+the design**. The roles are what matters; a design with more of them because it separates two things this one
+merged is not wrong for the count. The owners are not all the matcher: the matcher owns the identity of what it decided,
 and a sequencer, a session layer or a publisher legitimately owns the rest. What binds is that the owner is
 named, that no identifier is derived from another, and that any identifier a replay must reproduce is
 generated from journaled state inside the deterministic region. The collapse is only ever visible in numbers
 you have already published, which is what makes it unrecoverable.
 
-## Five counters, and one owner each
+## Contents
 
-**Five counters, five definitions, five names in the code, and one named owner each**, and none is derived
-from another by reuse or by cast, because collapsing two is unrecoverable once consumers have booked
-them. The **command sequence** is one inbound command's place in the durable input log, internal to replay.
+- One owner each, and the count is not the point
+- The identifier roles, and where each is assigned: the matrix, and the core that assigns no wire sequence
+
+## One owner each, and the count is not the point
+
+**Each identifier has its own definition, its own name in the code, and exactly one named owner**, and none is
+derived from another by reuse or by cast, because collapsing two is unrecoverable once consumers have booked
+them. Count them if you like; a design that has six because it separates two things this one merged is not
+wrong for having six. What is wrong is an identifier with no owner, or two roles sharing one counter.
+
+The **command sequence** is one inbound command's place in the durable input log, internal to replay. The
+**engine event sequence** is the order the core made its decisions, which is a different thing from the order
+commands arrived and from the order anything was published.
 The **match id** is one crossing event, carried identically by both sides and by any later correction of it.
 The **execution id** is one side's leg of one match, the record a participant books. The **private session
 sequence** numbers what one order-entry session was told, and is visible to that session alone. The **public
 feed sequence** is the position in the stream you publish, which every consumer gap-detects and dedupes on. The table
-below gives the five with the counter each comes from.
+below gives each role with the counter it comes from.
 
-## The five identifiers, and where each is assigned
+## The identifier roles, and where each is assigned
 
 Every identifier a replay has to reproduce is an **input-derived output**: generated inside the deterministic
 region, from journaled state only. That covers the match id, the execution id and anything else the emitted
 sequence carries. An identifier assigned outside that region, a session counter on an outbound path being the
 usual one, is not exempt from having an owner; it is exempt only from being reproduced by the core's replay,
-and its own owner says how it is recovered. There are **five**, they are **distinct**, and each has its own
-counter. Collapsing any two is unrecoverable once consumers have booked them, because the collapse is only
+and its own owner says how it is recovered. **Wire sequencing stays at the publisher boundary**: the number a
+consumer gap-detects on is assigned where the bytes leave, by the publisher, and pulling it into the core
+couples the core's replay to a transport concern that has nothing to do with matching. They are **distinct**,
+and each has its own counter. Collapsing any two is unrecoverable once consumers have booked them, because the collapse is only
 visible in the numbers you already published.
 
 | Identifier | Scope | Owner, and where it assigns | What breaks if it doubles as another |
 |---|---|---|---|
 | **command sequence** | the engine's input log | by the sequencer, before the book is touched | replay loses the total order over commands, which is the thing replay is |
+| **engine event sequence** | the core's own output log, in decision order | in the core, as each decision is journaled | the order decisions were made stops being recoverable, and a replay can reproduce a different interleaving that is equally consistent with the inputs |
 | **match id** | one crossing event | in the core, once per match | the two sides of a trade cannot be paired, and a correction cannot name what it corrects |
 | **execution id** | one side's leg of one match | in the core, once per leg | a participant cannot dedupe its own fills, and a bust cannot address one leg |
 | **private session sequence** | one order-entry session | on that session's outbound path | one participant's gap detection fires on traffic that was never addressed to it |
@@ -39,37 +53,49 @@ visible in the numbers you already published.
 The last two are the pair most often collapsed, because both read as "the sequence number". They advance at
 different rates by construction: a session numbers what that participant was told, the feed numbers what
 every consumer was told, and neither is a function of the other. Note what the Owner column does and does not
-say. Nothing here requires one component to assign all five; it requires each of the five to have exactly one
+say. Nothing here requires one component to assign them all; it requires each role to have exactly one
 component that does, written down, so that two components never advance the same counter and no counter is
 left without an owner when a deployment is split.
 
 ```rust
 // inside the core, after the command is journaled and dequeued
-struct Ids { next_cmd: u64, next_match: u64, next_exec: u64, next_feed: u64 }
-//   plus one next_session counter per live session, keyed by session id, advanced only by
-//   messages sent to that session; it is never derived from next_feed.
+struct Ids { next_cmd: u64, next_event: u64, next_match: u64, next_exec: u64 }
+//   The core assigns NO wire sequence. The publisher owns that counter at the publish
+//   boundary, and the session layer owns one counter per live session, keyed by session id
+//   and advanced only by messages sent to that session. Neither is derived from the other.
 
 fn on_command(ids: &mut Ids, book: &mut Book, cmd: &Command, now: Nanos) -> Vec<Event> {
     let cmd_seq = ids.next_cmd; ids.next_cmd += 1;      // ordering, not an outbound identity
+    let mut out = vec![];
     match validate(cmd, book) {
-        Err(reason) => vec![Event::Rejected { cmd_seq, cloid: cmd.cloid(), reason }],
+        Err(reason) => {
+            // a reject is a journaled engine event and takes an event sequence like any other
+            let event_seq = ids.next_event; ids.next_event += 1;
+            out.push(Event::Rejected { event_seq, cmd_seq, cloid: cmd.cloid(), reason });
+        }
         Ok(()) => {
-            let mut out = vec![];
-            let match_no = ids.next_match; ids.next_match += 1;   // ONE per crossing event
-            for fill in book.match_order(cmd, now) {
-                let exec_id = ids.next_exec; ids.next_exec += 1;  // one per leg
-                out.push(Event::Execution { feed_seq: { let s = ids.next_feed;
-                                                        ids.next_feed += 1; s },
-                                            cmd_seq, match_no, exec_id, ..fill });
+            // ONE command can cross SEVERAL resting orders, and each crossing is its own
+            // match. Allocating the match id before this loop gives every crossing the same
+            // id, and a correction can then no longer name which one it corrects.
+            for crossing in book.match_order(cmd, now) {
+                let match_id = ids.next_match; ids.next_match += 1;   // one per crossing
+
+                // a crossing has one leg per participant, and a leg is the record that
+                // participant books and dedupes on, so each leg takes its own execution id
+                for leg in crossing.legs() {           // aggressor and resting side
+                    let exec_id  = ids.next_exec;  ids.next_exec  += 1;
+                    let event_seq = ids.next_event; ids.next_event += 1;   // journal order
+                    out.push(Event::Execution { event_seq, cmd_seq, match_id, exec_id, ..leg });
+                }
             }
-            out
         }
     }
+    out                        // no wire sequence anywhere above: the publisher owns that
 }
 ```
 
 - **Whether a reject consumes a sequence number is a protocol decision, not a correctness invariant**, and
-  **which of the five it consumes is part of that decision**. A reject is normally a private-session message
+  **which counter it consumes is part of that decision**. A reject is normally a private-session message
   and no business of the public feed; the example above gives it a command sequence and no feed sequence.
   What is invariant is that the rule is published, total and reproducible under replay, since a consumer can
   only distinguish a number you never assigned from a message it lost if you told it the convention. Pin it

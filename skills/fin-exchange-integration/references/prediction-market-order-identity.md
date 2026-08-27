@@ -39,7 +39,10 @@ uniqueness", alongside `metadata` and `builder` as bytes32 fields. Fees are, quo
 time, not embedded in your signed order." The consequence for retry handling is direct, and it is an inference from those
 quoted facts rather than a documented sentence: **re-signing a timed-out submission produces a new timestamp, therefore a
 different signed order, therefore a second order.** The retry path and the duplicate-order path are the same path. Sign once,
-persist the signed payload with its timestamp, and resend those exact bytes or query, never re-sign.
+persist the signed payload and its locally computed hash BEFORE the POST, then resolve by querying that
+identity. Never re-sign, and do not resend the stored bytes either while the venue documents no idempotency
+for a repeated POST: an unresolved query leaves the operation UNKNOWN, which is held and escalated, not
+retried.
 
 **Kalshi's client order id has no documented semantics.** The create-order page lists `client_order_id` as optional and
 carries no description of it, no statement about idempotency, and no statement about what happens when the same value is sent

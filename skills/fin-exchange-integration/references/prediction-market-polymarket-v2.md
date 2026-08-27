@@ -153,8 +153,11 @@ back is a row that does not exist in the one case it was written for.
 again.** A re-signature over a struct with any differing member, and the timestamp on its own is enough,
 produces a different digest, so the venue treats it as a new instruction and you can hold two positions where
 you intended one. Query the stored hash first, and let the answer decide. If the venue knows the hash, you are
-done, and its state is the state. If the venue does not know it, resending the identical stored bytes is at
-worst the same order, where a fresh signature is certainly a different one.
+done, and its state is the state. **If the venue does not know it, the operation is UNKNOWN and stays there.**
+Do not resend the stored bytes to find out. No page says what a second POST of an identical payload does, so
+any belief that a resend is harmless is a guess, and the case it is wrong in is the case that costs you a
+second position. Hold the exposure as though the order filled, stop sending for that market, and escalate. The
+unknown is resolved by a later query, by the venue, or by a human; it is never resolved by sending.
 
 **The hash is meaningful only together with the contract it was signed for.** `verifyingContract` sits in the
 EIP-712 domain, and the standard and negative-risk exchanges carry different addresses, so one struct signed
@@ -431,8 +434,12 @@ without checking first:
   chain 137 and Amoy chain 80002 carry the same value. The pUSD page gives no token address.
 - Whether the venue constrains or deduplicates a repeated `metadata` value.
 - Whether a repeated POST of the identical signed payload is idempotent. The place-orders page states no
-  idempotency guarantee, and no page fetched says what a second identical POST does. Query the stored hash
-  before you resend, and treat the resend as the fallback rather than the recovery.
+  idempotency guarantee, and no page fetched says what a second identical POST does. **Do not resend while that
+  is unestablished.** Persist the exact signed bytes and the order hash you compute locally from them BEFORE the
+  POST, then resolve by querying that hash. If the query cannot establish whether the order exists, the
+  operation stays UNKNOWN: hold the exposure as though it filled, stop sending for that market, and escalate.
+  An unverified resend under a struct the venue may treat as a second order is how one intent becomes two
+  positions.
 - What `GET /data/order/{orderID}` returns for a hash the venue has never seen. Whether that is a 404, an empty
   body or an error decides how your recovery path is allowed to read "never placed", so establish it against
   the venue before a recovery path depends on it.

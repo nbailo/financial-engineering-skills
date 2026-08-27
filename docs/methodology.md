@@ -46,11 +46,31 @@ probes that never passed and the ones where repetitions disagreed.
 
 ## What is not measured
 
-The control run is a working artefact and is not published in this repository, so take it as method rather
-than as evidence. No head-to-head score against a baseline is published or claimed; `docs/evaluation.md`
-says what the checked-in layers do and do not prove. What you can check is the primary source under each
-rule, the provenance block on the references that carry one (`docs/providers.md`), and the worked examples
-in `examples/`.
+What runs in this repository is deterministic: the worked-example tests under `examples/`, and a lexical
+routing lint over the skill descriptions. The lint scores word overlap between a task and each description.
+No model runs in either one.
+
+No model-based effectiveness benchmark exists here, and no skills-on/off baseline is published or claimed.
+Nothing in this repository measures whether an agent produces better work with these skills than without
+them. A proper runtime evaluation system is deferred to a separate future change.
+
+What you can check today is the primary source under each rule, the provenance block on the references that
+carry one (`docs/providers.md`), and the worked examples in `examples/`.
+
+## Deferred, and deliberately not in this change
+
+Named here so they are tracked rather than forgotten. None is started.
+
+- **A runtime evaluation system.** Model-based effectiveness measurement, a skills-on/off paired baseline,
+  and a behavioral fixture dataset with hidden oracles. A prototype existed and was removed from this change
+  because it was unfinished; nothing here measures agent behaviour today.
+- **Token budgeting.** The loaded-path band, the ratchet and how advanced paths are accounted for.
+- **Public and private assurance documents.** What is published about how the rules are checked, and what
+  stays internal.
+- **The routing-block installer**, including its time-of-check to time-of-use behaviour on the files it edits.
+- **Installation, release policy and supply chain.** Install commands, commit-pinning guidance, release and
+  tag wording, `SECURITY.md`, the secret scanner, workflow permission policy, Dependabot, the plugin
+  manifests and distribution, and the provider-drift workflow. Untouched here on purpose.
 
 ## The output contract
 

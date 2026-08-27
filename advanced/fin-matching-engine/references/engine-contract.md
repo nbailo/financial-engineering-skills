@@ -17,11 +17,14 @@ ENGINE CONTRACT
 - Recovery:     persisted decisions at <f:l> | reducer+config pinned by <version+digest+build> at <f:l>
 - Replay test:  <test name that replays the command stream and byte-compares the emitted sequence>
 - Publish:      <file:line where the send result is bound and checked>
-- Identifiers:  cmd-seq · match · exec · session-seq · feed-seq, five counters, owner named per counter
+- Identifiers:  cmd-seq · event-seq · match · exec · session-seq · wire-seq, owner named per counter
 - Rulebook:     <venue-specific answer this change depends on> = <the answer>, pinned by <test name>
 - STP:          scope <published scope> · strategy <published strategy>, read from <config source>
-- Exposures:    working <f:l>, limit orders at own limit, market orders <rule> · filled <f:l> ·
-                settlement <f:l|none>; transfer atomic | derived at <f:l>
+- Exposures:    working <f:l>, derivation <named product-specific rule> from side, fee schedule,
+                margin regime and rulebook <the four inputs, each named>, market orders <rule> ·
+                filled <f:l> · settlement <f:l|none>; aggregation measure <the common risk,
+                margin or liability measure the three convert into before any sum>;
+                quantity moves working -> filled atomically | derived at <f:l>
 - Auction:      cutoff at <file:line> | bounded batch, max <n> passes falling back to the cutoff at <f:l>
 - Emit bound:   <name>=<value> at <file:line>; trip flag reset owner: <component, not the emitter>
 - Halt:         <incident gate | market-state halt | quiesce> level <1-6>; cancel gated by <flag> at <f:l>
@@ -48,7 +51,7 @@ claim in the block checkable, so this slot is the one to fill first and the one 
 rest to assertions. The publish slot wants the line where the send result is bound, because the discarded
 result is the failure the outbox exists for.
 
-**Identifiers, rulebook and STP.** Five counters with one named owner each, a venue-specific answer named with
+**Identifiers, rulebook and STP.** One named owner per counter, a venue-specific answer named with
 the test that pins it, and the two published halves of self-match prevention. The identifiers slot is not
 asking whether the matcher assigned all five; it is asking which component owns each, so that no counter has
 two writers and none is left ownerless when a deployment splits. Each of these is a place where a value taken

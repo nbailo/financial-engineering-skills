@@ -125,23 +125,40 @@ there. The epoch is one mechanism for that check, and what makes it work is wher
 that matters rather than at whatever handed out the lease:
 
 ```sql
--- the effect is conditional on still owning the number; the resource does the checking
+-- the local transition is conditional on still owning the number
 UPDATE sequence_allocation
-   SET state = 'broadcasting', attempt_id = :attempt
+   SET state = 'signing', attempt_id = :attempt
  WHERE chain = :c AND sequence = :n AND state = 'allocated'
    AND owner_epoch = :epoch;   -- rowcount 0: a later owner holds it. Refuse; do not retry, do not reallocate
 ```
 
-**Failures here are typed and fail closed.** A signer that cannot read its allocation row, cannot show its
-epoch is current, or sees that conditional write affect no rows must refuse to sign or refuse to broadcast and
-raise an error the caller can tell apart from a transport error, whatever you name it. A generic exception, a
-bare retry or a silent skip re-enters the allocator and signs a second transaction at a number another signer
-owns.
+**What that condition does and does not do.** It stops a stale owner making a further local transition, and it
+stops it obtaining NEW signing authority for that number. It does not make an already-signed transaction
+conditional on anything: signed bytes are valid wherever they are submitted, and no node consults your
+database before accepting them. A stale signer that already holds signed bytes can broadcast them, and a
+mempool that has them will keep them. The condition therefore has to be enforced **before the bytes exist**,
+at the boundary that produces them.
 
-**Recovery reads the record, then the chain.** Rows in `broadcasting` resolve by sequence plus the full set of
-handles recorded for them; rows in `allocated` with no signature are still owned and may be re-signed under a
-bumped epoch; the next free number is the durable ceiling, cross-checked against the chain, never inferred
-from a balance or from a count that in-flight transactions do not move.
+**Ownership is checked at the signer boundary, before the signed bytes are released.** The check belongs where
+signing happens, whether that is an HSM, a KMS or a custody API: read the allocation and the epoch, and release
+a signature only if this signer still owns that number. Where the signer can enforce it itself, a policy or a
+per-key authorisation is stronger than an application check in front of it, because the application check can
+be bypassed by anything that can reach the key. Checking after the signature is produced is checking after the
+thing you were trying to prevent has already happened.
+
+**Failures here are typed and fail closed.** A signer that cannot read its allocation row, cannot show its epoch
+is current, or sees that conditional write affect no rows must refuse to sign, before any signature exists, and
+raise an error the caller can tell apart from a transport error. A generic exception, a bare retry or a silent
+skip re-enters the allocator and signs a second transaction at a number another signer owns.
+
+**Once signed, the question is no longer ownership but identity.** The exact transaction identity, the hash or
+whatever the chain calls it, is persisted with the bytes before broadcast, and recovery resolves that identity
+against the chain. Nothing is re-signed at that number while an identity for it may be live: a second signature
+over a different payload at the same sequence is a race for inclusion whose loser is silently discarded, which
+is how the same payout goes out twice or vanishes. Rows in `signing` or `broadcast` resolve by sequence plus
+every recorded handle; rows in `allocated` with no signature are still owned and may be re-signed under a
+bumped epoch; the next free number is the durable ceiling, cross-checked against the chain, never inferred from
+a balance or from a count that in-flight transactions do not move.
 
 Fireblocks solves the same problem by serialising and documents the cost: it "can only process a single
 transaction per blockchain standard per vault account". The throughput ceiling is therefore one in-flight

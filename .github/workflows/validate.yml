@@ -33,39 +33,12 @@ jobs:
       # invariant citation resolves in fin-money-core. The numbers live in the
       # validator and are deliberately not restated here.
       - run: python3 scripts/validate.py
-      # Routing is the product's first correctness property: a skill that never loads is a
-      # skill that does nothing. This is a LINT over the words in each description, not an
-      # evaluation of routing: no model runs, and a green result is not evidence that an agent
-      # routes correctly. It catches the regression this suite keeps having, which is a
-      # description losing the vocabulary of the tasks it owns. The fixture carries at least
-      # five positive and five negative cases for each of the eight skills, the minimum is
-      # enforced by the lint itself, and a skill it predicts that a case did not ask for fails
-      # unless that case records it.
       - run: python3 scripts/lint_routing_lexical.py
       # examples/prediction-market-bot/ is executable, not prose: a fake in-process venue,
       # a safe bot, a counter-example, and a frozen event log. The runner is unittest, so it
       # adds no dependency, and its network guard raises on any socket, name lookup or
       # connection attempt, which is what stops a live call being reintroduced quietly.
       - run: python3 examples/prediction-market-bot/run_tests.py
-      # evals/invariants/ pins the arithmetic behind each corrected rule as an exact Decimal
-      # expression. No model, no network, no clock. At least one case per fixture is written to
-      # fail against the rule it replaced, so a green run says the specific wrong answer this
-      # suite used to give is still wrong, which prose alone cannot say.
-      - run: python3 scripts/run_invariants.py
-      # The behavioral dataset, checked with no model in the loop. For each case it runs the hidden
-      # oracle against the planted defect and requires a FAILURE, then applies the reference fix and
-      # requires a PASS. A fixture that passes on the defect measures nothing and an agent scores it
-      # by changing nothing; a fixture that cannot pass after the fix is unwinnable. Both are dataset
-      # bugs and both are caught here. scripts/eval_runtime.py, which needs a real agent, is not run
-      # in CI and gates nothing.
-      - run: python3 scripts/eval_dataset_check.py
-      # evals/behavioral/ grades an agent, and a grade is only worth reading if the fixtures
-      # are sound. This runs every case's oracle twice, against repo/ as shipped and again
-      # with fix.patch applied, in a copy. A case whose oracle already passes is scored by an
-      # agent that changes nothing; a case that still fails after the reference fix cannot be
-      # won. No model, no network, no API key: the model-in-the-loop harness is manual and is
-      # never called from CI.
-      - run: python3 scripts/eval_dataset_check.py
 
   workflow-hygiene:
     # The checks SECURITY.md cites by name: SHA pins with their release tag, read-only

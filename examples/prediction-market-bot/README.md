@@ -6,7 +6,7 @@ network, there is no credential of any kind, and there is no live mode to switch
 
 ```
 python3 examples/prediction-market-bot/demo.py        # watch the two disagree
-python3 examples/prediction-market-bot/run_tests.py   # 86 cases, standard library only
+python3 examples/prediction-market-bot/run_tests.py   # 93 cases, standard library only
 ```
 
 `pytest examples/prediction-market-bot` runs the same cases where pytest is installed. The
