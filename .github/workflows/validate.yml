@@ -39,6 +39,17 @@ jobs:
       # adds no dependency, and its network guard raises on any socket, name lookup or
       # connection attempt, which is what stops a live call being reintroduced quietly.
       - run: python3 examples/prediction-market-bot/run_tests.py
+      # The behavioral eval dataset, checked with no model in the loop. For each case it runs the
+      # hidden oracle against the planted defect and requires a FAILURE, then applies the reference
+      # fix and requires a PASS. A fixture that passes on its own defect measures nothing and a
+      # model scores it by changing nothing; one that cannot pass after the reference fix cannot be
+      # won. Both are dataset bugs and both are caught here.
+      - run: python3 scripts/check_eval_dataset.py
+      # The paired evaluator's own tests, with every HTTP response mocked. They also prove no real
+      # OpenAI call can happen: socket.socket is replaced before the module is imported, so a code
+      # path that reaches for the network raises instead of dialling. scripts/run_patch_eval.py is
+      # paid and manual, and nothing in CI invokes it.
+      - run: python3 -m unittest tests.test_patch_eval
 
   workflow-hygiene:
     # The checks SECURITY.md cites by name: SHA pins with their release tag, read-only
