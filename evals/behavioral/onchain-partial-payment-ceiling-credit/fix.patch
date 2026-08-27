@@ -1,0 +1,20 @@
+diff --git a/repo/deposits.py b/repo/deposits.py
+index 6b3caa6..0d335b3 100644
+--- a/repo/deposits.py
++++ b/repo/deposits.py
+@@ -25,8 +25,13 @@ class DepositBook:
+ 
+ 
+ def credited_drops(tx):
+-    """How many drops this payment is worth to the customer."""
+-    return int(tx["Amount"])
++    """How many drops this payment is worth to the customer.
++
++    The ledger's own metadata records what it moved into the pool account. `Amount` is
++    only the ceiling the sender authorised: a payment carrying the partial-payment flag
++    settles for less than that ceiling and still reports tesSUCCESS.
++    """
++    return int(tx["meta"]["delivered_amount"])
+ 
+ 
+ def apply_validated(book, transactions):

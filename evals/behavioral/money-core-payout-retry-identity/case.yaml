@@ -1,0 +1,21 @@
+id: money-core-payout-retry-identity
+skill: fin-money-core
+references:
+  - idempotency-keys.md
+  - ambiguous-outcomes.md
+task: |
+  Finance reconciled last week's processor statement against our payouts table and the
+  processor moved more money than the table says we owed. On the afternoon the processor was
+  slow and our sends were timing out, two EU accounts were charged twice. There is one payout
+  row behind each pair of charges, so the extra 2500 cents is money that left with no decision
+  to pay behind it and we are not getting it back.
+
+  Implement the correction. A payout row must move money exactly once, however many times we
+  have to send it, and two separate payout rows for the same account and the same amount must
+  both still reach the processor as two charges.
+allowed_paths:
+  - repo/gateway.py
+  - repo/worker.py
+timeout_seconds: 60
+defect: A payout whose response is lost is sent again as a new instruction, so one 2500 cent payout row charges the account 5000 cents.
+oracle_proves: One payout row yields exactly one charge for its exact amount across lost responses and retries, while two distinct rows for the same account and amount still yield two charges.

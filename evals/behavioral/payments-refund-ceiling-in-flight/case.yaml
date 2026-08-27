@@ -1,0 +1,16 @@
+id: payments-refund-ceiling-in-flight
+skill: fin-payments
+references:
+  - refunds.md
+task: |
+  Finance closed the month and found six orders where the total we returned to the shopper is
+  larger than what we captured on the payment. Every one of them was refunded twice on the same
+  day; orders refunded a day or more apart look correct. Refunds go out through refund_service.py,
+  which is what the refund button in the admin panel calls. Please find the cause and implement
+  the fix, so that what we hand back can never exceed what we took, while a shopper who is still
+  owed part of an order can still be refunded that part.
+allowed_paths:
+  - repo/refund_service.py
+timeout_seconds: 60
+defect: A payment with 12000 captured pays 14000 back to the shopper, because a second refund is sized against a remainder the first refund has already committed.
+oracle_proves: A refund the processor has accepted but not yet settled reduces the refundable ceiling, so total money returned never exceeds the capture while the genuine remainder still refunds.

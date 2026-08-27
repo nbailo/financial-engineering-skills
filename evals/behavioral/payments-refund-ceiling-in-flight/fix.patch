@@ -1,0 +1,27 @@
+diff --git a/repo/refund_service.py b/repo/refund_service.py
+index 622242c..08c6a0d 100644
+--- a/repo/refund_service.py
++++ b/repo/refund_service.py
+@@ -15,13 +15,19 @@ class RefundService:
+         self.issued = []
+ 
+     def refundable_amount(self, psp_reference):
++        """What is left to give back, net of every refund the processor has committed to.
++
++        A refund the processor accepted is money it will pay out on the next settlement run,
++        so it reserves against this payment from the moment it is received, not from the
++        moment it settles.
++        """
+         captured = self.psp.captured_amount(psp_reference)
+-        returned = sum(
++        committed = sum(
+             m["amount"]
+             for m in self.psp.list_modifications(psp_reference)
+-            if m["type"] == "refund" and m["status"] == "settled"
++            if m["type"] == "refund" and m["status"] in ("received", "settled")
+         )
+-        return captured - returned
++        return captured - committed
+ 
+     def issue_refund(self, psp_reference, amount, request_id):
+         if amount <= 0:

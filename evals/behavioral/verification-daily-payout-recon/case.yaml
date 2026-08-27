@@ -1,0 +1,20 @@
+id: verification-daily-payout-recon
+skill: fin-verification
+references:
+  - reconciliation-design.md
+  - reconciliation-breaks.md
+task: |
+  Finance closed August and our cash on hand came out 250.00 higher than the bank.
+  The nightly job in reconcile.py ran against the processor settlement report every night of
+  that month and every run reported clean, so nothing was ever handed to the alert sink and
+  nobody looked until the close. This job is the control that is supposed to make an
+  overstatement like that impossible, and it did not.
+  Work out why the run agreed with itself and implement the fix. After it, a run over a book
+  date has to produce a break record for every difference between our payout rows and the
+  report, carrying the amount at stake, and hand each break to the alert sink. A book date
+  where the two sides agree must still report nothing.
+allowed_paths:
+  - repo/reconcile.py
+timeout_seconds: 60
+defect: A 250.00 payout the processor executed and our store never recorded never becomes a break, so cash on hand stays overstated by 250.00 and the nightly run reports clean.
+oracle_proves: A break planted on either side, a row only we hold or a payout only the report holds, produces exactly one break record carrying its amount and one alert, and an agreeing book date produces neither.

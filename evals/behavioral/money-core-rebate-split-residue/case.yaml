@@ -1,0 +1,18 @@
+id: money-core-rebate-split-residue
+skill: fin-money-core
+references:
+  - allocation-and-residue.md
+task: |
+  Finance closed the July group rebate cycle and the credits we wrote do not add up to the
+  pool. A 2500 cent pool shared by three members credited 2499 cents. Every cycle we run
+  leaves a few cents sitting in no member's account, and the group is paid short by that much.
+
+  Implement the correction in the split so a cycle credits the whole pool. Two things have to
+  stay true: the same pool and the same weights must produce the same per-member amounts on
+  every run, and no member may end up more than one cent away from its exact proportional
+  share, so the leftover cannot simply be handed to whoever comes first.
+allowed_paths:
+  - repo/payouts.py
+timeout_seconds: 60
+defect: A 2500 cent rebate pool split three ways credits only 2499 cents, so every cycle leaves a cent that belongs to nobody and the group is paid short.
+oracle_proves: The shares of a pool sum to the pool exactly and deterministically, with no member more than one minor unit from its exact proportional share.

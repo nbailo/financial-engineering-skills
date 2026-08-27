@@ -1,0 +1,21 @@
+id: verification-payout-worker-resume
+skill: fin-verification
+references:
+  - crash-boundary-tests.md
+  - proof-mechanisms.md
+task: |
+  The payout worker moved onto spot instances last week, so it now gets killed mid-run most
+  days instead of once a quarter. Two vendors have called about being paid twice for one
+  invoice, both on days the worker was killed, and our journal shows a single payment to each
+  of them. The provider has billed us for both. resume_pending() in recovery.py is what runs on
+  the next boot and it is supposed to finish an in-flight payout without paying it again.
+  Find why it pays twice and implement the fix. After it, a payout whose request already
+  reached the provider before the worker stopped must end up paid exactly once however many
+  times the resume path runs, and its journal row must be closed and carry the receipt.
+allowed_paths:
+  - repo/recovery.py
+  - repo/journal.py
+  - repo/tests/test_recovery.py
+timeout_seconds: 60
+defect: A payout the resume path finishes after the worker stopped between the call and the outcome write goes out under a second reference, so the vendor is paid 400.00 twice and the journal records one of the two payments.
+oracle_proves: After a crash between a delivered request and the outcome write, the resume path leaves exactly one payment at the provider for that payout however often it runs, and one closed journal row carrying the receipt.

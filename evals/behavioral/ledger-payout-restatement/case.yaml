@@ -1,0 +1,20 @@
+id: ledger-payout-restatement
+skill: fin-ledger
+references:
+  - reversals-and-corrections.md
+  - bitemporality-and-close.md
+task: |
+  Finance needs to restate merchant payouts that went out at the wrong amount, usually
+  because the invoice total changed after we booked it. correct() in ledger.py is what the
+  ops console calls, and support starts using it on Monday. We tried it against a copy of
+  June and it is not ready: once a payout is restated, a re-run of the June statement no
+  longer quotes the figures we actually sent that merchant, and nothing in the journal
+  accounts for the difference. Implement the correction. A restatement has to move what the
+  merchant is owed from here on and leave what an earlier statement quoted exactly as it
+  was. Support will press the button twice sometimes, and the second press must not move
+  the balance again.
+allowed_paths:
+  - repo/ledger.py
+timeout_seconds: 60
+defect: Correcting a 500.00 payout down to 450.00 rewrites the payout that was already sent, so the statement the merchant received no longer reproduces and the 50.00 difference is attributable to nothing.
+oracle_proves: The legs of the original payout still read as posted and a statement cut before the correction still quotes 500.00, while the merchant's current balance is 450.00 and a repeated correction does not move it again.

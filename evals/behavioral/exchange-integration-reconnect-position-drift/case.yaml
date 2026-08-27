@@ -1,0 +1,19 @@
+id: exchange-integration-reconnect-position-drift
+skill: fin-exchange-integration
+references:
+  - reconnect-and-backfill.md
+  - venues/binance-streams.md
+task: |
+  Our BTCUSDT number drifted away from the exchange again last night. The user data stream
+  dropped for about four minutes, and when it came back our readout showed more BTC than
+  GET /fapi/v2/positionRisk did; realized PnL was wrong too, and the morning desk flattened
+  by hand off our number. Twice this month now, always after a reconnect. Work out what the
+  fill pipeline does to the book across a gap and implement the correction. After the gap is
+  closed the book has to hold the position, cost basis and realized PnL the venue holds, and
+  pulling an overlapping recovery window a second time must not move it again.
+allowed_paths:
+  - repo/backfill.py
+  - repo/stream.py
+timeout_seconds: 60
+defect: Every execution the live stream already delivered is folded into the position a second time when the gap is closed, so the desk trades and reports off a position and a realized PnL the venue does not have.
+oracle_proves: The book after a reconnect equals the venue's position, cost basis and realized PnL, a second overlapping recovery window and a shuffled page leave it unchanged, and a fill that arrives on only one of the two paths still moves it.

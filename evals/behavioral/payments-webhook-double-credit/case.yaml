@@ -1,0 +1,19 @@
+id: payments-webhook-double-credit
+skill: fin-payments
+references:
+  - webhook-processing.md
+  - refunds.md
+task: |
+  Finance pulled four accounts this week where the store credit sitting on the customer is bigger
+  than the refund we put back on their card. On three of them it is exactly double. It started
+  around the release where we turned on partial refunds. The provider webhook lands in handler.py
+  and the modules around it. Please work out what is producing the extra credit and implement the
+  correction, so that a customer whose refund settles gets that credit once and a customer with
+  two genuine refunds still gets both.
+allowed_paths:
+  - repo/handler.py
+  - repo/credit_book.py
+  - repo/event_log.py
+timeout_seconds: 60
+defect: One settled refund of 4500 puts 9000 of store credit on the customer, so the shop hands back twice what it returned to the card.
+oracle_proves: One settled refund produces exactly one store credit no matter how many separately generated events report it, while a second genuine refund is still credited in full.

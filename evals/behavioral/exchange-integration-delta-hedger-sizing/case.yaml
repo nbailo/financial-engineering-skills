@@ -1,0 +1,19 @@
+id: exchange-integration-delta-hedger-sizing
+skill: fin-exchange-integration
+references:
+  - pre-trade-controls.md
+  - venues/binance-filters.md
+task: |
+  The delta hedger ran all weekend against a demo account. The options book barely moved on
+  Sunday and the residual delta stayed tiny all day, but the perp account finished the day
+  short 0.024 BTC that nobody asked for, and it arrived a little at a time across the quiet
+  cycles. The hedger wakes every 250 ms, takes the residual delta off the options book and
+  sends one market perp order for it. Work out where the unrequested size comes from and
+  implement the correction. A residual the venue can actually express must still be hedged,
+  and anything we do send still has to satisfy the venue's filters.
+allowed_paths:
+  - repo/hedger.py
+  - repo/loop.py
+timeout_seconds: 60
+defect: A cycle whose residual is below the venue's minimum quantity sends a larger order than the hedge asked for, so every quiet cycle buys 0.002 BTC of perp exposure the options book never requested.
+oracle_proves: No order reaching the venue exceeds the residual it hedges, while residuals the venue can express are still hedged on both sides and every sent order still clears lot size, step size and minimum notional.

@@ -1,0 +1,17 @@
+id: onchain-capped-log-response-cursor
+skill: fin-onchain
+references:
+  - indexing.md
+task: |
+  The deposit backfill finished on Saturday and three customers have opened tickets saying
+  the money they sent never showed up in their balance. The indexer reported no errors and
+  its watermark is sitting on the confirmed head, so as far as it is concerned the range is
+  done. repo/ is the whole service: the indexer, the node client it reads through and a
+  canned chain we test against. Work out why the deposits are missing and implement the
+  fix, so that every confirmed deposit is credited and the watermark can never again move
+  over blocks whose deposits were not credited.
+allowed_paths:
+  - repo/indexer.py
+timeout_seconds: 60
+defect: Five confirmed deposits worth 77750000 base units are never credited, so three customers pay money in and their balances never move.
+oracle_proves: Every confirmed deposit on the chain is credited exactly once, and the watermark never covers a block whose deposits are missing from the book.

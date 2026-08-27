@@ -1,0 +1,27 @@
+diff --git a/repo/gateway.py b/repo/gateway.py
+--- a/repo/gateway.py
++++ b/repo/gateway.py
+@@ -1,7 +1,5 @@
+ """Outbound side of the payout path."""
+ 
+-from keys import new_request_id
+-
+ 
+ class Gateway:
+     def __init__(self, processor):
+@@ -10,8 +8,12 @@ class Gateway:
+     def submit(self, payout):
+         """Charge the processor for one payout and return the charge.
+ 
+-        The processor deduplicates on the Idempotency-Key it is given.
++        The processor deduplicates on the Idempotency-Key it is given, so the
++        key is the payout row's own identity: minted and committed when the
++        decision to pay was recorded, and the same on every retry of that one
++        decision. A second payout row carries a different key and is a second
++        charge, which is what it should be.
+         """
+-        key = new_request_id()
+-        return self.processor.charge(key=key, account=payout.account,
++        return self.processor.charge(key=payout.idempotency_key,
++                                     account=payout.account,
+                                      amount_minor=payout.amount_minor)

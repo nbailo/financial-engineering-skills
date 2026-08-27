@@ -1,0 +1,19 @@
+id: ledger-wallet-overdraft
+skill: fin-ledger
+references:
+  - holds-and-two-phase.md
+  - solvency-and-limits.md
+task: |
+  Three customer wallets finished last week negative and we covered the shortfall out of
+  the platform float. Support went through all three: no duplicate charges, no retries, and
+  every card purchase was one we approved at the time. Two of the three customers had a
+  bank withdrawal in flight when their purchase went through. Work out how a wallet can be
+  approved for a purchase it cannot fund and implement the correction. Customers who do
+  have the money must still be approved, so do not just tighten the limit.
+allowed_paths:
+  - repo/ledger.py
+  - repo/spending.py
+  - repo/withdrawals.py
+timeout_seconds: 60
+defect: A wallet holding 100.00 with an 80.00 bank withdrawal in flight approves a 50.00 card purchase, so the withdrawal settles the wallet to minus 30.00 and the platform funds the difference.
+oracle_proves: Money a pending withdrawal has already committed cannot also fund a card purchase, the wallet still covers the withdrawal when it settles, and a purchase the wallet can fund is still approved.

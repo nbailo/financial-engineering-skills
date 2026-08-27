@@ -1,0 +1,30 @@
+diff --git a/repo/recovery.py b/repo/recovery.py
+index 6e7af7a..c962cd2 100644
+--- a/repo/recovery.py
++++ b/repo/recovery.py
+@@ -1,15 +1,23 @@
+ """Finishes payouts that were in flight when the worker stopped."""
+ 
+ 
++class MissingIdempotencyRef(Exception):
++    """The open row carries no reference, so re-sending it could pay twice."""
++
++
+ def resume_pending(journal, provider):
+     """Re-send every payout still open in the journal, then close the row.
+ 
+     The provider deduplicates on the idempotency reference, so a payout that
+-    already reached it before the stop is not paid a second time here.
++    already reached it before the stop is not paid a second time here. That
++    holds only while the reference is the one the first attempt committed, so
++    it is read back off the row and never minted again.
+     """
+     closed = []
+     for row in list(journal.pending()):
+-        ref = row.get("idempotency_key") or journal.mint_ref(row["payout_id"])
++        ref = row.get("idempotency_ref")
++        if ref is None:
++            raise MissingIdempotencyRef(row["payout_id"])
+         receipt = provider.send_payout(ref, row["account"], row["amount"])
+         journal.complete(row["payout_id"], receipt)
+         closed.append(row["payout_id"])
