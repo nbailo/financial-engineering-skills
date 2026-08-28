@@ -1,109 +1,342 @@
-diff --git a/repo/refund_service.py b/repo/refund_service.py
-index 622242c..e02322e 100644
---- a/repo/refund_service.py
-+++ b/repo/refund_service.py
-@@ -4,34 +4,93 @@ The agent picks an order, types an amount and hits refund. request_id comes from
- is the identity of that click, so a retry of the same click reuses it.
+diff --git a/repo/refund_book.py b/repo/refund_book.py
+index 16ca2f9..66c71ef 100644
+--- a/repo/refund_book.py
++++ b/repo/refund_book.py
+@@ -6,15 +6,43 @@ made it and read by all of them. Every worker in the shop is handed the same Ref
+ they are all handed the same database, so a refund one worker made is a refund the next worker
+ can see.
+
+-A row is "sent" once the processor has accepted the refund. The processor pays an accepted refund
+-out on its next settlement run whether or not anyone asks again, so a sent row is money this
+-payment has already promised back, from the moment it is accepted rather than from the moment it
+-settles.
++A row is "reserved" from the moment the shop decides to make the refund, "sent" once the processor
++has told a worker it accepted it, and "failed" only when the shop knows the request never left it.
++Reserved and sent rows are both money this payment has already promised back. A sent one is
++promised because the processor pays an accepted refund out on its next settlement run whether or
++not anyone asks again, from the moment it is accepted rather than from the moment it settles. A
++reserved one is promised because the request is on the wire, or was on the wire and the answer
++never came home: for as long as the shop cannot say the processor refused it, that money may
++already be going back, and a second worker asking in the meantime must not be offered it too.
++
++A reserved row is also unfinished business rather than a licence. It belongs to the one worker that
++took it, and that worker is named on the row by the reservation this book hands out with it. Only
++that worker, still holding that reservation, may end the row; a second worker that meets the row
++has to find out what became of it rather than act on it, because the room it is holding may be
++released or spent the moment its owner comes back, and two workers acting on one reservation is
++how a payment gives back twice what a single click asked for.
++
++Only a failed row frees its amount again, and a row is failed only for the one ending that is not
++ambiguous: the connection turned the request away before it went. A row whose answer was lost stays
++reserved, because the request may be sitting at the processor waiting for the nightly run. It is
++the processor, asked about the reference the refund was sent under, that ends that row.
++
++A failed row is not the end of the click either. The agent presses refund again and the row asks
++for its money a second time, so `reserve` measures it against the remainder as it stands at that
++moment rather than handing back the room it had before, and hands out a fresh reservation for the
++worker that wins it. The reservation the row carried before is spent: whoever was holding it has
++been superseded and can no longer end this row.
++
++Rows are kept under the click that made them, and a click stands for one amount on one payment.
++The same click coming back for a different amount, or against a different payment, is not that
++click and this book will not answer for it.
  """
 
-+import threading
-+import weakref
+ import threading
+
++RESERVED = "reserved"
+ SENT = "sent"
++FAILED = "failed"
+
+
+ class RefundBook:
+@@ -22,35 +50,128 @@ class RefundBook:
+
+     def __init__(self):
+         self._attempts = {}
++        self._reservations = 0
+         self._lock = threading.Lock()
+
+-    def find(self, psp_reference, request_id):
++    def find(self, request_id):
+         """The refund attempt this click already has, if the shop made one for it."""
+         with self._lock:
+-            attempt = self._attempts.get((psp_reference, request_id))
++            attempt = self._attempts.get(request_id)
+             return dict(attempt) if attempt is not None else None
+
++    def _committed(self, psp_reference):
++        """Everything this payment has promised back. The caller holds the lock."""
++        return sum(
++            attempt["amount"]
++            for attempt in self._attempts.values()
++            if attempt["psp_reference"] == psp_reference and attempt["state"] != FAILED
++        )
++
+     def committed(self, psp_reference):
+-        """Everything this payment has already promised back."""
++        """Everything this payment has already promised back, reserved and sent alike."""
+         with self._lock:
+-            return sum(
+-                attempt["amount"]
+-                for attempt in self._attempts.values()
+-                if attempt["psp_reference"] == psp_reference
+-            )
+-
+-    def record(self, psp_reference, request_id, amount, modification):
+-        """Write down a refund the processor has accepted, under the click that asked for it."""
++            return self._committed(psp_reference)
++
++    def _grant(self, attempt):
++        """Put this row in reserve and name its owner. The caller holds the lock."""
++        self._reservations += 1
++        attempt["state"] = RESERVED
++        attempt["reservation"] = self._reservations
++        return attempt
++
++    def reserve(self, psp_reference, request_id, amount, currency, captured):
++        """Resolve this click, or take `amount` out of what is left of `captured`, in one step.
++
++        Working out whether a refund fits and writing down that it is happening cannot be two
++        steps with a gap between them. The gap is a whole round trip to the processor wide, and
++        two workers that both size a refund inside one gap are both measuring against a remainder
++        that neither of them has spent yet, so both send and the payment gives back more than it
++        took. Both halves happen here, under this book's own lock, on the one book every worker in
++        the shop holds, so what any worker reserves is already spent as far as the next worker to
++        ask is concerned.
++
++        A click that has been here before is answered from its row rather than measured again, and
++        the row it is answered from is the row for that click on that payment for that amount in
++        that currency. The one exception is a row the shop knows never reached the processor: that
++        click is asking for the money afresh, so it is measured afresh, against the remainder as it
++        stands now rather than the one it was refused or granted against before, and the winner is
++        given a new reservation because the old owner's claim on this row is over.
++
++        `captured` is the payment's capture, which never moves after capture, so reading it from
++        the processor beforehand is safe. The remainder is not: it is worked out here, from the
++        rows as they stand at this instant, and never handed in from outside.
++
++        Returns one of:
++            ("mismatch", attempt)   this click stands for something else; nothing is touched
++            ("sent", attempt)       the processor accepted this click and named the refund
++            ("unresolved", attempt) somebody else holds this click's room and has not come back
++            ("reserved", attempt)   this call took the amount, and owns it under attempt's
++                                    "reservation" until it says what became of it
++            ("refused", remaining)  what is left of the capture will not fund it
++        """
++        with self._lock:
++            attempt = self._attempts.get(request_id)
++            if attempt is not None:
++                if (attempt["psp_reference"], attempt["amount"], attempt["currency"]) != (
++                    psp_reference,
++                    amount,
++                    currency,
++                ):
++                    return "mismatch", dict(attempt)
++                if attempt["state"] == SENT:
++                    return "sent", dict(attempt)
++                if attempt["state"] == RESERVED:
++                    return "unresolved", dict(attempt)
++                remaining = captured - self._committed(psp_reference)
++                if amount > remaining:
++                    return "refused", remaining
++                return "reserved", dict(self._grant(attempt))
++            remaining = captured - self._committed(psp_reference)
++            if amount > remaining:
++                return "refused", remaining
++            attempt = {
++                "psp_reference": psp_reference,
++                "request_id": request_id,
++                "amount": amount,
++                "currency": currency,
++                "state": RESERVED,
++                "reservation": None,
++                "modification": None,
++            }
++            self._attempts[request_id] = attempt
++            return "reserved", dict(self._grant(attempt))
++
++    def mark_sent(self, request_id, modification):
++        """The processor has this refund. Keep its name for whoever asks about the click again.
++
++        This is the one ending the shop can be sure of, so it overrules whatever the row said,
++        including a reservation still outstanding on it: the row is settled business now and the
++        reservation is retired with it.
++        """
++        with self._lock:
++            attempt = self._attempts[request_id]
++            attempt["state"] = SENT
++            attempt["reservation"] = None
++            attempt["modification"] = dict(modification)
++            return dict(attempt)
++
++    def mark_failed(self, request_id, reservation):
++        """Nothing left the shop under this reservation, so hand its amount back to the payment.
++
++        Ownership is on the row, so this asks for it rather than trusting the caller: only the
++        worker holding the reservation the row is currently under may end it, and only while the
++        row is still reserved. A worker whose reservation has been superseded - the click was
++        retried after its request failed, and somebody else won the room - is holding a stale
++        claim and frees nothing, and a row the processor has answered for is money already
++        promised whatever this worker heard.
++
++        Returns the row as it now stands, or None for a click this book has never seen.
++        """
+         with self._lock:
+-            key = (psp_reference, request_id)
+-            attempt = self._attempts.get(key)
++            attempt = self._attempts.get(request_id)
+             if attempt is None:
+-                attempt = {
+-                    "psp_reference": psp_reference,
+-                    "request_id": request_id,
+-                    "amount": amount,
+-                    "state": SENT,
+-                    "modification": dict(modification),
+-                }
+-                self._attempts[key] = attempt
++                return None
++            if attempt["state"] == RESERVED and attempt["reservation"] == reservation:
++                attempt["state"] = FAILED
++                attempt["reservation"] = None
+             return dict(attempt)
+diff --git a/repo/refund_service.py b/repo/refund_service.py
+index f86d3b8..277afd3 100644
+--- a/repo/refund_service.py
++++ b/repo/refund_service.py
+@@ -4,14 +4,51 @@ The agent picks an order, types an amount and hits refund. request_id comes from
+ the identity of that click, so a retry of the same click reuses it.
+
+ A worker builds one of these for itself over its own connection to the processor and over the
+-shop's refund book, which every worker shares.
++shop's refund book, which every worker shares. Nothing that decides whether a refund may go out
++can therefore live on this object or on that connection: both are private to one worker, and the
++agent racing this one is holding her own pair. The shared record is the book, so the book is where
++the decision is taken.
++
++The other thing this file has to get right is how a call to the processor ends. A connection that
++turns the request away before it goes has cost the shop nothing and its room is the payment's
++again. Anything else - a timeout, a reset, an answer that never arrives - happened with the
++request already gone, and the refund may be sitting at the processor waiting for the nightly run.
++The shop cannot tell those apart by hoping, so it does not: only the one exception that means
++"never sent" frees a reservation, and everything else leaves it standing until the processor is
++asked what it holds under the click's own reference.
++
++That asking is the whole of what a second worker may do with somebody else's reservation. A row in
++reserve is unresolved, not available: another worker's request may be on the wire under it, and
++that worker may come back at any moment either with a refund or with a definite failure that hands
++the room to whoever asks next. A worker that sends against a reservation it does not own is
++therefore sending against room it may be about to lose, and if it loses it the payment pays that
++room out twice - once to the click the room went to, once to the request already on the wire. So a
++worker meeting a reserved row asks the processor what it holds under that click's reference: if the
++refund is there the row is that refund and the caller is handed it, and if it is not there the
++caller is told, in as many words, that this click is unresolved. It does not send, and it does not
++release the reservation either, because "the processor has not got it yet" and "the processor never
++got it" look identical from here and only the request's own worker can tell them apart.
+ """
+
++from processor import PreSendRejected
 +
 
  class RefundCeilingError(Exception):
      """The refund would return more than this payment can give back."""
 
 
-+# Per-payment locks live here, keyed by the processor client they guard, and not on any one
-+# RefundService. The panel and the webhook endpoint each build their own RefundService over the
-+# same client, so a lock held on the instance is a lock two callers on one order never share:
-+# both would read the same remainder, both would size their refund against it, and both would
-+# send. What has to be serialised is the read-then-reserve against the SHARED state, so the lock
-+# has to be keyed to that shared state. The registry is weak in the client so a client that goes
-+# out of scope takes its locks with it; the inner dict holds one lock per payment, so two agents
-+# on one order queue up while two different orders still refund in parallel.
-+_PAYMENT_LOCKS = weakref.WeakKeyDictionary()
-+_REGISTRY_GUARD = threading.Lock()
++class RefundIdentityMismatch(Exception):
++    """This click was made for a different amount, currency or payment than the one presented."""
 +
 +
-+def _payment_lock(psp, psp_reference):
-+    """The one lock every RefundService over `psp` uses for `psp_reference`."""
-+    with _REGISTRY_GUARD:
-+        locks = _PAYMENT_LOCKS.get(psp)
-+        if locks is None:
-+            locks = {}
-+            _PAYMENT_LOCKS[psp] = locks
-+        lock = locks.get(psp_reference)
-+        if lock is None:
-+            lock = threading.Lock()
-+            locks[psp_reference] = lock
-+        return lock
++class RefundUnresolved(Exception):
++    """Another worker holds this click's refund and the processor cannot yet say what became of it.
++
++    Deliberately not a RefundCeilingError: nothing here says the refund does not fit, and nothing
++    here says it failed. The room stays held and the caller is told to ask again.
++    """
 +
 +
  class RefundService:
-     def __init__(self, psp):
-         self.psp = psp
-         self.issued = []
-
-+    def _refund_for(self, psp_reference, reference):
-+        """The refund this click already has at the processor, if it got that far."""
-+        for m in self.psp.list_modifications(psp_reference):
-+            if m["type"] == "refund" and m["reference"] == reference:
-+                return m
-+        return None
-+
-     def refundable_amount(self, psp_reference):
-+        """What is left to give back, net of every refund the processor has committed to.
-+
-+        A refund the processor has accepted is money it will pay out on the next settlement
-+        run whether or not anyone asks again, so it reserves against this payment from the
-+        moment it is received, not from the moment it settles. The reservation lives in the
-+        processor's own modification list, which every worker reads, rather than in any
-+        service object's memory.
-+        """
-         captured = self.psp.captured_amount(psp_reference)
--        returned = sum(
-+        committed = sum(
-             m["amount"]
-             for m in self.psp.list_modifications(psp_reference)
--            if m["type"] == "refund" and m["status"] == "settled"
-+            if m["type"] == "refund" and m["status"] in ("received", "settled")
-         )
--        return captured - returned
-+        return captured - committed
+     def __init__(self, client, book):
+         self.client = client
+@@ -24,17 +61,73 @@ class RefundService:
+         return captured - promised
 
      def issue_refund(self, psp_reference, amount, request_id):
 +        """Refund `amount` against a payment, at most once per request_id.
 +
-+        Reading the remainder and reserving against it have to be one step: the processor
-+        takes a few hundred milliseconds to answer, and two agents refunding the same order
-+        inside that window would otherwise both be sized against a remainder neither of them
-+        has spent yet. The lock comes from the module-level registry keyed by the processor
-+        client, not from this instance, because the order can be refunded by any worker
-+        holding that client.
++        The reservation is taken in the shop's own book before the processor is called, because
++        the processor will not do it for us: it accepts whatever it is asked for and reports the
++        overpayment on the settlement report the next day. By the time the request is on the wire
++        the money is committed, so the book has to say so before it goes.
++
++        Exactly one caller ever sends: the one this call's own reservation belongs to. Every other
++        answer the book can give - already sent, held by somebody else, refused, not this click -
++        is returned or raised without a request leaving the shop.
 +        """
          if amount <= 0:
              raise ValueError("refund amount must be positive")
--        ceiling = self.refundable_amount(psp_reference)
--        if amount > ceiling:
--            raise RefundCeilingError(
--                "refund of %d exceeds %d refundable on %s" % (amount, ceiling, psp_reference)
--            )
          reference = "refund-%s" % request_id
--        modification = self.psp.refund(psp_reference, amount, reference)
--        self.issued.append({"reference": reference, "amount": amount})
+-        already = self.book.find(psp_reference, request_id)
+-        if already is not None:
+-            return already["modification"]
+-        remaining = self.refundable_amount(psp_reference)
+-        if amount > remaining:
++        captured = self.client.captured_amount(psp_reference)
++        currency = self.client.currency_of(psp_reference)
++        outcome, found = self.book.reserve(
++            psp_reference, request_id, amount, currency, captured
++        )
++        if outcome == "mismatch":
++            # The panel has sent this click's identity back with different economics behind it.
++            # Paying it would pay the click twice over and failing it would hand away room that
++            # belongs to the refund the click really made, so it does neither.
++            raise RefundIdentityMismatch(
++                "click %s stands for %d %s on %s, not %d %s on %s"
++                % (request_id, found["amount"], found["currency"], found["psp_reference"],
++                   amount, currency, psp_reference)
++            )
++        if outcome == "refused":
+             raise RefundCeilingError(
+-                "refund of %d exceeds %d refundable on %s" % (amount, remaining, psp_reference)
++                "refund of %d exceeds %d refundable on %s" % (amount, found, psp_reference)
++            )
++        if outcome == "sent":
++            # This click has already been paid. Handing back the refund it made is not a second
++            # refund, so it is not measured against the remainder its own amount created.
++            return found["modification"]
++        if outcome == "unresolved":
++            # Somebody holds this click's room and has not come back. The processor is the only
++            # thing that knows what became of it, and the click's reference is the name to ask
++            # under, because it is fixed by the request_id and survives a lost answer.
++            settled = self._refund_at_processor(psp_reference, reference)
++            if settled is not None:
++                return self.book.mark_sent(request_id, settled)["modification"]
++            # The processor has not got it. That is not the same as never having had it, and the
++            # owner of the reservation may be about to give the room up, so sending now would send
++            # against room a third agent is entitled to. Say so and touch nothing.
++            raise RefundUnresolved(
++                "click %s on %s is with another worker and the processor has no refund under %s "
++                "yet" % (request_id, psp_reference, reference)
+             )
+-        modification = self.client.refund(psp_reference, amount, reference)
+-        self.book.record(psp_reference, request_id, amount, modification)
 -        return modification
-+        with _payment_lock(self.psp, psp_reference):
-+            already = self._refund_for(psp_reference, reference)
-+            if already is not None:
-+                # This click is the one holding that reservation. Resolving it is not a second
-+                # refund, so it is not measured against the remainder its own amount created.
-+                return already
-+            ceiling = self.refundable_amount(psp_reference)
-+            if amount > ceiling:
-+                raise RefundCeilingError(
-+                    "refund of %d exceeds %d refundable on %s" % (amount, ceiling, psp_reference)
-+                )
-+            modification = self.psp.refund(psp_reference, amount, reference)
-+            self.issued.append({"reference": reference, "amount": amount})
-+            return modification
++        # outcome == "reserved": this call, and only this call, holds the room it is about to send.
++        # The reference names the click, and the processor deduplicates on it, so a click that is
++        # retried after a failure cannot become two refunds.
++        try:
++            modification = self.client.refund(psp_reference, found["amount"], reference)
++        except PreSendRejected:
++            # The one ending that means no money moved, and this caller owns the reservation that
++            # bought it, so this caller may hand the room back. The book is told which reservation
++            # is being given up, so a claim that has since been superseded frees nothing.
++            self.book.mark_failed(request_id, found["reservation"])
++            raise
++        return self.book.mark_sent(request_id, modification)["modification"]
++
++    def _refund_at_processor(self, psp_reference, reference):
++        """The refund the processor holds under this click's reference, if it has one."""
++        for modification in self.client.list_modifications(psp_reference):
++            if modification.get("type") == "refund" \
++                    and modification.get("reference") == reference:
++                return modification
++        return None

@@ -11,12 +11,76 @@ task: |
   larger than what we captured on the payment. Each was refunded twice within seconds, usually
   by two people on the same ticket; orders refunded a day or more apart look correct. One agent
   also says that pressing refund again after the page hung told her the amount was too large,
-  though her refund had gone out. Refunds go out through refund_service.py, behind the admin
-  panel's refund button. Please find the cause and implement the fix, so that what we hand back
-  can never exceed what we took, a shopper still owed part of an order can still be refunded
-  that part, and one click pays out once however many times it is pressed.
+  though her refund had gone out, and one of the six went back twice exactly that way: her refund
+  reached the processor while the panel showed her an error, and a colleague refunded the rest of
+  the order a minute later. Another agent was told we could not reach the processor at all,
+  pressed refund again after lunch, and it paid out even though someone else had refunded the
+  balance in between. Support has one more order refunded for a figure nobody typed, after an
+  agent corrected the amount box and pressed refund again on the same screen.
+
+  Refunds go out through refund_service.py and the refund book beside it, behind the admin
+  panel's refund button, and the panel has been running on several workers since the spring.
+  Please find the cause and implement the fix, so that what we hand back can never exceed what we
+  took, a shopper still owed part of an order can still be refunded that part, one click pays out
+  once however many times it is pressed, a refund that never got out of the building can be tried
+  again but only if the order can still afford it by then, and a refund we sent and heard nothing
+  back about is never treated as one that never happened.
 allowed_paths:
   - repo/refund_service.py
+  - repo/refund_book.py
 timeout_seconds: 60
-defect: Two agents refunding 7000 on the same 12000 capture in the same moment both go through, so 14000 is paid back on a payment that took 12000.
-oracle_proves: Reading the remainder and reserving against it happen as one step per payment, and the remainder is that payment's own capture less every refund the processor already holds, settled or not, so no order ever pays back more than it took whatever it captured, whatever it has already given back, whichever worker asks and however many ask at once, while a genuine remainder still refunds and a re-pressed click resolves to its own refund instead of a second one.
+defect: >-
+  Two agents refunding 7000 on the same 12000 capture in the same moment, each served by her own
+  worker, both go through, so 14000 is paid back on a payment that took 12000. The same 14000
+  arrives a second way: a refund the processor accepted whose answer never reached the shop is
+  written down nowhere, so the whole capture is offered to the next agent again.
+oracle_proves: >-
+  Whether a refund fits and the shop's commitment to make it are settled against the merchant's own
+  shared refund record, the record every worker holds, with no window between the two that another
+  worker can get into: not one opened by letting go of the payment while the request is on the wire,
+  not one opened by deciding against a remainder read in an earlier call, and not one opened by
+  keeping the remainder on a worker's own service object or its own connection object. Two or three
+  workers pressing refund on one payment inside a single round trip therefore never return more in
+  total than that payment's own capture less what it had already given back, whether nothing had
+  gone back before, a settled refund had, or one the processor has accepted but not yet settled had.
+  The money the processor actually paid equals what the accepted callers were told was going back,
+  and each accepted caller cost exactly one refund request, so no caller reports a refund it did not
+  send. A caller the remainder can fund is never turned away, two and three at once alike.
+
+  How a request to the processor ended decides what becomes of the room it took, and the two endings
+  are told apart. A request the connection turned away before it went cost the payment nothing: its
+  room goes back to the order for whoever asks next, the caller is told it was turned away rather
+  than told it succeeded, and the click that failed may ask again, but it is measured afresh against
+  the remainder as it stands when it asks rather than against the one it held before, so its retry
+  is refused where another agent has taken that room in the meantime and paid where she has not. A
+  request whose answer never came home keeps its room and is never reported as a refusal: the next
+  agent is offered only what is genuinely left of the capture and no more, and the agent who pressed
+  refund is handed the very refund the processor has been holding since her first press, paying
+  nothing further and leaving the processor holding one refund for that click rather than two.
+
+  An attempt already standing in the record is unfinished business for every worker except the one
+  that took it, and no second worker sends against it or hands its room away. One click pressed
+  twice shows this from both sides. When it is the second press that is turned away on its way out
+  while the first is still on the wire, the first press's room stands, so a third agent asking for
+  that room is turned away and the order gives back one refund in all. When it is the first press,
+  the one that owns the room, that is turned away, that room is the order's again and exactly one
+  refund of it goes back out - to the third agent who asks for it, or to the second press where a
+  repair takes its callers in turns, and never to both and never to neither - while the second
+  press does not send into room the third agent may be given: the order gives back no more than its
+  capture, what settles is exactly what the accepted callers were told and exactly the room the
+  failed press gave up, each accepted caller cost exactly one refund request, and no worker's
+  answer went missing on the way back.
+
+  A re-pressed click resolves to its own refund rather than paying again or consuming the ceiling a
+  second time, and two distinct clicks for the same amount stay two refunds. The same click
+  presented for a different amount, or against a different payment in a different currency, is
+  refused outright: it is not paid, no refund of it appears on that other payment, and the room held
+  by the refund the click really made stays held, so the order's remainder is exactly what it was
+  before the refusal.
+
+  Every worker here is a thread in one process holding its own connection object and its own service
+  object over one processor and one shared record. Every wait for another worker is on an explicit
+  event or condition rather than on a sleep; the only sleeps are the round trip to the processor and
+  the call on the shared record, which are latencies rather than schedule. Every join is bounded and
+  a thread still alive after its join fails the case, and the narrowest window a repair can be shown
+  to open is one as wide as a call on that record.

@@ -62,6 +62,9 @@ RUNNER_VERSION = "2"
 API_URL = "https://api.openai.com/v1/responses"
 ROOT = Path(__file__).resolve().parent.parent
 DATASET = ROOT / "evals" / "behavioral"
+# Every path component from here down to DATASET has to be a real directory. Named as a constant so
+# the guard has something to walk from, and so a test can stand a whole tree somewhere else.
+DATASET_BASE = ROOT
 SKILLS = ROOT / "skills"
 RUNS = ROOT / ".agent" / "eval-runs"
 
@@ -296,6 +299,15 @@ def load_spec(case: Path) -> dict:
     if target in baseline:
         raise ContextError(f"{case.name}: target_skill {target!r} is already in baseline_context, "
                            f"so the arms would not differ")
+    allowed = spec["allowed_paths"]
+    if not isinstance(allowed, list) or not allowed:
+        raise ContextError(f"{case.name}: allowed_paths must be a non-empty list naming the files "
+                           f"a patch may touch; got {allowed!r}. An empty list would let every "
+                           f"candidate patch be refused before it was read.")
+    for declared in allowed:
+        if not isinstance(declared, str) or not declared.strip():
+            raise ContextError(f"{case.name}: allowed_paths contains {declared!r}, which is not a "
+                               f"path")
     timeout = spec["timeout_seconds"]
     if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 300:
         raise ContextError(f"{case.name}: timeout_seconds must be an integer in 1..300, "
@@ -363,6 +375,31 @@ def build_prompt(task: str, files: tuple[tuple[str, bytes], ...], context_text: 
     return "\n\n".join(blocks)
 
 
+def dataset_root() -> Path:
+    """The dataset directory, checked before anything reads through it.
+
+    Checking the leaf is not enough. A symlinked `evals` redirects the whole suite just as
+    completely as a symlinked `evals/behavioral`, and neither is visible from the leaf alone, so
+    every component from the repository root down is checked one at a time. This runs before any
+    iteration, because listing a redirected directory has already read a tree nobody reviewed.
+    """
+    base = DATASET_BASE
+    if base.is_symlink():
+        raise ContextError(f"{base} is a symlink; the repository root must be a real directory")
+    if not base.is_dir():
+        raise ContextError(f"{base} is not a directory")
+    try:
+        parts = DATASET.relative_to(base).parts
+    except ValueError:
+        raise ContextError(f"{DATASET} is not under {base}") from None
+    _descend(base.resolve(strict=True), parts, str(DATASET), "dataset root")
+    if DATASET.is_symlink():
+        raise ContextError(f"{DATASET} is a symlink; the dataset root must be a real directory")
+    if not DATASET.is_dir():
+        raise ContextError(f"no dataset at {DATASET}")
+    return DATASET
+
+
 def dataset_cases() -> list[Path]:
     """The case directories, in stable order. A dot-entry is tooling state, never a case.
 
@@ -370,7 +407,7 @@ def dataset_cases() -> list[Path]:
     would put a tree nobody reviewed into a prompt and into the container.
     """
     out = []
-    for entry in sorted(DATASET.iterdir()):
+    for entry in sorted(dataset_root().iterdir()):
         if entry.name.startswith("."):
             continue
         if entry.is_symlink():
@@ -388,8 +425,7 @@ def freeze_cases(selector: str, model: str, effort: str, commit: str,
     file edited mid-run cannot change what an arm was sent, which is the only way the two arms of a
     pair are guaranteed to have differed in exactly one thing.
     """
-    if not DATASET.is_dir():
-        raise ContextError(f"no dataset at {DATASET}")
+    dataset_root()
     wanted = None if selector == "all" else {s.strip() for s in selector.split(",") if s.strip()}
     freezer = ContextFreezer() if freezer is None else freezer
     frozen: list[FrozenCase] = []

@@ -47,7 +47,7 @@ except ImportError:
 
 from run_patch_eval import (  # noqa: E402
     DATASET, INSTALLED_SKILLS, ROOT, ContextError, _confine, confined_reference,
-    dataset_cases, load_spec, read_case_tree, validate_patch,
+    dataset_cases, dataset_root, load_spec, read_case_tree, validate_patch,
 )
 
 ORACLE_ENTRYPOINT = "oracle/test_oracle.py"
@@ -218,10 +218,9 @@ def check_case(case: Path, run_oracles: bool) -> str | None:
             except ContextError as exc:
                 err(f"{case_id}: {exc}")
 
+    # Shape and non-emptiness are enforced in load_spec, which raised above if either were wrong,
+    # so the paid runner and this check cannot disagree about what a usable case looks like.
     allowed = spec["allowed_paths"]
-    if not isinstance(allowed, list) or not allowed:
-        err(f"{case_id}: allowed_paths must list the files a patch may touch")
-        allowed = []
     for declared in allowed:
         if not str(declared).startswith("repo/"):
             err(f"{case_id}: allowed path '{declared}' is outside repo/")
@@ -312,10 +311,12 @@ def main() -> int:
                     help="inventory and structure only; do not run any oracle")
     args = ap.parse_args()
 
-    if not DATASET.is_dir():
-        print(f"check_eval_dataset: no dataset at {DATASET.relative_to(ROOT)}")
+    try:
+        dataset_root()
+        cases = dataset_cases()
+    except ContextError as exc:
+        print(f"check_eval_dataset: {exc}")
         return 1
-    cases = dataset_cases()
     if not cases:
         err("evals/behavioral/ has no cases")
         return 1
