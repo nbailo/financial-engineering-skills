@@ -1,0 +1,32 @@
+[
+  {
+    "delivery_id": "dlv_1",
+    "event_id": "evt_settled_1",
+    "type": "payment.settled",
+    "data": {
+      "charge_id": "ch_1",
+      "settlement_id": "st_1",
+      "invoice_id": "INV-1001",
+      "currency": "USD",
+      "amount_minor": 12500,
+      "fee_minor": 375,
+      "net_minor": 12125,
+      "settlement_batch": "SB-0001"
+    }
+  },
+  {
+    "delivery_id": "dlv_2",
+    "event_id": "evt_settled_2",
+    "type": "payment.settled",
+    "data": {
+      "charge_id": "ch_1",
+      "settlement_id": "st_1",
+      "invoice_id": "INV-1001",
+      "currency": "USD",
+      "amount_minor": 12500,
+      "fee_minor": 375,
+      "net_minor": 12125,
+      "settlement_batch": "SB-0001"
+    }
+  }
+]

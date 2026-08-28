@@ -1,0 +1,15 @@
+{
+  "batch_id": "SB-0001",
+  "currency": "USD",
+  "lines": [
+    {
+      "settlement_id": "st_1",
+      "charge_id": "ch_1",
+      "invoice_id": "INV-1001",
+      "gross_minor": 12500,
+      "fee_minor": 400,
+      "net_minor": 12100
+    }
+  ],
+  "total_net_minor": 12100
+}
