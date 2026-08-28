@@ -107,7 +107,8 @@ def write_world(tmp: Path, case_ids=("ledger-a", "money-b"), baseline=()):
 @contextmanager
 def world(tmp: Path, **kwargs):
     dataset, skills = write_world(tmp, **kwargs)
-    with mock.patch.object(ev, "DATASET", dataset), mock.patch.object(ev, "SKILLS", skills):
+    with mock.patch.object(ev, "DATASET", dataset), mock.patch.object(ev, "SKILLS", skills), \
+         mock.patch.object(ev, "DATASET_BASE", tmp):
         yield dataset, skills
 
 
@@ -212,7 +213,8 @@ class PathConfinement(unittest.TestCase):
             bad = dataset / "ledger-a" / "case.yaml"
             bad.write_text(bad.read_text().replace("    - a.md", "    - ../../../../etc/hosts"),
                            encoding="utf-8")
-            with mock.patch.object(ev, "DATASET", dataset):
+            with mock.patch.object(ev, "DATASET", dataset), \
+                 mock.patch.object(ev, "DATASET_BASE", Path(tmp2)):
                 with self.assertRaises(ev.ContextError) as caught:
                     ev.freeze_cases("all", "m", "low", "abc")
         self.assertIn("traversal", str(caught.exception))
@@ -1049,7 +1051,8 @@ class SymlinkedBases(unittest.TestCase):
     def test_a_symlinked_case_directory_is_refused(self):
         dataset = self.tmp / "evals" / "behavioral"
         (dataset / "linked-case").symlink_to(dataset / "ledger-a")
-        with mock.patch.object(ev, "DATASET", dataset):
+        with mock.patch.object(ev, "DATASET", dataset), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
             with self.assertRaises(ev.ContextError) as caught:
                 ev.dataset_cases()
         self.assertIn("must not be a symlink", str(caught.exception))
@@ -1057,7 +1060,8 @@ class SymlinkedBases(unittest.TestCase):
     def test_a_dot_entry_is_skipped_not_treated_as_a_case(self):
         dataset = self.tmp / "evals" / "behavioral"
         (dataset / ".omc" / "state").mkdir(parents=True)
-        with mock.patch.object(ev, "DATASET", dataset):
+        with mock.patch.object(ev, "DATASET", dataset), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
             self.assertEqual([d.name for d in ev.dataset_cases()], ["ledger-a", "money-b"])
 
     def test_a_reference_that_is_a_directory_is_refused(self):
@@ -1352,6 +1356,7 @@ class DatasetChecker(unittest.TestCase):
         self._patches = [
             mock.patch.object(ced, "DATASET", self.dataset),
             mock.patch.object(ev, "DATASET", self.dataset),
+            mock.patch.object(ev, "DATASET_BASE", self.tmp),
             mock.patch.object(ev, "SKILLS", self.skills),
         ]
         for patch in self._patches:
@@ -1513,3 +1518,128 @@ class ShippedSuite(unittest.TestCase):
                 self.assertFalse(name.startswith("test_") or name.endswith("_test.py")
                                  or {"test", "tests"} & set(Path(declared).parts),
                                  f"{case.name} lets a patch edit {declared}")
+
+
+class DatasetRootAndAllowedPaths(unittest.TestCase):
+    """The two gaps the last review left: a symlinked dataset root, and an unusable allowed_paths."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.dataset, self.skills = write_world(self.tmp, case_ids=("ledger-a",))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_a_symlinked_dataset_root_is_refused_before_it_is_read(self):
+        link = self.tmp / "behavioral-link"
+        link.symlink_to(self.dataset)
+        with mock.patch.object(ev, "DATASET", link), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            for call in (ev.dataset_root, ev.dataset_cases,
+                         lambda: ev.freeze_cases("all", "m", "low", "abc")):
+                with self.assertRaises(ev.ContextError) as caught:
+                    call()
+                self.assertIn("symlink", str(caught.exception))
+
+    def test_the_root_is_checked_before_anything_iterates_it(self):
+        """iterdir() must not be reached: the redirect is refused first, not filtered afterwards."""
+        link = self.tmp / "behavioral-link"
+        link.symlink_to(self.dataset)
+        with mock.patch.object(ev, "DATASET", link), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            with mock.patch.object(Path, "iterdir", side_effect=AssertionError("iterated")):
+                with self.assertRaises(ev.ContextError):
+                    ev.dataset_cases()
+
+    def test_a_symlinked_evals_parent_is_refused(self):
+        """The leaf is real; its parent is not. Checking only the leaf would read a redirected tree."""
+        elsewhere = self.tmp / "elsewhere"
+        (elsewhere / "behavioral" / "planted-case").mkdir(parents=True)
+        real_evals = self.tmp / "evals"
+        for child in sorted(real_evals.rglob("*"), reverse=True):
+            child.rmdir() if child.is_dir() else child.unlink()
+        real_evals.rmdir()
+        real_evals.symlink_to(elsewhere)
+        with mock.patch.object(ev, "DATASET", self.tmp / "evals" / "behavioral"), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            for call in (ev.dataset_root, ev.dataset_cases):
+                with self.assertRaises(ev.ContextError) as caught:
+                    call()
+                self.assertIn("symlink", str(caught.exception))
+                self.assertIn("evals", str(caught.exception))
+
+    def test_the_ancestor_check_runs_before_any_iteration(self):
+        elsewhere = self.tmp / "elsewhere"
+        (elsewhere / "behavioral").mkdir(parents=True)
+        real_evals = self.tmp / "evals"
+        for child in sorted(real_evals.rglob("*"), reverse=True):
+            child.rmdir() if child.is_dir() else child.unlink()
+        real_evals.rmdir()
+        real_evals.symlink_to(elsewhere)
+        with mock.patch.object(ev, "DATASET", self.tmp / "evals" / "behavioral"), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            with mock.patch.object(Path, "iterdir", side_effect=AssertionError("iterated")):
+                with self.assertRaises(ev.ContextError):
+                    ev.dataset_cases()
+
+    def test_a_dataset_outside_the_repository_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as other:
+            with mock.patch.object(ev, "DATASET", Path(other)), \
+                 mock.patch.object(ev, "DATASET_BASE", self.tmp):
+                with self.assertRaises(ev.ContextError) as caught:
+                    ev.dataset_root()
+        self.assertIn("is not under", str(caught.exception))
+
+    def test_the_shipped_dataset_root_has_no_symlink_in_its_chain(self):
+        """Against the real repository, not a fixture."""
+        self.assertEqual(ev.dataset_root(), ev.DATASET)
+        self.assertEqual(ev.DATASET_BASE, ev.ROOT)
+
+    def test_a_missing_dataset_root_is_refused(self):
+        with mock.patch.object(ev, "DATASET", self.tmp / "nowhere"), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            with self.assertRaises(ev.ContextError) as caught:
+                ev.dataset_root()
+        self.assertIn("no dataset", str(caught.exception))
+
+    def test_a_real_dataset_root_is_accepted(self):
+        with mock.patch.object(ev, "DATASET", self.dataset), \
+             mock.patch.object(ev, "DATASET_BASE", self.tmp):
+            self.assertEqual([d.name for d in ev.dataset_cases()], ["ledger-a"])
+
+    def _spec_with_allowed(self, replacement):
+        path = self.dataset / "ledger-a" / "case.yaml"
+        text = path.read_text().replace("allowed_paths:\n  - repo/mod.py\n", replacement)
+        path.write_text(text, encoding="utf-8")
+        with mock.patch.object(ev, "SKILLS", self.skills):
+            with self.assertRaises(ev.ContextError) as caught:
+                ev.load_spec(self.dataset / "ledger-a")
+        return str(caught.exception)
+
+    def test_the_paid_runner_refuses_an_empty_or_malformed_allowed_paths(self):
+        for replacement in ("allowed_paths: []\n",
+                            "allowed_paths:\n",
+                            "allowed_paths: repo/mod.py\n",
+                            "allowed_paths: {}\n"):
+            why = self._spec_with_allowed(replacement)
+            self.assertIn("allowed_paths must be a non-empty list", why, replacement)
+
+    def test_a_non_path_entry_in_allowed_paths_is_refused(self):
+        for replacement in ("allowed_paths:\n  - 7\n", "allowed_paths:\n  - ''\n",
+                            "allowed_paths:\n  - '   '\n"):
+            why = self._spec_with_allowed(replacement)
+            self.assertIn("which is not a", why, replacement)
+
+    def test_the_rule_is_one_definition_shared_by_the_runner_and_the_checker(self):
+        """check_eval_dataset must not carry a second, driftable copy of the same rule."""
+        text = (ROOT / "scripts" / "check_eval_dataset.py").read_text(encoding="utf-8")
+        self.assertNotIn("allowed_paths must list the files", text)
+        self.assertIn("load_spec", text)
+
+    def test_every_shipped_case_declares_a_usable_allowed_paths(self):
+        for case in ev.dataset_cases():
+            allowed = ev.load_spec(case)["allowed_paths"]
+            self.assertTrue(isinstance(allowed, list) and allowed, case.name)
+            self.assertTrue(all(isinstance(p, str) and p.startswith("repo/") for p in allowed),
+                            case.name)

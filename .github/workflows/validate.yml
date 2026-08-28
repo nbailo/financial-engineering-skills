@@ -39,6 +39,12 @@ jobs:
       # adds no dependency, and its network guard raises on any socket, name lookup or
       # connection attempt, which is what stops a live call being reintroduced quietly.
       - run: python3 examples/prediction-market-bot/run_tests.py
+      # examples/payment-ledger-reconciliation/ is the second runnable one: one invoice through a
+      # fake in-process processor, an ambiguous timeout, a redelivered and concurrently delivered
+      # webhook, balanced immutable postings, a crash after the external effect, replay, and a
+      # reconciliation against a frozen settlement report. Same offline guarantee and the same
+      # network guard, installed from tests/__init__.py, conftest.py, run_tests.py and demo.py.
+      - run: python3 examples/payment-ledger-reconciliation/run_tests.py
       # The behavioral eval dataset, checked with no model in the loop. For each case it runs the
       # oracle against the planted defect and requires a FAILURE, then applies the reference fix and
       # requires a PASS. A fixture that passes on its own defect measures nothing and a model scores
